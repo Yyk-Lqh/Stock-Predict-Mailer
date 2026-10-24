@@ -1,0 +1,7 @@
+# No credentials in this file. Paths resolve relative to this file's parent directory.
+workspace = "../data/local"
+timezone = "Asia/Shanghai"
+horizon = 5
+top_k = 5
+cost_bps = 30
+principal = "owner"

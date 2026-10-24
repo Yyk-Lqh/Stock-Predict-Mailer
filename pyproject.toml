@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stock-predict-mailer"
+version = "0.1.0"
+description = "Local reproducible stock research and evidence-backed reports"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.26,<3", "scikit-learn>=1.4,<2", "duckdb>=1.1,<2", "pyarrow>=15,<24"]
+
+[project.optional-dependencies]
+trees = ["lightgbm>=4,<5"]
+
+[project.scripts]
+stock-mailer = "stock_predict_mailer.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stock_predict_mailer"]

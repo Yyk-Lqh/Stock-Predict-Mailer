@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+config/local.toml
 *.pem
 *.key
 secrets/
@@ -29,6 +30,8 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.tmp/
+.uv-cache/
 dist/
 build/
 *.egg-info/

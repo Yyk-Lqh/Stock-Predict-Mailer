@@ -24,6 +24,22 @@ class FakeSMTP:
 
 
 class DeliveryTests(unittest.TestCase):
+    def test_pre_send_failures_retry_then_stop_and_interruption_is_uncertain(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cfg = Config(Path(folder))
+            built = demo_run(cfg, "2026-10-24T20:00:00+08:00")
+            queued = enqueue(cfg, built["report_id"], "test@example.com", "sender@example.com")
+            def unavailable(*args, **kwargs):
+                raise ConnectionRefusedError("private-server-details")
+            with patch.dict(os.environ, {"SMTP_HOST": "smtp.example.com", "SMTP_USER": "u", "SMTP_PASSWORD": "p"}):
+                for expected in ("retry", "retry", "failed"):
+                    with connect(cfg) as con:
+                        con.execute("UPDATE outbox SET next_attempt='2000-01-01T00:00:00Z' WHERE id=?", (queued["id"],))
+                    self.assertEqual(deliver(cfg, queued["id"], allow_synthetic=True, allow_stale=True, factory=unavailable), expected)
+            with connect(cfg) as con:
+                con.execute("UPDATE outbox SET status='sending' WHERE id=?", (queued["id"],))
+            self.assertEqual(deliver(cfg, queued["id"]), "uncertain")
+
     def test_pipeline_idempotent_preview_and_smtp_uncertainty(self):
         with tempfile.TemporaryDirectory() as folder:
             cfg = Config(Path(folder))

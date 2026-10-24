@@ -8,6 +8,18 @@
 
 完整设计见 [股票分析系统本地运行实施方案](docs/股票分析系统本地运行实施方案.md)。
 
+## 当前可运行能力
+
+已完成阶段 1 至 5 的离线范围：CSV 快照与时点校验、统计与 Ridge 基线、可选 LightGBM、隔离验证、本地文本混合检索、引用校验、HTML 模板、邮件预览及 SMTP 传输组件。真实数据认证、完整市场约束回测、生成模型与真实邮件联调尚未完成。
+
+```powershell
+uv sync --extra trees
+uv run stock-mailer demo-run --cutoff 2026-10-24T20:00:00+08:00 --trees
+uv run python -m unittest discover -s tests -v
+```
+
+演示不发送邮件，结果保存在 data/local。用户自行采集的数据按 [自采数据接入与待办](docs/自采数据接入与待办.md) 导入；电脑有 GPU 不意味着需要先部署本地大模型，外部生成 API 为后续可选项。
+
 - 数据处理、特征工程、模型训练、预测、回测及知识库存储在自有电脑运行。
 - 优先采用 Python、Parquet、DuckDB、SQLite、scikit-learn 和 LightGBM。
 - 大模型可根据保密要求选择本地部署或外部 API；不允许外发的资料保留在本地。

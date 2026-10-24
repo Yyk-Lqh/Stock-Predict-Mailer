@@ -40,6 +40,9 @@ class ResearchTests(unittest.TestCase):
             real = import_csv(cfg, Path(folder) / "a.csv", synthetic=False)
             with self.assertRaises(ValueError):
                 experiment(cfg, real["snapshot_id"], "2021-01-01T20:00:00+08:00")
+            exploratory = experiment(cfg, real["snapshot_id"], "2021-01-01T20:00:00+08:00", allow_unverified_real=True)
+            self.assertFalse(exploratory["synthetic"])
+            self.assertTrue(exploratory["unverified_real"])
 
 
 if __name__ == "__main__":

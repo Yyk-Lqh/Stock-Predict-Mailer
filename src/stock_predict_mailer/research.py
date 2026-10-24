@@ -136,9 +136,9 @@ def cost_diagnostics(rows: list[dict], scores: np.ndarray, cfg: Config) -> list[
             for cost in costs]
 
 
-def experiment(cfg: Config, snapshot: str, cutoff: str, *, trees: bool = False) -> dict:
+def experiment(cfg: Config, snapshot: str, cutoff: str, *, trees: bool = False, allow_unverified_real: bool = False) -> dict:
     manifest, raw = load_snapshot(cfg, snapshot)
-    if not manifest["synthetic"]:
+    if not manifest["synthetic"] and not allow_unverified_real:
         raise ValueError("real-data research is gated until corporate actions, calendar and universe are certified")
     rows = asof_rows(raw, cutoff)
     features = feature_rows(rows, cfg)
@@ -183,6 +183,7 @@ def experiment(cfg: Config, snapshot: str, cutoff: str, *, trees: bool = False) 
         commit = "unavailable"
     definition = {"snapshot": snapshot, "cutoff": cutoff, "horizon": cfg.horizon,
                   "top_k": cfg.top_k, "cost_bps": cfg.cost_bps, "trees": trees,
+                  "allow_unverified_real": allow_unverified_real,
                   "features": FEATURES, "code_commit": commit, "schema": 1,
                   "timezone": cfg.timezone,
                   "source_sha256": digest(b"".join(p.name.encode() + p.read_bytes() for p in sorted(Path(__file__).parent.glob("*.py")))),
@@ -195,7 +196,8 @@ def experiment(cfg: Config, snapshot: str, cutoff: str, *, trees: bool = False) 
     atomic_write(folder / "deployment_model.pkl", payload)
     evaluation_payload = pickle.dumps(holdout_model)
     atomic_write(folder / "holdout_model.pkl", evaluation_payload)
-    result = {"experiment_id": experiment_id, "created_at": now(), "synthetic": True,
+    result = {"experiment_id": experiment_id, "created_at": now(), "synthetic": manifest["synthetic"],
+              "unverified_real": not manifest["synthetic"],
               "definition": definition, "python": platform.python_version(),
               "selected": selected, "validation": val_metrics,
               "holdout": metrics(test, test_scores), "rolling_development_diagnostics": rolling,
@@ -205,7 +207,9 @@ def experiment(cfg: Config, snapshot: str, cutoff: str, *, trees: bool = False) 
               "cost_diagnostics": cost_diagnostics(test, test_scores, cfg),
               "predictions": rankings, "latest_data_date": latest,
               "model_sha256": digest(payload), "holdout_model_sha256": digest(evaluation_payload),
-              "limitations": ["SYNTHETIC DATA ONLY", "Fixed synthetic universe, no corporate actions",
+              "limitations": ["SYNTHETIC DATA ONLY" if manifest["synthetic"] else "UNVERIFIED REAL DATA: research only, not a certified strategy",
+                 "No corporate action, point-in-time universe or exchange calendar certification",
+                 "Horizon uses observed dataset dates; missing market dates may distort real-data labels",
                  "Cost diagnostics are nonoverlapping top-K excess returns, not an executable backtest",
                  "No volume limits, suspension, limit-up/down or market-specific execution rules",
                  "Rolling diagnostics share model selection history and are not an independent holdout",

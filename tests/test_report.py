@@ -10,6 +10,18 @@ from stock_predict_mailer.research import experiment
 
 
 class ReportTests(unittest.TestCase):
+    def test_unverified_real_report_never_labeled_synthetic(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cfg = Config(Path(folder) / "state")
+            snap = import_csv(cfg, demo_csv(Path(folder) / "fixture.csv", 160, 6), synthetic=False)
+            result = experiment(cfg, snap["snapshot_id"], "2021-01-01T20:00:00+08:00", allow_unverified_real=True)
+            report = build_report(cfg, result["experiment_id"])
+            meta, body = load_report(cfg, report["report_id"])
+            self.assertFalse(meta["synthetic"])
+            self.assertTrue(meta["unverified_real"])
+            self.assertIn("未认证研究".encode(), body)
+            self.assertNotIn("合成数据演示，不可用于投资决策".encode(), body)
+
     def test_escaped_report_citations_and_revocation(self):
         with tempfile.TemporaryDirectory() as folder:
             cfg = Config(Path(folder) / "state")

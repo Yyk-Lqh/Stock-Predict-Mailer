@@ -27,6 +27,7 @@ def main(argv=None) -> int:
     research.add_argument("snapshot_id")
     research.add_argument("--cutoff", required=True)
     research.add_argument("--trees", action="store_true", help="Require optional LightGBM installation")
+    research.add_argument("--allow-unverified-real", action="store_true", help="Explicitly allow uncertified user CSV for exploratory research only")
     kb_add = sub.add_parser("kb-add", help="Index local Markdown or text with explicit ACL")
     kb_add.add_argument("path", type=Path)
     kb_add.add_argument("--published-at", required=True)
@@ -93,7 +94,7 @@ def main(argv=None) -> int:
     elif args.command == "research":
         from .research import experiment
         with tracked_run(cfg, "research"):
-            result = experiment(cfg, args.snapshot_id, args.cutoff, trees=args.trees)
+            result = experiment(cfg, args.snapshot_id, args.cutoff, trees=args.trees, allow_unverified_real=args.allow_unverified_real)
             print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         from .data import demo_csv, import_csv, snapshot_summary

@@ -27,6 +27,19 @@ def main(argv=None) -> int:
     research.add_argument("snapshot_id")
     research.add_argument("--cutoff", required=True)
     research.add_argument("--trees", action="store_true", help="Require optional LightGBM installation")
+    kb_add = sub.add_parser("kb-add", help="Index local Markdown or text with explicit ACL")
+    kb_add.add_argument("path", type=Path)
+    kb_add.add_argument("--published-at", required=True)
+    kb_add.add_argument("--available-at", required=True)
+    kb_add.add_argument("--allow", action="append", required=True)
+    kb_search = sub.add_parser("kb-search", help="Search authorized, time-filtered local evidence")
+    kb_search.add_argument("query")
+    kb_search.add_argument("--cutoff", required=True)
+    kb_revoke = sub.add_parser("kb-revoke", help="Revoke a document version")
+    kb_revoke.add_argument("document_id")
+    report = sub.add_parser("report", help="Build escaped deterministic HTML with evidence")
+    report.add_argument("experiment_id")
+    report.add_argument("--query", default="风险 策略 模型")
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
     if args.command == "init":
@@ -35,6 +48,21 @@ def main(argv=None) -> int:
     elif args.command == "status":
         with connect(cfg) as con:
             print(json.dumps([dict(row) for row in con.execute("SELECT * FROM runs ORDER BY started_at DESC LIMIT 20")], indent=2))
+    elif args.command in ("kb-add", "kb-search", "kb-revoke", "report"):
+        from .knowledge import ingest_document, retrieve, revoke
+        from .report import build_report
+        with tracked_run(cfg, args.command):
+            if args.command == "kb-add":
+                result = ingest_document(cfg, args.path, args.published_at, args.available_at, args.allow)
+            elif args.command == "kb-search":
+                result = retrieve(cfg, args.query, args.cutoff)
+            elif args.command == "kb-revoke":
+                revoke(cfg, args.document_id)
+                result = {"revoked": args.document_id}
+            else:
+                built = build_report(cfg, args.experiment_id, args.query)
+                result = {"report_id": built["report_id"], "path": str(cfg.workspace / "reports" / built["report_id"] / "report.html")}
+            print(json.dumps(result, ensure_ascii=False, indent=2))
     elif args.command == "research":
         from .research import experiment
         with tracked_run(cfg, "research"):

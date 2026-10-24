@@ -23,6 +23,10 @@ def main(argv=None) -> int:
     ingest.add_argument("--synthetic", action="store_true")
     summary = sub.add_parser("snapshot", help="Validate and summarize an immutable snapshot")
     summary.add_argument("snapshot_id")
+    research = sub.add_parser("research", help="Run SYNTHETIC-only purged research")
+    research.add_argument("snapshot_id")
+    research.add_argument("--cutoff", required=True)
+    research.add_argument("--trees", action="store_true", help="Require optional LightGBM installation")
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
     if args.command == "init":
@@ -31,6 +35,11 @@ def main(argv=None) -> int:
     elif args.command == "status":
         with connect(cfg) as con:
             print(json.dumps([dict(row) for row in con.execute("SELECT * FROM runs ORDER BY started_at DESC LIMIT 20")], indent=2))
+    elif args.command == "research":
+        from .research import experiment
+        with tracked_run(cfg, "research"):
+            result = experiment(cfg, args.snapshot_id, args.cutoff, trees=args.trees)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         from .data import demo_csv, import_csv, snapshot_summary
 

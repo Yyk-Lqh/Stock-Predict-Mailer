@@ -40,6 +40,19 @@ def main(argv=None) -> int:
     report = sub.add_parser("report", help="Build escaped deterministic HTML with evidence")
     report.add_argument("experiment_id")
     report.add_argument("--query", default="风险 策略 模型")
+    pipeline = sub.add_parser("demo-run", help="Offline synthetic end-to-end pipeline; never sends mail")
+    pipeline.add_argument("--cutoff", required=True)
+    pipeline.add_argument("--recipient", default="preview@example.invalid")
+    pipeline.add_argument("--trees", action="store_true")
+    queue = sub.add_parser("queue-mail", help="Create local .eml preview, not delivery")
+    queue.add_argument("report_id")
+    queue.add_argument("--recipient", required=True)
+    queue.add_argument("--sender", default="research@example.invalid")
+    sub.add_parser("outbox", help="List local mail status")
+    send = sub.add_parser("send-mail", help="Explicitly deliver ONE queued message using SMTP environment")
+    send.add_argument("outbox_id")
+    send.add_argument("--allow-synthetic", action="store_true")
+    send.add_argument("--allow-stale", action="store_true")
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
     if args.command == "init":
@@ -48,6 +61,20 @@ def main(argv=None) -> int:
     elif args.command == "status":
         with connect(cfg) as con:
             print(json.dumps([dict(row) for row in con.execute("SELECT * FROM runs ORDER BY started_at DESC LIMIT 20")], indent=2))
+    elif args.command in ("demo-run", "queue-mail", "outbox", "send-mail"):
+        from .delivery import deliver, enqueue, outbox
+        from .pipeline import demo_run
+        if args.command == "demo-run":
+            result = demo_run(cfg, args.cutoff, args.recipient, args.trees)
+        elif args.command == "queue-mail":
+            result = enqueue(cfg, args.report_id, args.recipient, args.sender)
+        elif args.command == "outbox":
+            result = outbox(cfg)
+        else:
+            result = {"status": deliver(cfg, args.outbox_id, allow_synthetic=args.allow_synthetic, allow_stale=args.allow_stale)}
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0 if result["status"] == "submitted" else 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
     elif args.command in ("kb-add", "kb-search", "kb-revoke", "report"):
         from .knowledge import ingest_document, retrieve, revoke
         from .report import build_report

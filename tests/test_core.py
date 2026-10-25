@@ -10,7 +10,9 @@ class CoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "config.toml"
             path.write_text('workspace="state"\nhorizon=5\n', encoding="utf-8")
-            self.assertEqual(load_config(path).workspace, Path(folder) / "state")
+            # resolve() turns the file-relative workspace into an absolute path; compare
+            # resolved paths so a short 8.3 TEMP directory on CI still matches.
+            self.assertEqual(load_config(path).workspace, (Path(folder) / "state").resolve())
             path.write_text('workspace="state"\nhorizno=5\n', encoding="utf-8")
             with self.assertRaises(ValueError):
                 load_config(path)

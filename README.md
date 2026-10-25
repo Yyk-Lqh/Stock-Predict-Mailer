@@ -77,6 +77,7 @@ uv run stock-mailer uploads
 
 | 文档 | 内容 |
 | --- | --- |
+| [接手与移交指南](docs/接手与移交指南.md) | 新接手人从哪里开始：环境复现、阅读顺序、交接清单与常见坑 |
 | [实施阶段与验收](docs/实施阶段与验收.md) | 各阶段交付与验收口径 |
 | [阶段验收记录](docs/阶段验收记录.md) | 已验收范围、测试与实测记录 |
 | [本地运行手册](docs/本地运行手册.md) | 安装、配置与运行入口 |
@@ -101,7 +102,7 @@ uv run python -m unittest discover -s tests -q   # 基线 50 项通过
 python scripts/check_repo_hygiene.py
 ```
 
-流程、代码约定（禁止 pickle 推理、契约变更须升版本、不得绕过训练授权门禁）、文档同步要求和权限说明见 [CONTRIBUTING.md](CONTRIBUTING.md)；想从哪开始可以看 [待认领任务](docs/待认领任务.md)。安全漏洞请按 [SECURITY.md](SECURITY.md) 私密上报，参与即表示同意 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。
+流程、代码约定（禁止 pickle 推理、契约变更须升版本、不得绕过训练授权门禁）、文档同步要求和权限说明见 [CONTRIBUTING.md](CONTRIBUTING.md)；想从哪开始可以看 [待认领任务](docs/待认领任务.md)。如果你是**整体接手这个项目**（而不是只提一个 PR），请先读 [接手与移交指南](docs/接手与移交指南.md)，它包含不走 Git 的资产移交清单与交接完成判定标准。安全漏洞请按 [SECURITY.md](SECURITY.md) 私密上报，参与即表示同意 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。
 
 ## 许可证
 

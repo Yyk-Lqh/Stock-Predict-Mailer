@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .core import tracked_run
 
-COMMANDS = {"contract-check", "model-train", "model-evaluate", "model-publish", "model-list", "model-select", "model-predict"}
+COMMANDS = {"contract-check", "model-train", "model-evaluate", "model-publish", "model-list", "model-select", "model-predict", "model-keygen", "model-export", "model-install"}
 
 
 def add_commands(sub):
@@ -35,13 +35,29 @@ def add_commands(sub):
     predict.add_argument("--cutoff", required=True)
     predict.add_argument("--model")
     predict.add_argument("--allow-demo", action="store_true")
+    sub.add_parser("model-keygen", help="Create a local publisher signing key; never overwrite an existing key")
+    export = sub.add_parser("model-export", help="Sign an evaluated published platform DEMO; contains no raw training data")
+    export.add_argument("model_version")
+    export.add_argument("--output", required=True, type=Path)
+    export.add_argument("--signing-key", type=Path)
+    install = sub.add_parser("model-install", help="Verify and install a signed DEMO without training")
+    install.add_argument("package", type=Path)
+    install.add_argument("--trust-key", type=Path, required=True, help="Publisher public key obtained independently of the archive")
 
 
 def dispatch(cfg, args):
     from .contracts import contract_id, read_contract
     from .model_registry import evaluate_model, list_models, predict_snapshot, publish_demo, select_model, train_platform
     with tracked_run(cfg, args.command):
-        if args.command == "contract-check":
+        if args.command in ("model-keygen", "model-export", "model-install"):
+            from .model_packages import export_package, generate_key, install_package
+            if args.command == "model-keygen":
+                result = generate_key(cfg)
+            elif args.command == "model-export":
+                result = export_package(cfg, args.model_version, args.output, args.signing_key)
+            else:
+                result = install_package(cfg, args.package, args.trust_key)
+        elif args.command == "contract-check":
             contract = read_contract(args.contract)
             result = {"contract_id": contract_id(contract), "contract": contract}
         elif args.command == "model-train":

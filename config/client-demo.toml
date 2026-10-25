@@ -1,0 +1,7 @@
+# Independent local installation workspace. No platform training data or credentials.
+workspace = "../data/client-demo"
+timezone = "Asia/Shanghai"
+horizon = 5
+top_k = 5
+cost_bps = 30
+principal = "demo-client"

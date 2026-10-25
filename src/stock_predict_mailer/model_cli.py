@@ -5,7 +5,10 @@ from pathlib import Path
 
 from .core import tracked_run
 
-COMMANDS = {"contract-check", "model-train", "model-evaluate", "model-publish", "model-list", "model-select", "model-predict", "model-keygen", "model-export", "model-install"}
+COMMANDS = {"contract-check", "model-train", "model-evaluate", "model-publish", "model-list", "model-select", "model-predict",
+            "model-keygen", "model-export", "model-install", "model-compare",
+            "dataset-authorize", "dataset-auth",
+            "train-submit", "train-worker", "train-list", "train-status", "train-cancel"}
 
 
 def add_commands(sub):
@@ -27,14 +30,16 @@ def add_commands(sub):
     publish.add_argument("model_version")
     publish.add_argument("--evaluation", required=True)
     sub.add_parser("model-list", help="List visible published models and own candidates")
-    select = sub.add_parser("model-select", help="Select a published model for this local identity")
+    select = sub.add_parser("model-select", help="Select a published demo or an explicitly confirmed personal version")
     select.add_argument("model_version")
     select.add_argument("--allow-demo", action="store_true")
+    select.add_argument("--confirm-personal", action="store_true", help="Explicitly switch to a compared personal version")
     predict = sub.add_parser("model-predict", help="Load selected native model and infer; never fit")
     predict.add_argument("snapshot_id")
     predict.add_argument("--cutoff", required=True)
     predict.add_argument("--model")
     predict.add_argument("--allow-demo", action="store_true")
+    predict.add_argument("--allow-personal", action="store_true")
     sub.add_parser("model-keygen", help="Create a local publisher signing key; never overwrite an existing key")
     export = sub.add_parser("model-export", help="Sign an evaluated published platform DEMO; contains no raw training data")
     export.add_argument("model_version")
@@ -43,6 +48,34 @@ def add_commands(sub):
     install = sub.add_parser("model-install", help="Verify and install a signed DEMO without training")
     install.add_argument("package", type=Path)
     install.add_argument("--trust-key", type=Path, required=True, help="Publisher public key obtained independently of the archive")
+    compare = sub.add_parser("model-compare", help="Paired comparison on dates later than both training label ends")
+    compare.add_argument("candidate_version")
+    compare.add_argument("--baseline", required=True)
+    compare.add_argument("--snapshot", required=True)
+    compare.add_argument("--cutoff", required=True)
+    authorize = sub.add_parser("dataset-authorize", help="Record this identity's usage decision for one snapshot")
+    authorize.add_argument("snapshot_id")
+    authorize.add_argument("--platform", action="store_true", help="Grant platform training use (requires confirmed rights)")
+    authorize.add_argument("--revoke-platform", action="store_true")
+    authorize.add_argument("--revoke-personal", action="store_true")
+    authorize.add_argument("--note", default="")
+    auth = sub.add_parser("dataset-auth", help="Show this identity's snapshot authorization record")
+    auth.add_argument("snapshot_id")
+    submit = sub.add_parser("train-submit", help="Queue one owner-scoped retraining from a parent model")
+    submit.add_argument("parent_version")
+    submit.add_argument("--snapshot", required=True)
+    submit.add_argument("--cutoff", required=True)
+    submit.add_argument("--timeout", type=int, default=300, help="Hard budget in seconds (2..3600)")
+    submit.add_argument("--max-rows", type=int, default=200000)
+    submit.add_argument("--allow-unverified-real", action="store_true")
+    worker = sub.add_parser("train-worker", help="Run the single local training worker")
+    worker.add_argument("--once", action="store_true", help="Process at most one job")
+    worker.add_argument("--poll", type=float, default=0.2)
+    sub.add_parser("train-list", help="List this identity's training jobs")
+    status = sub.add_parser("train-status", help="Show one training job with stage progress")
+    status.add_argument("job_id")
+    cancel = sub.add_parser("train-cancel", help="Cancel a queued or running training job")
+    cancel.add_argument("job_id")
 
 
 def dispatch(cfg, args):
@@ -57,6 +90,40 @@ def dispatch(cfg, args):
                 result = export_package(cfg, args.model_version, args.output, args.signing_key)
             else:
                 result = install_package(cfg, args.package, args.trust_key)
+        elif args.command == "dataset-authorize":
+            from . import dataset_auth
+            if args.platform and args.revoke_platform:
+                raise ValueError("cannot grant and revoke platform training in one call")
+            if args.platform and not args.note.strip():
+                raise ValueError("granting platform training requires --note recording the confirmed data rights")
+            result = dataset_auth.set_authorization(
+                cfg, args.snapshot_id,
+                personal=False if args.revoke_personal else None,
+                platform=True if args.platform else False if args.revoke_platform else None,
+                note=args.note)
+        elif args.command == "dataset-auth":
+            from . import dataset_auth
+            result = dataset_auth.describe(cfg, args.snapshot_id)
+        elif args.command == "train-submit":
+            from .model_training import submit_training
+            result = submit_training(cfg, args.parent_version, args.snapshot, args.cutoff,
+                                     timeout_seconds=args.timeout, max_rows=args.max_rows,
+                                     allow_unverified_real=args.allow_unverified_real)
+        elif args.command == "train-worker":
+            from .model_training import run_worker
+            result = run_worker(cfg, once=args.once, poll=args.poll)
+        elif args.command == "train-list":
+            from .model_training import train_list
+            result = train_list(cfg)
+        elif args.command == "train-status":
+            from .model_training import train_status
+            result = train_status(cfg, args.job_id)
+        elif args.command == "train-cancel":
+            from .model_training import train_cancel
+            result = train_cancel(cfg, args.job_id)
+        elif args.command == "model-compare":
+            from .model_training import compare_models
+            result = compare_models(cfg, args.candidate_version, args.baseline, args.snapshot, args.cutoff)
         elif args.command == "contract-check":
             contract = read_contract(args.contract)
             result = {"contract_id": contract_id(contract), "contract": contract}
@@ -68,9 +135,10 @@ def dispatch(cfg, args):
         elif args.command == "model-publish":
             result = publish_demo(cfg, args.model_version, args.evaluation)
         elif args.command == "model-select":
-            result = select_model(cfg, args.model_version, allow_demo=args.allow_demo)
+            result = select_model(cfg, args.model_version, allow_demo=args.allow_demo, confirm_personal=args.confirm_personal)
         elif args.command == "model-list":
             result = list_models(cfg)
         else:
-            result = predict_snapshot(cfg, args.snapshot_id, args.cutoff, args.model, allow_demo=args.allow_demo)
+            result = predict_snapshot(cfg, args.snapshot_id, args.cutoff, args.model,
+                                      allow_demo=args.allow_demo, allow_personal=args.allow_personal)
         print(json.dumps(result, ensure_ascii=False, indent=2))

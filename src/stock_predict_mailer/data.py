@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from .core import Config, atomic_write, digest, now, timestamp, write_json
+from . import dataset_auth
 
 FIELDS = ("date", "security_id", "open", "high", "low", "close", "volume", "available_at", "source")
 NUMERIC = ("open", "high", "low", "close", "volume")
@@ -68,7 +69,10 @@ def import_csv(cfg: Config, path: Path, *, synthetic: bool = False, provenance: 
     folder = cfg.workspace / "snapshots" / snapshot
     manifest_path = folder / "manifest.json"
     if manifest_path.exists():
-        return json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        # Keep the owner binding stable; repeated imports never widen permissions.
+        dataset_auth.record_import(cfg, snapshot, synthetic=bool(manifest["synthetic"]))
+        return manifest
     atomic_write(folder / "source.csv", raw_bytes)
     stream = pa.BufferOutputStream()
     pq.write_table(pa.Table.from_pylist(rows), stream)
@@ -84,6 +88,7 @@ def import_csv(cfg: Config, path: Path, *, synthetic: bool = False, provenance: 
     if provenance is not None:
         manifest["provenance"] = provenance
     write_json(manifest_path, manifest)  # completion marker written last
+    dataset_auth.record_import(cfg, snapshot, synthetic=synthetic)
     return manifest
 
 

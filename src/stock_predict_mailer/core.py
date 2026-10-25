@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import tempfile
+import time
 import tomllib
 import uuid
 from contextlib import contextmanager
@@ -29,7 +30,16 @@ def atomic_write(path: Path, data: bytes) -> None:
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(name, path)
+        # On Windows a reader holding the old file briefly blocks the replace;
+        # retry a bounded number of times instead of failing a long job.
+        for attempt in range(10):
+            try:
+                os.replace(name, path)
+                return
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.025)
     finally:
         Path(name).unlink(missing_ok=True)
 

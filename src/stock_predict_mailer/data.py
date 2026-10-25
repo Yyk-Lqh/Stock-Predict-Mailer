@@ -54,13 +54,16 @@ def asof_rows(rows: list[dict], cutoff: str) -> list[dict]:
     return [row for row in rows if timestamp(row["available_at"]) <= instant and date.fromisoformat(row["date"]) <= instant.date()]
 
 
-def import_csv(cfg: Config, path: Path, *, synthetic: bool = False) -> dict:
+def import_csv(cfg: Config, path: Path, *, synthetic: bool = False, provenance: dict | None = None) -> dict:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
     raw_bytes = path.read_bytes()
     rows = validate_rows(list(csv.DictReader(io.StringIO(raw_bytes.decode("utf-8-sig")))))
-    canonical = json.dumps({"synthetic": synthetic, "rows": rows}, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    identity = {"synthetic": synthetic, "rows": rows}
+    if provenance is not None:
+        identity["provenance"] = provenance
+    canonical = json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     snapshot = digest(canonical)
     folder = cfg.workspace / "snapshots" / snapshot
     manifest_path = folder / "manifest.json"
@@ -78,6 +81,8 @@ def import_csv(cfg: Config, path: Path, *, synthetic: bool = False) -> dict:
         "sources": sorted({r["source"] for r in rows}),
         "limitations": ["CSV availability is supplied by importer, not independently verified", "No corporate action or survivorship certification"],
     }
+    if provenance is not None:
+        manifest["provenance"] = provenance
     write_json(manifest_path, manifest)  # completion marker written last
     return manifest
 

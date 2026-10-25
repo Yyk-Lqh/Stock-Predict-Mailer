@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="upload-session" content="__SESSION_TOKEN__"><title>数据接入中心 · Stock Predict Mailer</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body>
+<header><span class="brand">Stock Predict Mailer</span><span class="local">本机工作区</span></header>
+<main>
+  <div class="intro"><div><p class="eyebrow">研究数据管理</p><h1>数据接入中心</h1><p class="lead">把不同来源的资料放在这里，查看识别、清洗与待确认结果。</p></div><button id="refresh" class="secondary">刷新记录</button></div>
+  <section class="upload-zone" id="drop-zone" aria-labelledby="upload-title">
+    <div><h2 id="upload-title">上传文件，自动识别与清洗</h2><p>CSV / TSV · Excel XLSX · JSON / JSONL · Parquet · SQLite · 文本</p><p class="muted">每个文件最多 50 MB、100000 行。原件保留，不自动填充缺失价格或历史时间。</p></div>
+    <label class="button" for="files">选择文件</label><input id="files" type="file" multiple class="file-input">
+    <p class="drop-hint">也可以将文件拖放到此区域</p>
+  </section>
+  <div class="folder-line"><span>批量投放目录</span><code id="incoming">正在读取目录</code><button id="scan" class="secondary">扫描目录</button></div>
+  <p id="notice" role="status" aria-live="polite"></p>
+  <div class="workspace">
+    <section class="records" aria-labelledby="records-title"><h2 id="records-title">文件记录</h2><div id="file-list"></div></section>
+    <section class="detail" aria-labelledby="detail-title"><h2 id="detail-title">处理详情</h2><p id="selection-hint" class="muted">上传资料或选择一条记录，查看结果。</p><div id="selected" hidden>
+      <div id="file-summary"></div>
+      <details class="metadata" open><summary>确认资料信息</summary><p class="muted">无法从内容确定的信息由你补充；不补造历史可用时间。</p>
+      <form id="options-form">
+        <label>资料类别<select id="kind"><option value="auto">自动识别</option><option value="bars">股票日行情</option><option value="financial">财务数据</option><option value="news">新闻与公告</option><option value="macro">宏观指标</option><option value="table">其他表格</option></select></label>
+        <label>数据来源<input id="source" maxlength="200" placeholder="采集平台或内部资料名称"></label>
+        <label>价格口径<select id="price-basis"><option value="unknown">尚未确认</option><option value="unadjusted">不复权</option><option value="forward_adjusted">前复权</option><option value="backward_adjusted">后复权</option><option value="total_return">总收益口径</option></select></label>
+        <label>成交量单位<select id="volume-unit"><option value="unknown">尚未确认</option><option value="shares">股</option><option value="lots">手（发布前需转换）</option></select></label>
+        <label class="full">仅补充缺失的实际可用时间<input id="available-at" placeholder="可选，如 2026-10-25T10:00:00+08:00"><small>仅填写确实获知整批记录的时间；留空也可清洗，但不能进入严格时点训练。</small></label>
+        <label class="full">手工字段映射（可选 JSON）<textarea id="column-map" rows="2" placeholder='例如 {"date":"采集日期","security_id":"证券编号"}'></textarea></label>
+        <button type="submit">保存信息并重新清洗</button>
+      </form></details>
+      <div id="tables"></div><div id="issues"></div>
+    </div></section>
+  </div>
+  <footer>文件与清洗结果保存在本机。清洗通过不等于数据已获得授权或策略有效；当前不训练模型、不发邮件。</footer>
+</main>
+</body></html>

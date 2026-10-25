@@ -54,9 +54,31 @@ def main(argv=None) -> int:
     send.add_argument("outbox_id")
     send.add_argument("--allow-synthetic", action="store_true")
     send.add_argument("--allow-stale", action="store_true")
+    serve = sub.add_parser("uploads", help="Start loopback-only data upload center")
+    serve.add_argument("--port", type=int, default=8765)
+    sub.add_parser("scan-incoming", help="Recognize and clean files in the intake directory")
+    ingest_file = sub.add_parser("ingest-file", help="Archive, identify and clean one supported local file")
+    ingest_file.add_argument("path", type=Path)
+    ingest_file.add_argument("--options", type=Path, help="Optional local JSON metadata and field mapping")
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
-    if args.command == "init":
+    if args.command in ("uploads", "scan-incoming", "ingest-file"):
+        from .intake import scan_incoming, upload
+        if args.command == "uploads":
+            from .upload_server import serve
+            serve(cfg, args.port)
+        else:
+            with tracked_run(cfg, args.command):
+                if args.command == "scan-incoming":
+                    result = scan_incoming(cfg)
+                else:
+                    from .intake_readers import MAX_BYTES, IntakeError
+                    if args.path.stat().st_size > MAX_BYTES:
+                        raise IntakeError("文件超过 50MB")
+                    options = json.loads(args.options.read_text(encoding="utf-8")) if args.options else None
+                    result = upload(cfg, args.path.name, args.path.read_bytes(), options)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "init":
         with tracked_run(cfg, "init"):
             print(json.dumps({"workspace": str(cfg.workspace), "status": "initialized"}))
     elif args.command == "status":

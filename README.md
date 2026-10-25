@@ -4,6 +4,15 @@
 
 项目正在分阶段实施。范围、验收与当前状态见 [实施阶段与验收](docs/实施阶段与验收.md) 和 [阶段验收记录](docs/阶段验收记录.md)；安装与命令见 [本地运行手册](docs/本地运行手册.md)。
 
+## 上传自己的数据
+
+```powershell
+uv sync --extra trees
+uv run stock-mailer uploads
+```
+
+打开 http://127.0.0.1:8765 上传 CSV/TSV、XLSX、JSON/JSONL、Parquet、SQLite 或文本。自动识别、清洗并显示待确认与异常记录，原件保留；中文行情列名可直接识别。也可将文件放入 data/local/intake/incoming 后扫描。详见 [数据接入中心使用说明](docs/数据接入中心使用说明.md)。
+
 ## 项目方案
 
 完整设计见 [股票分析系统本地运行实施方案](docs/股票分析系统本地运行实施方案.md)。

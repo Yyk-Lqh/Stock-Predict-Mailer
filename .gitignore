@@ -40,6 +40,7 @@ build/
 .gstack/
 .codex/
 .agents/
+.workbuddy/
 task_plan.md
 findings.md
 progress.md

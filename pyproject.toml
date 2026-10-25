@@ -12,9 +12,22 @@ dependencies = ["numpy>=1.26,<3", "scikit-learn>=1.4,<2", "duckdb>=1.1,<2", "pya
 
 [project.optional-dependencies]
 trees = ["lightgbm>=4,<5"]
+dev = ["ruff==0.17.2"]
 
 [project.scripts]
 stock-mailer = "stock_predict_mailer.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/stock_predict_mailer"]
+
+[tool.ruff]
+line-length = 160
+target-version = "py311"
+src = ["src", "tests"]
+extend-exclude = ["data", "artifacts"]
+
+[tool.ruff.lint]
+# Deliberately narrow: correctness and import hygiene only, so a new
+# contributor's stylistic preferences never block a pull request.
+select = ["E", "F", "W", "I", "B"]
+ignore = ["E501"]

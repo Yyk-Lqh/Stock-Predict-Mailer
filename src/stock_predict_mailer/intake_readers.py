@@ -181,16 +181,16 @@ def read_tables(path: Path, original_name: str) -> tuple[dict, list[Table], str 
                         if len(widths) == 1 and next(iter(widths)) > 1:
                             candidates.append((next(iter(widths)), candidate))
                     if not candidates:
-                        raise csv.Error("no consistent delimiter")
+                        raise csv.Error("no consistent delimiter") from None
                     candidates.sort(reverse=True)
                     if len(candidates) > 1 and candidates[0][0] == candidates[1][0]:
-                        raise csv.Error("ambiguous delimiter")
+                        raise csv.Error("ambiguous delimiter") from None
                     delimiter = candidates[0][1]
                 tables = [matrix("data", csv.reader(io.StringIO(text), delimiter=delimiter, strict=True))]
                 info = {"format": "tsv" if delimiter == "\t" else "csv", "encoding": encoding, "delimiter": delimiter}
             except csv.Error:
                 if suffix in (".csv", ".tsv"):
-                    raise IntakeError("无法识别表格分隔符，请导出标准 CSV/TSV")
+                    raise IntakeError("无法识别表格分隔符，请导出标准 CSV/TSV") from None
                 return {"format": "text", "encoding": encoding}, [], text
     if sum(len(t.rows) for t in tables) > MAX_ROWS:
         raise IntakeError("所有表合计超过 100000 行，请分批导出")

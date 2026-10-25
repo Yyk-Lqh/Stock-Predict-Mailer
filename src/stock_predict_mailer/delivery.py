@@ -1,7 +1,6 @@
 """Explicit SMTP delivery with conservative handling of ambiguous outcomes."""
 from __future__ import annotations
 
-import json
 import os
 import re
 import smtplib
@@ -10,7 +9,6 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from email import policy
 from email.message import EmailMessage
-from pathlib import Path
 
 from .core import Config, atomic_write, connect, digest, now, timestamp
 from .report import load_report

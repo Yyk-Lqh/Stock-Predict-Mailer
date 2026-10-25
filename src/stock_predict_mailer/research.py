@@ -5,9 +5,9 @@ import json
 import pickle
 import platform
 import subprocess
-from importlib.metadata import version
 from collections import defaultdict
 from datetime import datetime, time
+from importlib.metadata import version
 from pathlib import Path
 from zoneinfo import ZoneInfo
 

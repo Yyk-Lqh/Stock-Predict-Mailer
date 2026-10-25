@@ -1,5 +1,5 @@
-import copy
 import csv
+import importlib.util
 import io
 import json
 import tempfile
@@ -14,7 +14,16 @@ from stock_predict_mailer.contracts import read_contract
 from stock_predict_mailer.core import Config
 from stock_predict_mailer.data import FIELDS, demo_csv, import_csv, load_snapshot
 from stock_predict_mailer.model_packages import export_package, generate_key, install_package, key_paths
-from stock_predict_mailer.model_registry import evaluate_model, get_model, list_models, model_folder, predict_snapshot, publish_demo, select_model, train_platform
+from stock_predict_mailer.model_registry import (
+    evaluate_model,
+    get_model,
+    list_models,
+    model_folder,
+    predict_snapshot,
+    publish_demo,
+    select_model,
+    train_platform,
+)
 
 
 class ModelPackageTests(unittest.TestCase):
@@ -128,9 +137,7 @@ class ModelPackageTests(unittest.TestCase):
         self.assertEqual(original, self.package.read_bytes())
 
     def test_lightgbm_native_package_installs(self):
-        try:
-            import lightgbm
-        except ImportError:
+        if importlib.util.find_spec("lightgbm") is None:
             self.skipTest("install optional trees dependency")
         dates = sorted({r["date"] for r in self.rows})
         model = train_platform(self.publisher, self.snapshot, self.contract, dates[110] + "T20:00:00+08:00", "lightgbm", confirm_platform_data=True)

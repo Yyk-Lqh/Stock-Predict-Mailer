@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import html
 import json
-from pathlib import Path
 
 from .core import Config, atomic_write, digest, now, timestamp, write_json
 from .knowledge import retrieve, validate_citations

@@ -32,7 +32,8 @@ from . import dataset_auth
 from .contracts import contract_id, dataset_compatible, prepare_rows, validate_contract
 from .core import Config, atomic_write, connect, digest, now, timestamp, write_json
 from .data import load_snapshot
-from .model_registry import get_model, identifier, owner_key, personal_model_folder, schema as registry_schema
+from .model_registry import get_model, identifier, owner_key, personal_model_folder
+from .model_registry import schema as registry_schema
 from .native_models import ALGORITHMS, native_predict
 from .research import metrics
 

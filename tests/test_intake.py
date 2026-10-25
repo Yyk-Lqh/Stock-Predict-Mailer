@@ -11,7 +11,6 @@ from stock_predict_mailer.data import load_snapshot
 from stock_predict_mailer.intake import intake_paths, latest, list_uploads, process, publish_bars, scan_incoming, upload
 from stock_predict_mailer.intake_readers import IntakeError
 
-
 HEADERS = ["日期", "股票代码", "开盘", "最高", "最低", "收盘", "成交量"]
 ROW = ["2026/10/23", "603278.SH", "10.00", "11", "9", "10.5", "1,000"]
 OPTIONS = {"source": "test fixture", "price_basis": "unadjusted", "volume_unit": "shares",

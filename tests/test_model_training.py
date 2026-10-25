@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import sys
 import tempfile
@@ -12,11 +13,29 @@ from stock_predict_mailer import dataset_auth
 from stock_predict_mailer.contracts import contract_id, read_contract
 from stock_predict_mailer.core import Config, connect
 from stock_predict_mailer.data import demo_csv, import_csv, load_snapshot
-from stock_predict_mailer.model_registry import (evaluate_model, get_model, list_models, model_folder,
-                                                 owner_key, personal_model_folder, predict_snapshot, publish_demo,
-                                                 select_model, train_platform)
-from stock_predict_mailer.model_training import (compare_models, latest_comparison, recover_stale, run_worker,
-                                                 submit_training, train_cancel, train_list, train_status, training_folder)
+from stock_predict_mailer.model_registry import (
+    evaluate_model,
+    get_model,
+    list_models,
+    model_folder,
+    owner_key,
+    personal_model_folder,
+    predict_snapshot,
+    publish_demo,
+    select_model,
+    train_platform,
+)
+from stock_predict_mailer.model_training import (
+    compare_models,
+    latest_comparison,
+    recover_stale,
+    run_worker,
+    submit_training,
+    train_cancel,
+    train_list,
+    train_status,
+    training_folder,
+)
 
 SLEEPER = [sys.executable, "-c", "import time; time.sleep(30)"]
 FAILER = [sys.executable, "-c", "import sys; sys.exit(3)"]
@@ -106,7 +125,7 @@ class PrivateTrainingTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 25)
         self.assertIsNone(train_status(self.cfg, timed["job_id"])["result_version"])
         self.assertEqual(train_status(self.cfg, timed["job_id"])["job"]["status"], "timeout")
-        failed = self.queue()
+        self.queue()
         outcome = run_worker(self.cfg, once=True, poll=0.05, child_command=FAILER)["executed"][0]
         self.assertEqual(outcome["status"], "failed", outcome)
         self.assertEqual(outcome["error_category"], "child_exit")
@@ -230,9 +249,7 @@ class PrivateTrainingTests(unittest.TestCase):
         self.assertFalse((self.cfg.workspace / "registry" / "personal" / owner_key("another-local-user")).exists())
 
     def test_lightgbm_parent_retrains_natively(self):
-        try:
-            import lightgbm  # noqa: F401
-        except ImportError:
+        if importlib.util.find_spec("lightgbm") is None:
             self.skipTest("install optional trees dependency")
         parent = train_platform(self.cfg, self.snapshot, self.contract, f"{self.dates[110]}T20:00:00+08:00",
                                 "lightgbm", confirm_platform_data=True)

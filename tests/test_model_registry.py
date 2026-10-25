@@ -1,5 +1,5 @@
 import copy
-import json
+import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,9 +8,18 @@ from unittest.mock import patch
 import numpy as np
 
 from stock_predict_mailer.contracts import contract_id, prepare_rows, read_contract, validate_contract
-from stock_predict_mailer.core import Config, connect
+from stock_predict_mailer.core import Config
 from stock_predict_mailer.data import demo_csv, import_csv, load_snapshot
-from stock_predict_mailer.model_registry import evaluate_model, get_model, list_models, model_folder, predict_snapshot, publish_demo, select_model, train_platform
+from stock_predict_mailer.model_registry import (
+    evaluate_model,
+    get_model,
+    list_models,
+    model_folder,
+    predict_snapshot,
+    publish_demo,
+    select_model,
+    train_platform,
+)
 from stock_predict_mailer.native_models import fit_native, native_predict
 
 
@@ -39,7 +48,8 @@ class ModelRegistryTests(unittest.TestCase):
         _, full = prepare_rows(self.raw, self.contract, self.end_cutoff)
         reduced = [r for r in self.raw if r["security_id"] in ("SYN000", "SYN001", "SYN002", "SYN003")]
         _, subset = prepare_rows(reduced, self.contract, self.end_cutoff)
-        key = lambda r: (r["date"], r["security_id"])
+        def key(r):
+            return (r["date"], r["security_id"])
         targets = {key(r): r["y"] for r in full}
         self.assertTrue(all(r["y"] == targets[key(r)] for r in subset))
         sample = subset[0]
@@ -111,9 +121,7 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertEqual(len(list_models(other)), 2)
 
     def test_lightgbm_native_and_publication_immutable(self):
-        try:
-            import lightgbm
-        except ImportError:
+        if importlib.util.find_spec("lightgbm") is None:
             self.skipTest("install optional trees dependency")
         model = self.release("lightgbm")
         selected = select_model(self.cfg, model["version"], allow_demo=True)

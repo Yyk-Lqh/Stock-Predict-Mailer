@@ -4,7 +4,7 @@ from pathlib import Path
 
 from stock_predict_mailer.core import Config
 from stock_predict_mailer.data import demo_csv, import_csv, load_snapshot
-from stock_predict_mailer.research import experiment, feature_rows, label_rows, purged_before
+from stock_predict_mailer.research import experiment, feature_rows, purged_before
 
 
 class ResearchTests(unittest.TestCase):

@@ -60,9 +60,13 @@ def main(argv=None) -> int:
     ingest_file = sub.add_parser("ingest-file", help="Archive, identify and clean one supported local file")
     ingest_file.add_argument("path", type=Path)
     ingest_file.add_argument("--options", type=Path, help="Optional local JSON metadata and field mapping")
+    from .model_cli import COMMANDS, add_commands, dispatch
+    add_commands(sub)
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
-    if args.command in ("uploads", "scan-incoming", "ingest-file"):
+    if args.command in COMMANDS:
+        dispatch(cfg, args)
+    elif args.command in ("uploads", "scan-incoming", "ingest-file"):
         from .intake import scan_incoming, upload
         if args.command == "uploads":
             from .upload_server import serve

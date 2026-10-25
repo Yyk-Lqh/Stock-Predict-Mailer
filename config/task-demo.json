@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "market": "synthetic",
+  "benchmark_id": "SYN000",
+  "universe": ["SYN001", "SYN002", "SYN003", "SYN004", "SYN005"],
+  "features": ["return_1", "return_5", "return_20", "volatility_20", "relative_volume"],
+  "horizon": 5,
+  "timezone": "Asia/Shanghai",
+  "feature_cutoff": "20:00:00",
+  "price_basis": "unadjusted",
+  "volume_unit": "shares",
+  "calendar": "benchmark_sessions",
+  "target": "open_to_open_excess_return"
+}

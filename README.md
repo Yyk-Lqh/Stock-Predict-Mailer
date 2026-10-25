@@ -1,5 +1,9 @@
 # Stock-Predict-Mailer
 
+[![CI](https://github.com/Yyk-Lqh/Stock-Predict-Mailer/actions/workflows/ci.yml/badge.svg)](https://github.com/Yyk-Lqh/Stock-Predict-Mailer/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+
 本机运行的日频股票研究工具：数据接入与清洗 → 时点正确的研究基线 → 可安装的模型包 → 个人重训练与公平比较 → 带引用的分析报告与邮件预览。
 
 当前版本 **0.4.0**，单用户本机运行，不自动下单、不承诺预测效果。
@@ -84,6 +88,24 @@ uv run stock-mailer uploads
 | [模型能力下一步实施计划](docs/模型能力下一步实施计划.md) | A–F 阶段范围与剩余工作 |
 | [知识库与报告](docs/知识库与报告.md) / [邮件与调度](docs/邮件与调度.md) | 检索、引用、报告与发信边界 |
 | [自采数据接入与待办](docs/自采数据接入与待办.md) | 真实数据联调前置条件 |
+| [待认领任务](docs/待认领任务.md) | 未完成工作的拆分、依赖与验收口径 |
+
+## 参与贡献
+
+项目采用**公开仓库 + fork / Pull Request**：任何人都可以 fork 后提 PR，合并由维护者执行。有 Write 权限的协作者可以自行合并，但 `main` 受 Ruleset 保护，必须经过 PR 且 CI 通过。
+
+```powershell
+uv sync --extra trees --extra dev
+uv run ruff check src tests scripts
+uv run python -m unittest discover -s tests -q   # 基线 50 项通过
+python scripts/check_repo_hygiene.py
+```
+
+流程、代码约定（禁止 pickle 推理、契约变更须升版本、不得绕过训练授权门禁）、文档同步要求和权限说明见 [CONTRIBUTING.md](CONTRIBUTING.md)；想从哪开始可以看 [待认领任务](docs/待认领任务.md)。安全漏洞请按 [SECURITY.md](SECURITY.md) 私密上报，参与即表示同意 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。
+
+## 许可证
+
+[MIT](LICENSE) © 2026 Yyk-Lqh。可自由使用、修改与再分发，需保留版权与许可声明；软件按"现状"提供，不附带任何担保。
 
 ## 数据与凭证
 

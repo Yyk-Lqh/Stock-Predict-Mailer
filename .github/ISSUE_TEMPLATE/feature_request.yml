@@ -1,0 +1,55 @@
+name: 功能建议
+description: 提出新能力或改进，并说明验收标准
+title: "[feature] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        本项目对"完成"的定义较严：需要可复现测试 + 文档 + 明确的边界声明。请尽量写清验收标准。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 当前哪个流程做不到、代价是什么
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      description: 与现有阶段（A–F、数据接入、知识库、邮件）的关系
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 什么样的测试或证据才能证明完成
+      placeholder: |
+        - 新增 N 项测试覆盖 ...
+        - 文档说明 ...
+        - 不宣称 ...
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 是否涉及已声明的边界
+      description: 涉及以下边界时，需要先讨论设计
+      options:
+        - 不涉及
+        - 任务契约或标签定义变更
+        - 模型格式或序列化变更
+        - 多用户身份与隔离
+        - 真实数据授权或行情来源
+        - 对外发送（邮件/API）
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 自查
+      options:
+        - label: 我已阅读 README 的状态表与使用边界
+        - label: 我已搜索是否存在重复建议

@@ -1,0 +1,66 @@
+name: 缺陷报告
+description: 报告可复现的错误或与文档不符的行为
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先搜索已有 issue。安全漏洞请走仓库 Security → Report a vulnerability，不要在此披露。
+  - type: input
+    id: version
+    attributes:
+      label: 版本或提交
+      description: 版本号或 git 提交短哈希
+      placeholder: "0.4.0 / 14f41e2"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影响范围
+      options:
+        - 数据接入与清洗（intake）
+        - 快照与时点（data/contracts）
+        - 平台训练与发布（model_registry）
+        - 签名包与安装（model_packages）
+        - 私有训练队列（model_training）
+        - 比较与切换（compare/select）
+        - 知识库与报告（knowledge/report）
+        - 邮件与调度（delivery）
+        - 文档
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 命令、输入与参数越具体越好；合成数据可用 `demo-data` 生成
+      placeholder: |
+        1. uv run stock-mailer demo-data --days 200 --stocks 6
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 粘贴脱敏后的报错与关键日志；不要包含真实行情、密钥或个人信息
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 自查
+      options:
+        - label: 已用最新 main 复现
+        - label: 已运行 `uv run python -m unittest discover -s tests -q`
+        - label: 内容不包含真实数据、密钥或个人信息
+          required: true

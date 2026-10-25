@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞或密钥泄露
+    url: https://github.com/Yyk-Lqh/Stock-Predict-Mailer/security/advisories/new
+    about: 请私密报告，不要开公开 issue
+  - name: 使用与命令说明
+    url: https://github.com/Yyk-Lqh/Stock-Predict-Mailer/blob/main/docs/%E5%B9%B3%E5%8F%B0%E6%A8%A1%E5%9E%8B%E5%91%BD%E4%BB%A4%E4%B8%8E%E9%AA%8C%E6%94%B6.md
+    about: 先看命令、门禁与限制，再判断是否为缺陷

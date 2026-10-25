@@ -1,0 +1,38 @@
+name: 认领任务
+description: 从待认领清单中领取一项工作
+title: "[task] "
+labels: ["task", "help wanted"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        待认领清单见 [docs/待认领任务.md](https://github.com/Yyk-Lqh/Stock-Predict-Mailer/blob/main/docs/%E5%BE%85%E8%AE%A4%E9%A2%86%E4%BB%BB%E5%8A%A1.md)。
+        请在动手前说明你的方案，避免与其他人的改动冲突。
+  - type: input
+    id: item
+    attributes:
+      label: 任务编号
+      placeholder: "C-1 / D-2"
+    validations:
+      required: true
+  - type: textarea
+    id: plan
+    attributes:
+      label: 实施思路
+      description: 打算改哪些模块、如何测试、是否影响既有契约
+    validations:
+      required: true
+  - type: textarea
+    id: availability
+    attributes:
+      label: 计划与可分片
+      description: 预计几个 PR、是否需要先有前置改动
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 自查
+      options:
+        - label: 已阅读 CONTRIBUTING 的代码约定
+          required: true
+        - label: 已确认该任务未被他人认领
+          required: true

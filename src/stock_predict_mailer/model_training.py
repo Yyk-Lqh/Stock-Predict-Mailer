@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
+import threading
 import time as clock
 import uuid
 from collections import defaultdict
@@ -29,12 +31,13 @@ import numpy as np
 from scipy.stats import rankdata
 
 from . import dataset_auth
+from .calendar import market_context
 from .contracts import contract_id, dataset_compatible, prepare_rows, validate_contract
 from .core import Config, atomic_write, connect, digest, now, timestamp, write_json
 from .data import load_snapshot
-from .model_registry import get_model, identifier, owner_key, personal_model_folder
+from .model_registry import get_model, identifier, model_scores, owner_key, personal_model_folder
 from .model_registry import schema as registry_schema
-from .native_models import ALGORITHMS, native_predict
+from .native_models import LOADABLE, capability
 from .research import metrics
 
 MIN_TRAIN_DATES = 60
@@ -46,7 +49,11 @@ DEFAULT_TIMEOUT_SECONDS = 300
 DEFAULT_MAX_ROWS = 200_000
 MAX_ROWS_LIMIT = 2_000_000
 STALE_HEARTBEAT_SECONDS = 120
-METHODS = ("full_retrain",)
+METHODS = ("full_retrain", "continue_train")
+DEFAULT_ADDITIONAL_ROUNDS = 50
+COMPARISON_BUDGET = 20
+MIN_SEGMENT_DATES = 10
+_CLAIM_LOCK = threading.Lock()
 
 
 def schema(con) -> None:
@@ -69,6 +76,26 @@ def schema(con) -> None:
         snapshot_id TEXT NOT NULL, cutoff TEXT NOT NULL, verdict TEXT NOT NULL,
         sha256 TEXT NOT NULL, created_at TEXT NOT NULL);
     """)
+    # Priority and per-method budgets were added after the first queue existed;
+    # migrate in place so an old workspace keeps its jobs.
+    spec_columns = {row[1] for row in con.execute("PRAGMA table_info(training_specs)")}
+    if "additional_rounds" not in spec_columns:
+        con.execute("ALTER TABLE training_specs ADD COLUMN additional_rounds INTEGER NOT NULL DEFAULT 0")
+    job_columns = {row[1] for row in con.execute("PRAGMA table_info(training_jobs)")}
+    if "priority" not in job_columns:
+        con.execute("ALTER TABLE training_jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
+
+
+def _sqlite_retry(action, *, attempts: int = 8, base: float = 0.02):
+    """Retry a short write when parallel workers contend for the SQLite lock."""
+    for attempt in range(attempts):
+        try:
+            return action()
+        except sqlite3.OperationalError:
+            if attempt == attempts - 1:
+                raise
+            clock.sleep(base * (attempt + 1))
+    raise AssertionError("unreachable")
 
 
 def training_folder(cfg: Config, owner: str, job_id: str) -> Path:
@@ -98,9 +125,13 @@ def _update(cfg: Config, job_id: str, **fields) -> None:
     if not fields:
         return
     assignments = ", ".join(f"{name}=?" for name in fields)
-    with connect(cfg) as con:
-        schema(con)
-        con.execute(f"UPDATE training_jobs SET {assignments} WHERE job_id=?", (*fields.values(), job_id))
+
+    def apply() -> None:
+        with connect(cfg) as con:
+            schema(con)
+            con.execute(f"UPDATE training_jobs SET {assignments} WHERE job_id=?", (*fields.values(), job_id))
+
+    _sqlite_retry(apply)
 
 
 def _visible_job(cfg: Config, job_id: str, *, prefix: str = "") -> dict:
@@ -118,25 +149,40 @@ def _spec(cfg: Config, spec_id: str) -> dict:
 
 
 def submit_training(cfg: Config, parent_version: str, snapshot: str, cutoff: str, *, method: str = "full_retrain",
-                    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS, max_rows: int = DEFAULT_MAX_ROWS,
-                    allow_unverified_real: bool = False) -> dict:
+                    additional_rounds: int = DEFAULT_ADDITIONAL_ROUNDS,
+                    priority: int = 0, timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+                    max_rows: int = DEFAULT_MAX_ROWS, allow_unverified_real: bool = False) -> dict:
     if method not in METHODS:
-        raise ValueError("only same-recipe full retraining is implemented; residual adaptation needs time "
-                         "cross-fitting and is not part of this batch")
+        raise ValueError("unsupported training method; residual adaptation uses the dedicated residual-fit command")
     if type(timeout_seconds) is not int or not MIN_TIMEOUT_SECONDS <= timeout_seconds <= MAX_TIMEOUT_SECONDS:
         raise ValueError(f"timeout budget must be an integer in {MIN_TIMEOUT_SECONDS}..{MAX_TIMEOUT_SECONDS} seconds")
     if type(max_rows) is not int or not 1000 <= max_rows <= MAX_ROWS_LIMIT:
         raise ValueError(f"row budget must be an integer in 1000..{MAX_ROWS_LIMIT}")
+    if type(priority) is not int or not 0 <= priority <= 100:
+        raise ValueError("priority must be an integer in 0..100")
     timestamp(cutoff)
-    parent, _, state = get_model(cfg, parent_version)
+    parent, parent_payload, state = get_model(cfg, parent_version)
     if state["status"] not in ("published", "ready"):
         raise ValueError("parent model must be a published demo or a completed personal version")
     if state["status"] == "published" and state["channel"] != "demo":
         raise ValueError("only demo-channel parents are supported")
+    declared = capability(parent["algorithm"])
+    if method == "continue_train":
+        if not declared["supports_continue"]:
+            raise ValueError(f"{parent['algorithm']} cannot continue training: {declared.get('reason', 'no partial training state')}")
+        if type(additional_rounds) is not int or not 1 <= additional_rounds <= declared["max_additional_rounds"]:
+            raise ValueError(f"additional rounds must be an integer in 1..{declared['max_additional_rounds']} "
+                             f"for {parent['algorithm']}")
+        if not parent_payload:
+            raise ValueError("parent has no native artifact to continue from")
+    elif additional_rounds != 0 and additional_rounds != DEFAULT_ADDITIONAL_ROUNDS:
+        raise ValueError("additional rounds only apply to continue_train")
+    rounds = additional_rounds if method == "continue_train" else 0
     dataset_auth.require(cfg, snapshot, "personal_training")
     data_manifest, raw = load_snapshot(cfg, snapshot)
     dataset_compatible(data_manifest, parent["contract"], allow_unverified_real)
-    features, rows = prepare_rows(raw, parent["contract"], cutoff)
+    sessions, actions = market_context(cfg, parent["contract"])
+    features, rows = prepare_rows(raw, parent["contract"], cutoff, sessions=sessions, actions=actions)
     dates = {row["date"] for row in rows}
     securities = {row["security_id"] for row in rows}
     if len(dates) < MIN_TRAIN_DATES or len(securities) < MIN_TRAIN_SECURITIES:
@@ -151,6 +197,7 @@ def submit_training(cfg: Config, parent_version: str, snapshot: str, cutoff: str
             "max_seconds": timeout_seconds, "max_rows": max_rows,
             "allow_unverified_real": bool(allow_unverified_real),
             "parent_train_label_end": parent["train_label_end"],
+            "additional_rounds": rounds,
             "synthetic": bool(data_manifest["synthetic"])}
     spec_sha256 = digest(json.dumps(spec, sort_keys=True, separators=(",", ":"), allow_nan=False).encode())
     existing_spec = _row(cfg, "SELECT * FROM training_specs WHERE owner=? AND spec_sha256=?", (cfg.principal, spec_sha256))
@@ -161,15 +208,21 @@ def submit_training(cfg: Config, parent_version: str, snapshot: str, cutoff: str
         warnings.append("training window ends at or before the parent label end; a later common test window is required before comparison")
     if len(features) == 0:
         warnings.append("no feature rows were prepared; prediction after training may be limited")
+    if method == "continue_train":
+        warnings.append(f"continuing {parent['algorithm']} for {rounds} additional rounds; this is bounded incremental "
+                        "training, not a fresh fit, and must be compared against a full retrain")
     with connect(cfg) as con:
         schema(con)
         registry_schema(con)
         con.execute("BEGIN IMMEDIATE")
         if existing_spec is None:
-            con.execute("""INSERT INTO training_specs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            con.execute("""INSERT INTO training_specs (spec_id, owner, spec_sha256, parent_version, snapshot_id,
+                contract_id, contract, method, algorithm, train_cutoff, max_seconds, max_rows,
+                allow_unverified_real, created_at, additional_rounds)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (spec_id, cfg.principal, spec_sha256, parent_version, snapshot, spec["contract_id"],
                          json.dumps(contract, sort_keys=True), method, spec["algorithm"], cutoff,
-                         timeout_seconds, max_rows, int(bool(allow_unverified_real)), now()))
+                         timeout_seconds, max_rows, int(bool(allow_unverified_real)), now(), rounds))
         previous = con.execute("""SELECT job_id, status FROM training_jobs WHERE spec_id=?
             ORDER BY created_at DESC LIMIT 1""", (spec_id,)).fetchone()
         if previous is not None and previous["status"] in ("queued", "preparing", "training", "succeeded"):
@@ -177,12 +230,13 @@ def submit_training(cfg: Config, parent_version: str, snapshot: str, cutoff: str
                     "merged": True, "reason": "an identical spec is already queued, running or completed",
                     "parent_version": parent_version, "warnings": warnings}
         con.execute("""INSERT INTO training_jobs (job_id, spec_id, owner, status, stage, progress,
-            created_at, cancel_requested) VALUES (?, ?, ?, 'queued', 'queued', NULL, ?, 0)""",
-                    (job_id, spec_id, cfg.principal, now()))
+            created_at, cancel_requested, priority) VALUES (?, ?, ?, 'queued', 'queued', NULL, ?, 0, ?)""",
+                    (job_id, spec_id, cfg.principal, now(), priority))
     folder = training_folder(cfg, cfg.principal, job_id)
     write_json(folder / "spec.json", {**spec, "spec_id": spec_id, "spec_sha256": spec_sha256, "job_id": job_id})
-    return {"job_id": job_id, "spec_id": spec_id, "status": "queued", "merged": False,
+    return {"job_id": job_id, "spec_id": spec_id, "status": "queued", "merged": False, "priority": priority,
             "parent_version": parent_version, "algorithm": spec["algorithm"], "method": method,
+            "additional_rounds": rounds, "capability": declared,
             "snapshot_id": snapshot, "train_cutoff": cutoff, "budget": {"max_seconds": timeout_seconds, "max_rows": max_rows},
             "maturity_rows": len(rows), "maturity_dates": len(dates), "warnings": warnings}
 
@@ -196,7 +250,9 @@ def train_status(cfg: Config, job_id: str) -> dict:
         progress = json.loads((folder / "progress.json").read_text(encoding="utf-8"))
     return {"job": job, "progress": progress,
             "spec": {key: spec[key] for key in ("parent_version", "snapshot_id", "contract_id", "method",
-                                                "algorithm", "train_cutoff", "max_seconds", "max_rows")},
+                                                "algorithm", "train_cutoff", "max_seconds", "max_rows",
+                                                "additional_rounds")},
+            "capability": capability(spec["algorithm"]) if spec["algorithm"] in ("zero", "momentum", "ridge", "lightgbm") else None,
             "result_version": job["result_version"]}
 
 
@@ -238,10 +294,19 @@ def recover_stale(cfg: Config, stale_seconds: int = STALE_HEARTBEAT_SECONDS) -> 
 
 
 def _claim_next(cfg: Config) -> dict | None:
-    with connect(cfg) as con:
+    # Workers execute in parallel but claim one at a time: SQLite would otherwise
+    # spend the whole claim inside a write-lock retry loop.
+    return _sqlite_retry(lambda: _claim_once(cfg))
+
+
+def _claim_once(cfg: Config) -> dict | None:
+    with _CLAIM_LOCK, connect(cfg) as con:
         schema(con)
         con.execute("BEGIN IMMEDIATE")
-        row = con.execute("SELECT * FROM training_jobs WHERE status='queued' ORDER BY created_at, rowid LIMIT 1").fetchone()
+        # Higher priority first, then oldest first. The guarded UPDATE below keeps
+        # two workers from claiming the same row.
+        row = con.execute("""SELECT * FROM training_jobs WHERE status='queued'
+            ORDER BY priority DESC, created_at, rowid LIMIT 1""").fetchone()
         if row is None:
             return None
         changed = con.execute("""UPDATE training_jobs SET status='preparing', stage='preparing',
@@ -306,17 +371,25 @@ def _finalize(cfg: Config, job: dict, spec: dict, folder: Path) -> dict:
         return _finish_failure(cfg, job, "failed", "contract_mismatch", "child changed the persisted task contract")
     if manifest.get("parent_version") != spec["parent_version"] or manifest.get("training_snapshot") != spec["snapshot_id"]:
         return _finish_failure(cfg, job, "failed", "spec_mismatch", "child output does not match the persisted spec")
+    if manifest.get("method") != spec["method"]:
+        return _finish_failure(cfg, job, "failed", "method_mismatch", "child ran a different method than the persisted spec")
+    if spec["method"] == "continue_train" and manifest.get("continued_from") != spec["parent_version"]:
+        return _finish_failure(cfg, job, "failed", "parent_mismatch", "continued model does not record the frozen parent")
     target = personal_model_folder(cfg, job["owner"], version)
     if target.exists():
         return _finish_failure(cfg, job, "failed", "version_collision", "target personal version already exists")
     atomic_write(target / manifest["artifact"], payload)
     write_json(target / "manifest.json", manifest)
     manifest_bytes = (target / "manifest.json").read_bytes()
-    with connect(cfg) as con:
-        schema(con)
-        registry_schema(con)
-        con.execute("INSERT INTO registry_models VALUES (?, ?, ?, 'personal', 'trained', 'ready', NULL, ?, NULL)",
-                    (version, job["owner"], job["owner"], digest(manifest_bytes)))
+
+    def register() -> None:
+        with connect(cfg) as con:
+            schema(con)
+            registry_schema(con)
+            con.execute("INSERT INTO registry_models VALUES (?, ?, ?, 'personal', 'trained', 'ready', NULL, ?, NULL)",
+                        (version, job["owner"], job["owner"], digest(manifest_bytes)))
+
+    _sqlite_retry(register)
     _update(cfg, job["job_id"], status="succeeded", stage="done", finished_at=now(), heartbeat_at=now(),
             result_version=version, result_sha256=digest(manifest_bytes), error_category=None, error_message=None)
     return {"job_id": job["job_id"], "status": "succeeded", "model_version": version,
@@ -335,6 +408,14 @@ def _execute(cfg: Config, job: dict, *, poll: float, child_command: list[str] | 
         "workspace": str(cfg.workspace), "principal": owner, "timezone": cfg.timezone,
         "horizon": cfg.horizon, "top_k": cfg.top_k, "cost_bps": cfg.cost_bps, "job_folder": str(folder)})
     (folder / "cancel.flag").unlink(missing_ok=True)
+    if spec_record.get("method") == "continue_train":
+        # The child never reads the registry: the parent stages the frozen artifact
+        # next to the job so the child can only ever continue *this* model.
+        parent, parent_payload, _ = get_model(cfg, spec_record["parent_version"])
+        if parent["artifact"] != "model.txt" or not parent_payload:
+            return _finish_failure(cfg, job, "failed", "parent_not_continuable",
+                                   "the parent artifact is not a native LightGBM model string")
+        atomic_write(folder / "parent.model.txt", parent_payload)
     command = child_command or [sys.executable, "-m", "stock_predict_mailer.training_child",
                                 "--job", job_id, "--config", str(folder / "child-config.json")]
     started = clock.monotonic()
@@ -344,6 +425,7 @@ def _execute(cfg: Config, job: dict, *, poll: float, child_command: list[str] | 
     _update(cfg, job_id, worker_pid=process.pid, heartbeat_at=now())
     cancelled = timed_out = False
     last_stage = "preparing"
+    last_beat = clock.monotonic()
     while True:
         progress = _read_json(folder / "progress.json") or {}
         stage = progress.get("stage")
@@ -351,7 +433,9 @@ def _execute(cfg: Config, job: dict, *, poll: float, child_command: list[str] | 
             last_stage = stage
             _update(cfg, job_id, status="training", stage=stage,
                     progress=json.dumps({"stage": stage, "detail": progress.get("detail", "")}, ensure_ascii=False))
-        _update(cfg, job_id, heartbeat_at=now())
+        if clock.monotonic() - last_beat > 1.0:
+            last_beat = clock.monotonic()
+            _update(cfg, job_id, heartbeat_at=now())
         current = _row(cfg, "SELECT cancel_requested FROM training_jobs WHERE job_id=?", (job_id,))
         if current is not None and current["cancel_requested"]:
             (folder / "cancel.flag").write_text("cancel\n", encoding="utf-8")
@@ -382,22 +466,43 @@ def _execute(cfg: Config, job: dict, *, poll: float, child_command: list[str] | 
 
 
 def run_worker(cfg: Config, *, once: bool = True, poll: float = 0.2, child_command: list[str] | None = None,
-               stale_seconds: int = STALE_HEARTBEAT_SECONDS) -> dict:
-    """Run the single local training worker.
+               stale_seconds: int = STALE_HEARTBEAT_SECONDS, workers: int = 1) -> dict:
+    """Run local training workers.
+
+    Each worker claims a job through a guarded ``UPDATE ... WHERE status='queued'``,
+    so two workers can never run the same job; priority only decides *claim* order
+    and never preempts a job that is already running.
 
     ``child_command`` exists for supervisor tests only and is never reachable from
     the CLI; production calls always use the isolated training child module.
     """
+    if type(workers) is not int or not 1 <= workers <= 8:
+        raise ValueError("workers must be an integer in 1..8")
     recovered = recover_stale(cfg, stale_seconds)
-    executed = []
-    while True:
-        job = _claim_next(cfg)
-        if job is None:
-            break
-        executed.append(_execute(cfg, job, poll=poll, child_command=child_command))
-        if once:
-            break
-    return {"executed": executed, "recovered": recovered}
+    executed: list[dict] = []
+    lock = threading.Lock()
+
+    def drain() -> None:
+        while True:
+            job = _claim_next(cfg)
+            if job is None:
+                return
+            try:
+                result = _execute(cfg, job, poll=poll, child_command=child_command)
+            except Exception as exc:  # a worker thread must never die silently
+                result = _finish_failure(cfg, job, "failed", "worker_error", type(exc).__name__)
+            with lock:
+                executed.append(result)
+            if once:
+                return
+
+    threads = [threading.Thread(target=drain, name=f"train-worker-{index}", daemon=True)
+               for index in range(workers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return {"executed": executed, "recovered": recovered, "workers": workers}
 
 
 # ---------------------------------------------------------------- comparison
@@ -435,24 +540,93 @@ def _comparison_path(cfg: Config, comparison_id: str) -> Path:
     return cfg.workspace / "registry" / "comparisons" / owner_key(cfg.principal) / f"{identifier(comparison_id)}.json"
 
 
-def compare_models(cfg: Config, candidate_version: str, baseline_version: str, snapshot: str, cutoff: str) -> dict:
+def _segment_rank_ic(rows: list[dict], scores: np.ndarray, selector) -> dict[str, float]:
+    """Per-date rank IC inside each segment a selector assigns to every row."""
+    grouped: dict[str, dict[str, list[tuple[float, float]]]] = defaultdict(lambda: defaultdict(list))
+    for row, score in zip(rows, scores, strict=True):
+        segment = selector(row)
+        if segment is None:
+            continue
+        grouped[segment][row["date"]].append((row["y"], float(score)))
+    result = {}
+    for segment, days in grouped.items():
+        for day, group in days.items():
+            if len(group) < 3:
+                continue
+            target, predicted = np.array(group).T
+            if np.std(predicted) > 0 and np.std(target) > 0:
+                result.setdefault(segment, {})[day] = float(np.corrcoef(rankdata(target), rankdata(predicted))[0, 1])
+    return result
+
+
+def _liquidity_selector(rows: list[dict]):
+    """Split each cross-section at its median relative volume."""
+    medians: dict[str, float] = {}
+    grouped: dict[str, list[float]] = defaultdict(list)
+    for row in rows:
+        grouped[row["date"]].append(float(row["x"][4]))
+    for day, values in grouped.items():
+        medians[day] = float(np.median(values))
+    return lambda row: "high_volume" if float(row["x"][4]) > medians[row["date"]] else "low_volume"
+
+
+def _phase_selector(row: dict) -> str:
+    return "benchmark_up" if float(row["benchmark_return"]) > 0 else "benchmark_down"
+
+
+def _segment_comparison(rows: list[dict], candidate_scores: np.ndarray, baseline_scores: np.ndarray,
+                        name: str, selector) -> dict:
+    candidate = _segment_rank_ic(rows, candidate_scores, selector)
+    baseline = _segment_rank_ic(rows, baseline_scores, selector)
+    segments = {}
+    for segment in sorted(set(candidate) & set(baseline)):
+        common = sorted(set(candidate[segment]) & set(baseline[segment]))
+        if len(common) < MIN_SEGMENT_DATES:
+            segments[segment] = {"days": len(common), "verdict": "insufficient_evidence",
+                                 "note": f"only {len(common)} comparable dates in this segment; at least "
+                                         f"{MIN_SEGMENT_DATES} are needed"}
+            continue
+        differences = [candidate[segment][day] - baseline[segment][day] for day in common]
+        bootstrap = _block_bootstrap(differences)
+        if bootstrap["low"] > 0:
+            verdict = "candidate_improved"
+        elif bootstrap["high"] < 0:
+            verdict = "candidate_degraded"
+        else:
+            verdict = "inconclusive"
+        segments[segment] = {"days": len(common), "rank_ic_difference": bootstrap, "verdict": verdict}
+    missing = sorted((set(candidate) | set(baseline)) - set(segments))
+    for segment in missing:
+        segments[segment] = {"days": 0, "verdict": "insufficient_evidence",
+                             "note": "the segment was not comparable across both models"}
+    return {"split": name, "segments": segments}
+
+
+def _comparison_attempts(cfg: Config) -> int:
+    row = _row(cfg, "SELECT count(*) AS attempts FROM model_comparisons WHERE owner=?", (cfg.principal,))
+    return int(row["attempts"]) if row else 0
+
+
+def compare_models(cfg: Config, candidate_version: str, baseline_version: str, snapshot: str, cutoff: str,
+                   *, segments: bool = False) -> dict:
     candidate, candidate_payload, candidate_state = get_model(cfg, candidate_version)
     baseline, baseline_payload, baseline_state = get_model(cfg, baseline_version)
     if candidate["contract_id"] != baseline["contract_id"] or validate_contract(candidate["contract"]) != validate_contract(baseline["contract"]):
         raise ValueError("models with different labels, features, benchmark or universe cannot be compared")
-    if candidate["algorithm"] not in ALGORITHMS or baseline["algorithm"] not in ALGORITHMS:
+    if candidate["algorithm"] not in LOADABLE or baseline["algorithm"] not in LOADABLE:
         raise ValueError("unsupported model algorithm")
     data_manifest, raw = load_snapshot(cfg, snapshot)
     dataset_compatible(data_manifest, candidate["contract"])
-    _, rows = prepare_rows(raw, candidate["contract"], cutoff)
+    sessions, actions = market_context(cfg, candidate["contract"])
+    _, rows = prepare_rows(raw, candidate["contract"], cutoff, sessions=sessions, actions=actions)
     boundary = max(candidate["train_label_end"], baseline["train_label_end"])
     test = [row for row in rows if row["date"] > boundary]
     days = sorted({row["date"] for row in test})
     if len(days) < MIN_COMPARE_DATES:
         raise ValueError(f"need at least {MIN_COMPARE_DATES} matured test dates strictly after both training label "
                          f"ends ({boundary}); got {len(days)} days")
-    candidate_scores = native_predict(candidate["algorithm"], candidate_payload, test)
-    baseline_scores = native_predict(baseline["algorithm"], baseline_payload, test)
+    candidate_scores = model_scores(cfg, candidate, candidate_payload, test)
+    baseline_scores = model_scores(cfg, baseline, baseline_payload, test)
     candidate_ic = _daily_rank_ic(test, candidate_scores)
     baseline_ic = _daily_rank_ic(test, baseline_scores)
     common = sorted(set(candidate_ic) & set(baseline_ic))
@@ -466,8 +640,23 @@ def compare_models(cfg: Config, candidate_version: str, baseline_version: str, s
         verdict = "candidate_degraded"
     else:
         verdict = "inconclusive"
+    attempts = _comparison_attempts(cfg)
+    budget = COMPARISON_BUDGET
+    budget_note = None
+    if attempts >= budget:
+        # Repeated looks at overlapping windows inflate the chance of a false
+        # positive, so past the budget the honest answer is "not evidence".
+        budget_note = (f"{attempts} comparisons are already recorded against a budget of {budget}; "
+                       "this result is exploratory until a fresh forward window is available")
+        verdict = "insufficient_evidence"
+    segment_reports = {}
+    if segments:
+        selector = _liquidity_selector(test)
+        segment_reports["liquidity"] = _segment_comparison(test, candidate_scores, baseline_scores, "liquidity", selector)
+        segment_reports["phase"] = _segment_comparison(test, candidate_scores, baseline_scores, "market_phase", _phase_selector)
     identity = {"schema_version": 1, "owner": cfg.principal, "candidate": candidate_version,
-                "baseline": baseline_version, "snapshot": snapshot, "cutoff": cutoff}
+                "baseline": baseline_version, "snapshot": snapshot, "cutoff": cutoff,
+                "segments": bool(segments)}
     comparison_id = digest(json.dumps(identity, sort_keys=True).encode())
     path = _comparison_path(cfg, comparison_id)
     if path.exists():
@@ -481,11 +670,15 @@ def compare_models(cfg: Config, candidate_version: str, baseline_version: str, s
               "metrics": {"candidate": metrics(test, candidate_scores),
                           "baseline": metrics(test, baseline_scores)},
               "rank_ic_difference": bootstrap, "verdict": verdict,
+              "segments": segment_reports,
+              "multiple_comparison": {"attempts_before": attempts, "budget": budget,
+                                      "remaining": max(budget - attempts - 1, 0), "note": budget_note},
               "model_scope": {"candidate": candidate_state["scope"], "baseline": baseline_state["scope"]},
               "auto_switched": False,
               "limitations": ["Only data later than both training label ends is used; earlier dates are excluded",
                               "Paired rank-IC differences with a block bootstrap are not a market-constrained backtest",
                               "Repeated comparisons on the same window can still overfit the test period",
+                              "Segmented results are descriptive; per-segment sample sizes are smaller, so their intervals are wider",
                               "Scores from different algorithms are not calibrated probabilities"]}
     raw_record = json.dumps(record, ensure_ascii=False, indent=2, allow_nan=False).encode("utf-8")
     atomic_write(path, raw_record)

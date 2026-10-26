@@ -9,10 +9,11 @@ from importlib.metadata import version
 from pathlib import Path
 
 from . import dataset_auth
+from .calendar import market_context
 from .contracts import contract_id, dataset_compatible, prepare_rows, validate_contract
 from .core import Config, atomic_write, connect, digest, now, write_json
 from .data import load_snapshot
-from .native_models import ALGORITHMS, fit_native, native_predict
+from .native_models import ARTIFACTS, LOADABLE, fit_native, native_predict
 from .research import cost_diagnostics, metrics
 
 
@@ -67,10 +68,13 @@ def get_model(cfg: Config, model_version: str) -> tuple[dict, bytes, dict]:
     if manifest["version"] != model_version or contract_id(contract) != manifest["contract_id"]:
         raise ValueError("model contract identity mismatch")
     algorithm = manifest["algorithm"]
-    filename = "model.txt" if algorithm == "lightgbm" else "model.json"
-    if algorithm not in ALGORITHMS or manifest["artifact"] != filename:
+    if algorithm not in LOADABLE:
         raise ValueError("unsupported native model")
-    payload = (folder / filename).read_bytes()
+    if manifest["artifact"] != ARTIFACTS[algorithm]:
+        raise ValueError("unsupported native model artifact")
+    if algorithm == "residual" and not manifest.get("residual_of"):
+        raise ValueError("derived model must record its frozen parent")
+    payload = (folder / ARTIFACTS[algorithm]).read_bytes()
     if digest(payload) != manifest["artifact_sha256"]:
         raise ValueError("model artifact integrity check failed")
     if row["status"] == "published":
@@ -79,6 +83,19 @@ def get_model(cfg: Config, model_version: str) -> tuple[dict, bytes, dict]:
             raise ValueError("publication integrity check failed")
         manifest = {**manifest, "publication": json.loads(publication)}
     return manifest, payload, row
+
+
+def model_scores(cfg: Config, manifest: dict, payload: bytes, rows: list[dict]):
+    """Score rows with any loadable model, including derived adapters.
+
+    Derived formats need the registry, so every scoring path funnels through here
+    instead of calling ``native_predict`` directly.
+    """
+    if manifest["algorithm"] == "residual":
+        from .residual import residual_scores
+
+        return residual_scores(cfg, manifest, payload, rows)
+    return native_predict(manifest["algorithm"], payload, rows)
 
 
 def train_platform(cfg: Config, snapshot: str, contract: dict, cutoff: str, algorithm: str = "ridge",
@@ -92,7 +109,8 @@ def train_platform(cfg: Config, snapshot: str, contract: dict, cutoff: str, algo
         raise ValueError("snapshot is not authorized for platform training; uploaded user data is not auto-authorized "
                          "(the owner may grant it with dataset-authorize --platform)")
     dataset_compatible(data_manifest, contract, allow_unverified_real)
-    _, rows = prepare_rows(raw, contract, cutoff)
+    sessions, actions = market_context(cfg, contract)
+    _, rows = prepare_rows(raw, contract, cutoff, sessions=sessions, actions=actions)
     dates = {row["date"] for row in rows}
     if len(dates) < 60 or len({row["security_id"] for row in rows}) < 3:
         raise ValueError("need at least 60 matured feature dates and 3 securities")
@@ -128,11 +146,12 @@ def evaluate_model(cfg: Config, model_version: str, snapshot: str, cutoff: str, 
     manifest, payload, _ = get_model(cfg, model_version)
     data_manifest, raw = load_snapshot(cfg, snapshot)
     dataset_compatible(data_manifest, manifest["contract"], allow_unverified_real)
-    _, all_rows = prepare_rows(raw, manifest["contract"], cutoff)
+    sessions, actions = market_context(cfg, manifest["contract"])
+    _, all_rows = prepare_rows(raw, manifest["contract"], cutoff, sessions=sessions, actions=actions)
     rows = [row for row in all_rows if row["date"] > manifest["train_label_end"]]
     if len({row["date"] for row in rows}) < 30:
         raise ValueError("need 30 matured evaluation dates strictly after training label end")
-    scores = native_predict(manifest["algorithm"], payload, rows)
+    scores = model_scores(cfg, manifest, payload, rows)
     evaluation_id = digest(uuid.uuid4().bytes)
     result = {"evaluation_id": evaluation_id, "model_version": model_version,
               "contract_id": manifest["contract_id"], "snapshot_id": snapshot,
@@ -264,12 +283,13 @@ def predict_snapshot(cfg: Config, snapshot: str, cutoff: str, model_version: str
         channel = state["channel"]
     data_manifest, raw = load_snapshot(cfg, snapshot)
     dataset_compatible(data_manifest, manifest["contract"])
-    features, _ = prepare_rows(raw, manifest["contract"], cutoff)
+    sessions, actions = market_context(cfg, manifest["contract"])
+    features, _ = prepare_rows(raw, manifest["contract"], cutoff, sessions=sessions, actions=actions)
     if not features:
         raise ValueError("no feature-complete rows available at the requested cutoff")
     latest = max(row["date"] for row in features)
     rows = [row for row in features if row["date"] == latest]
-    scores = native_predict(manifest["algorithm"], payload, rows)
+    scores = model_scores(cfg, manifest, payload, rows)
     missing = sorted(set(manifest["contract"]["universe"]) - {row["security_id"] for row in rows})
     identity = {"model_version": model_version, "snapshot": snapshot, "cutoff": cutoff,
                 "owner": cfg.principal, "top_k": cfg.top_k, "contract_id": manifest["contract_id"]}

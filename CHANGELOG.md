@@ -1,8 +1,21 @@
 # 变更记录
 
-## 未发布
+## 0.5.0
 
-- 新增《接手与移交指南》：给出接手方从环境复现、代码阅读顺序、模型链路演练到交接判定清单的完整路径，并单独列出不走 Git 的资产（签名私钥、数据授权、SMTP、仓库 Admin）与已知的不可宣称事项。仅文档，无行为变更。
+- 自采数据：新增认证交易日历（`calendar-import`、`calendar-status`）与公司行动因子（`actions-import`）。缺交易所交易日时按窗口跳过而不是压缩相邻日；复权口径只对 `backward_adjusted` 契约生效，`forward_adjusted` 明确拒绝。
+- 自采增量更新（`update-bars`、`update-history`）：把每日文件合并为**新**快照而不覆盖旧快照，同值重复记为无变更，改写历史的重述直接拒绝，超出新鲜度阈值需 `--allow-stale` 才记录为过期更新。
+- 数据回放权利：授权记录新增 `replay` 用途并与既有库就地迁移；撤回后立即停止回放。新增特征漂移报告（`model-drift`、`drift-history`），按训练窗口分位分箱计算 PSI，分箱固定因此可复现。
+- 残差适配（`residual-fit`）：父模型字节不变，只在晚于父模型标签结束的日期上拟合 ridge 适配器；按日切分做带一行purge的时间交叉拟合，报告样本外 Rank IC 前后对比；用 `model-compare` 与同配方重训练比较，不宣称权重微调。
+- 队列能力：算法能力声明（只有 LightGBM 支持继续训练）；`train-submit --method continue_train --rounds N` 用 `init_model` 做有上限的追加轮次，父子版本不可变；`train-submit --priority` 与 `train-worker --workers` 支持优先级与并行领取，同一任务不会被重复执行。
+- 产物保留（`model-retention`、`retention-log`）：已选、已发布、被其他版本依赖的版本永不清理；默认 dry-run，删除前先写审计记录。
+- 比较增强（`model-compare --segments`）：按流动性与市场阶段分段，记录比较次数与预算，预算耗尽后结论降级为 `insufficient_evidence`。
+- 预测闭环：`prediction-report` 把预测固化为报告，锁定 model_version、contract_id、snapshot 与预测 ID，切换模型不改写历史报告；无证据不补造引用。
+- 生成接口（`--generate`）：默认确定性模板；只有显式开关 + 环境变量指定 + 允许清单内的提供方才会被调用，只发送结构化排序与引用编号，失败/空结果/未列入清单一律降级为模板。
+- 影子运行与 stable 治理：`shadow-record`、`shadow-evaluate`、`shadow-status` 记录并评分已成熟的预测；`stable-promote` 要求至少十个成熟影子日 + 显式授权 + 备注，`stable-revoke` 可撤销；发布者密钥撤销列表（`key-revoke`、`key-status`）使已撤销密钥不能再安装新包。
+- 跨平台用例补强：原子替换在有并发读者时仍完成且不残留暂存文件、中文含空格路径、非契约时区的截止时间映射、天真时间戳拒绝。
+- 回归测试 50 → 103 项；邮件发送与真实 SMTP 闭环按用户要求仍留待后续。
+
+- 新增《接手与移交指南》：给出接手方从环境复现、代码阅读顺序、模型链路演练到交接判定清单的完整路径，并单独列出不走 Git 的资产（签名私钥、数据授权、SMTP、仓库 Admin）与已知的不可宣称事项。
 
 ## 0.4.0
 

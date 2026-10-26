@@ -6,7 +6,7 @@
 
 本机运行的日频股票研究工具：数据接入与清洗 → 时点正确的研究基线 → 可安装的模型包 → 个人重训练与公平比较 → 带引用的分析报告与邮件预览。
 
-当前版本 **0.4.0**，单用户本机运行，不自动下单、不承诺预测效果。
+当前版本 **0.5.0**，单用户本机运行，不自动下单、不承诺预测效果。
 
 ## 当前状态
 
@@ -17,10 +17,14 @@
 | 阶段 6B 真实数据联调 | 待数据 | 缺真实授权数据、公司行动、真实交易日历与影子运行 |
 | 模型阶段 A 固定契约与独立推理 | 完成 | 固定基准/股票池/特征顺序/标签，训练与预测分离 |
 | 模型阶段 B 签名演示包 | 完成 | Ed25519 签名、外部公钥信任、无训练数据安装推理 |
-| 模型阶段 C 私有队列与个人版本（第一批） | 完成 | 快照用途授权、训练队列、owner 命名空间、共同测试集比较、显式切换 |
-| 模型阶段 C 剩余 / D / E / F | 未开始 | 残差适配、LightGBM 继续训练、stable 发布、生成 API 与邮件闭环、共享服务隔离 |
+| 模型阶段 C 私有队列与个人版本 | 完成 | 快照用途授权、训练队列、owner 命名空间、共同测试集比较、显式切换 |
+| C 剩余：残差适配、多 worker、保留策略、分段比较 | 完成 | 时间交叉拟合适配器、优先级与并行 worker、审计式清理、流动性与市场阶段分段 |
+| 模型阶段 D 继续训练与回放权利 | 完成 | 算法能力声明、有上限的 `init_model` 追加训练、回放授权与特征漂移报告 |
+| 自采数据 F：日历、公司行动、增量更新、影子运行 | 完成 | 认证交易日历、复权因子、append-only 增量更新与新鲜度门禁、十日影子运行与 stable 治理 |
+| 预测闭环 E | 报告与生成接口完成 | 预测固化报告、生成接口白名单与降级；**邮件发送按用户要求留待后续** |
+| 共享服务隔离 | 未开始 | 需要真正的身份与会话层，本机 principal 不能替代 |
 
-50 项回归测试通过。所有模型能力目前仅覆盖 synthetic/demo 通道与演示数据，**不是**可用的实盘模型。
+103 项回归测试通过。所有模型能力目前仅覆盖 synthetic/demo 通道与演示数据，**不是**可用的实盘模型。
 
 ## 快速开始
 
@@ -53,9 +57,16 @@ uv run stock-mailer uploads
 | 平台训练与发布（演示通道） | `model-train`、`model-evaluate`、`model-publish`、`model-select --allow-demo` |
 | 只读预测 | `model-predict <snapshot_id> --cutoff <iso> --allow-demo` |
 | 签名包 | `model-keygen`、`model-export`、`model-install --trust-key <pub>` |
-| 数据授权 | `dataset-auth <id>`、`dataset-authorize <id> --platform --note "..."` |
-| 个人重训练 | `train-submit`、`train-worker`、`train-status`、`train-list`、`train-cancel` |
-| 个人模型比较与切换 | `model-compare <candidate> --baseline <parent> ...`、`model-select --confirm-personal`、`model-predict --allow-personal` |
+| 数据授权 | `dataset-auth <id>`、`dataset-authorize <id> --platform --note "..."`、`--replay/--revoke-replay` |
+| 交易日历与公司行动 | `calendar-import <csv> --market <m> --source "..."`、`calendar-status`、`actions-import <csv>` |
+| 自采增量更新 | `update-bars <files...> --cutoff <iso>`、`update-history` |
+| 漂移诊断 | `model-drift <version> --snapshot <id> --cutoff <iso>`、`drift-history` |
+| 个人重训练 | `train-submit [--method continue_train --rounds N] [--priority N]`、`train-worker [--workers N]`、`train-status`、`train-list`、`train-cancel` |
+| 残差适配 | `residual-fit <parent> --snapshot <id> --cutoff <iso>` |
+| 个人模型比较与切换 | `model-compare <candidate> --baseline <parent> ... [--segments]`、`model-select --confirm-personal`、`model-predict --allow-personal` |
+| 预测报告与影子运行 | `prediction-report <prediction_id> [--generate]`、`shadow-record`、`shadow-evaluate`、`shadow-status` |
+| 发布治理 | `stable-promote --authorize --note "..."`、`stable-revoke --reason "..."`、`release-status`、`key-revoke`、`key-status` |
+| 产物保留 | `model-retention --keep N [--apply]`、`retention-log` |
 | 知识库与报告 | `kb-add`、`kb-search`、`kb-revoke`、`report <experiment_id>` |
 | 邮件 | `queue-mail`、`outbox`、`send-mail <outbox_id>` |
 
@@ -69,7 +80,12 @@ uv run stock-mailer uploads
 - **授权先行**：快照导入即绑定 owner。用户导入数据默认禁止平台训练，平台训练需 `dataset-authorize --platform` 并记录备注；撤回立即生效。
 - **私有队列**：训练规格（父版本/数据/契约/切分/预算）不可变并可合并去重；单 worker 在清洗过环境变量的子进程中执行，报告阶段进度，支持取消、超时、失败与心跳中断，四种情况都不产生版本、不改写当前选择。
 - **命名空间隔离**：个人产物只写 `registry/personal/<owner_key>/versions`，平台 `registry/versions` 不接受个人写入；他人版本不可见、不可取消、不可加载。
-- **公平比较**：只在晚于双方训练标签结束的共同日期上成对比较，逐日 Rank IC 差值按日区块 bootstrap 给区间；区间跨零记为「未证明改善」，比较结果不自动切换模型。
+- **公平比较**：只在晚于双方训练标签结束的共同日期上成对比较，逐日 Rank IC 差值按日区块 bootstrap 给区间；区间跨零记为「未证明改善」，比较结果不自动切换模型。分段比较同时给出流动性高低与市场阶段两组结论，比较次数超出预算即降级为「证据不足」。
+- **残差适配**：父模型字节不变，只在父模型没见过的日期上拟合适配器，并做带 purge 的时间交叉拟合；产物写入 owner 命名空间，必须与同配方重训练在同一测试集比较，不宣称权重微调。
+- **继续训练**：只有声明支持部分训练状态的算法（当前仅 LightGBM）可排队，追加轮次有上限，父子版本不可变，且必须与完整重训练比较。
+- **自采数据可追溯**：增量更新生成新快照而非覆盖，重述冲突与过期行情显式拒绝；认证日历缺日跳过而不压缩，复权因子只对调整口径契约生效。
+- **报告冻结**：预测报告锁定模型版本、契约、快照与预测 ID，之后切换模型不会改写历史报告。
+- **发布治理**：stable 发布需至少十个成熟影子日 + 显式授权 + 备注，可撤销；发布者密钥可加入撤销列表，撤销后不能再安装新包。
 
 设计目标见 [平台基础模型与用户自主训练方案](docs/平台基础模型与用户自主训练方案.md)，推进顺序见 [模型能力下一步实施计划](docs/模型能力下一步实施计划.md)。
 
@@ -93,12 +109,14 @@ uv run stock-mailer uploads
 
 ## 参与贡献
 
-项目采用**公开仓库 + fork / Pull Request**：任何人都可以 fork 后提 PR，合并由维护者执行。有 Write 权限的协作者可以自行合并，但 `main` 受 Ruleset 保护，必须经过 PR 且 CI 通过。
+项目采用**公开仓库 + fork / Pull Request**：任何人都可以 fork 后提 PR，合并由维护者执行。
+
+> **注意**：`main` 的 Ruleset 保护目前**尚未在仓库设置中启用**。约定上要求经过 PR 且 CI 通过，但在规则集真正建好之前，任何有 Write 权限的协作者都能直接强推覆盖 `main`（2026 年 10 月已发生过一次）。启用方式见[接手与移交指南](docs/接手与移交指南.md)。
 
 ```powershell
 uv sync --extra trees --extra dev
 uv run ruff check src tests scripts
-uv run python -m unittest discover -s tests -q   # 基线 50 项通过
+uv run python -m unittest discover -s tests -q   # 基线 103 项通过
 python scripts/check_repo_hygiene.py
 ```
 

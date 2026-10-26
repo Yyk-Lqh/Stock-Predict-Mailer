@@ -141,6 +141,11 @@ def read_verified_package(path: Path, trusted_public_key: Path) -> tuple[dict, b
 
 def install_package(cfg: Config, path: Path, trusted_public_key: Path) -> dict:
     envelope, payload = read_verified_package(path, trusted_public_key)
+    # A valid signature only proves which key signed; revocation decides whether
+    # that key may still install anything.
+    from .keys import require_active
+
+    require_active(cfg, envelope["publisher_key_sha256"])
     manifest = envelope["model"]
     model_version = manifest["version"]
     folder = model_folder(cfg, model_version)

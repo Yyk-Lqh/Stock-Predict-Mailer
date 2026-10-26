@@ -53,14 +53,31 @@ def read_contract(path: Path) -> dict:
     return validate_contract(json.loads(path.read_text(encoding="utf-8")))
 
 
-def prepare_rows(raw: list[dict], contract: dict, cutoff: str) -> tuple[list[dict], list[dict]]:
+def prepare_rows(raw: list[dict], contract: dict, cutoff: str, *, sessions: list[str] | None = None,
+                 actions: dict | None = None) -> tuple[list[dict], list[dict]]:
+    """Build point-in-time features and matured labels.
+
+    ``sessions`` replaces the benchmark-observed session list with a certified
+    exchange calendar: a day the exchange traded but the benchmark lacks stays a
+    gap, so the two surrounding bars are never treated as adjacent. ``actions``
+    applies corporate-action factors when the contract asks for adjusted prices.
+    """
     contract = validate_contract(contract)
     instant = timestamp(cutoff)
     zone = ZoneInfo(contract["timezone"])
     last_date = instant.astimezone(zone).date().isoformat()
     rows = [row for row in raw if row["date"] <= last_date and timestamp(row["available_at"]) <= instant]
+    if actions:
+        from .calendar import adjust_rows
+
+        rows, _ = adjust_rows(rows, actions, contract["price_basis"])
     lookup = {(r["date"], r["security_id"]): r for r in rows}
-    calendar = sorted({r["date"] for r in rows if r["security_id"] == contract["benchmark_id"]})
+    if sessions:
+        calendar = sorted({day for day in sessions if day <= last_date})
+        if not calendar:
+            raise ValueError("certified calendar has no sessions inside the data window")
+    else:
+        calendar = sorted({r["date"] for r in rows if r["security_id"] == contract["benchmark_id"]})
     if not calendar:
         raise ValueError("fixed benchmark is missing; cannot infer a benchmark from uploaded stocks")
     feature_time = time.fromisoformat(contract["feature_cutoff"])
@@ -88,8 +105,10 @@ def prepare_rows(raw: list[dict], contract: dict, cutoff: str) -> tuple[list[dic
             entry, exit_bar = lookup.get((entry_day, security)), lookup.get((exit_day, security))
             if entry is None or exit_bar is None:
                 continue
-            benchmark_entry = lookup[(entry_day, contract["benchmark_id"])]
-            benchmark_exit = lookup[(exit_day, contract["benchmark_id"])]
+            benchmark_entry = lookup.get((entry_day, contract["benchmark_id"]))
+            benchmark_exit = lookup.get((exit_day, contract["benchmark_id"]))
+            if benchmark_entry is None or benchmark_exit is None:
+                continue
             gross = exit_bar["open"] / entry["open"] - 1
             reference = benchmark_exit["open"] / benchmark_entry["open"] - 1
             labelled.append({**feature, "entry_date": entry_day, "label_end": exit_day,

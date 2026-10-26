@@ -23,6 +23,24 @@ def main(argv=None) -> int:
     ingest.add_argument("--synthetic", action="store_true")
     summary = sub.add_parser("snapshot", help="Validate and summarize an immutable snapshot")
     summary.add_argument("snapshot_id")
+    cal_import = sub.add_parser("calendar-import", help="Certify a trading-session list for one market")
+    cal_import.add_argument("path", type=Path)
+    cal_import.add_argument("--market", required=True)
+    cal_import.add_argument("--source", default="owner-import", help="Where this calendar came from, for re-checking")
+    cal_status = sub.add_parser("calendar-status", help="Show whether a market has a certified calendar")
+    cal_status.add_argument("--market", required=True)
+    actions_import = sub.add_parser("actions-import", help="Record corporate actions as price factors")
+    actions_import.add_argument("path", type=Path)
+    actions_import.add_argument("--source", default="owner-import")
+    update = sub.add_parser("update-bars", help="Merge self-collected daily files into a new snapshot with a freshness gate")
+    update.add_argument("paths", type=Path, nargs="+")
+    update.add_argument("--base", help="Base snapshot id; defaults to the newest snapshot in this workspace")
+    update.add_argument("--cutoff", required=True)
+    update.add_argument("--max-staleness-days", type=int, default=5)
+    update.add_argument("--allow-stale", action="store_true", help="Record a stale update instead of refusing it")
+    update.add_argument("--synthetic", action="store_true")
+    update.add_argument("--market", default="unknown", help="Recorded in provenance for later review")
+    sub.add_parser("update-history", help="List recorded incremental updates")
     research = sub.add_parser("research", help="Run SYNTHETIC-only purged research")
     research.add_argument("snapshot_id")
     research.add_argument("--cutoff", required=True)
@@ -122,6 +140,26 @@ def main(argv=None) -> int:
         with tracked_run(cfg, "research"):
             result = experiment(cfg, args.snapshot_id, args.cutoff, trees=args.trees, allow_unverified_real=args.allow_unverified_real)
             print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command in ("calendar-import", "calendar-status", "actions-import"):
+        from . import calendar as exchange_calendar
+        with tracked_run(cfg, args.command):
+            if args.command == "calendar-import":
+                result = exchange_calendar.import_calendar(cfg, args.path, args.market, args.source)
+            elif args.command == "calendar-status":
+                result = exchange_calendar.calendar_status(cfg, args.market)
+            else:
+                result = exchange_calendar.import_actions(cfg, args.path, args.source)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command in ("update-bars", "update-history"):
+        from .marketdata import update_bars, update_history
+        with tracked_run(cfg, args.command):
+            if args.command == "update-history":
+                print(json.dumps(update_history(cfg), ensure_ascii=False, indent=2))
+                return 0
+            print(json.dumps(update_bars(cfg, args.paths, base=args.base, cutoff=args.cutoff,
+                                         max_staleness_days=args.max_staleness_days, allow_stale=args.allow_stale,
+                                         synthetic=args.synthetic, market=args.market),
+                             ensure_ascii=False, indent=2))
     else:
         from .data import demo_csv, import_csv, snapshot_summary
 

@@ -39,13 +39,164 @@ uv run stock-mailer --config config/example.toml demo-run --cutoff 2026-10-24T20
 
 `demo-run` 使用合成数据跑完离线链路，输出快照、实验、报告与邮件队列 ID，**不发送邮件**，结果写入 `data/local`。测试使用标准库 unittest，项目未配置 pytest。
 
-## 上传自己的数据
+不想看演示、想直接用自己的行情训练，请跳到下面的[目录地图](#目录地图数据放哪里产物在哪)与[从原始文件到可训练快照](#从原始文件到可训练快照)。
 
-```powershell
-uv run stock-mailer uploads
+## 目录地图：数据放哪里，产物在哪
+
+默认配置是 `config/example.toml`，它把 `workspace` 指向 `data/local`（相对配置文件所在目录）。**所有数据、模型、报告的读写都发生在 workspace 里，`data/` 整个目录被 `.gitignore` 排除**，不会被提交到 GitHub。
+
+```text
+data/local/
+├── intake/                          ← 你的原始文件只有这里需要手动放
+│   ├── incoming/                    ← ★ 把 CSV / TSV / XLSX / JSON / Parquet / SQLite 丢进这里
+│   ├── archive/<upload_id>/         ← 清洗用原件与报告（自动生成，保留可追溯）
+│   └── jobs/<job_id>/               ← 清洗后的表、问题清单、publish-*.csv（自动生成）
+├── snapshots/<snapshot_id>/         ← 不可变快照：manifest.json + bars.parquet + source.csv
+├── state.sqlite3                    ← 运行记录、数据授权、训练队列、报告、影子记录、密钥撤销
+├── registry/
+│   ├── versions/<version>/          ← 平台候选与已发布的 demo（manifest + model.json/model.txt）
+│   └── personal/<owner_key>/versions/<version>/   ← 你自己的训练产物
+└── secrets/model-signing/           ← Ed25519 私钥，绝不提交、不外发
 ```
 
-打开 http://127.0.0.1:8765 上传 CSV/TSV、XLSX、JSON/JSONL、Parquet、只读 SQLite 或文本。自动识别业务类型、规范化中文字段、删除完全重复、隔离冲突与异常行并显示待确认项，原件保留。也可把文件放进 `data/local/intake/incoming` 后用 `scan-incoming` 扫描。格式检查通过不等于数据授权，详见 [数据接入中心使用说明](docs/数据接入中心使用说明.md)。
+| 你要做的事 | 具体位置 / 命令 | 实现文件 |
+| --- | --- | --- |
+| 放训练数据 | 文件放进 `data/local/intake/incoming/`，或用浏览器上传 | — |
+| 清洗数据 | `scan-incoming` / `ingest-file` / 上传页面 | `src/stock_predict_mailer/intake_readers.py`（读格式）、`intake_clean.py`（列名映射与清洗规则） |
+| 把清洗结果发布成快照 | 上传页面点“发布”，或对规整 CSV 直接用 `import-csv` | `intake.py`（`publish_bars`）、`data.py`（`import_csv`、`validate_rows`） |
+| 训练模型 | `train-submit` + `train-worker`，或 `model-train` | `model_training.py`（队列与训练）、`training_child.py`（训练子进程） |
+| 定义特征与标签 | 改契约 JSON，不改代码 | `contracts.py`、`config/task-demo.json` |
+| 每日增量行情 | `update-bars` | `marketdata.py` |
+| 交易日历与复权 | `calendar-import` / `actions-import` | `calendar.py` |
+
+配置文件都在 `config/` 下，全部可提交、不含凭证：
+
+| 文件 | 用途 |
+| --- | --- |
+| `config/example.toml` | 默认配置。`workspace` 决定上面整棵目录树的位置，`principal` 是本机操作者标识 |
+| `config/task-demo.json` | 任务契约：基准、股票池、特征顺序、持有期、时区、价格口径 |
+| `config/client-demo.toml` | 独立安装工作区的示例（验证签名包时用） |
+| `config/intake-example.json` | `ingest-file --options` 的元数据模板 |
+
+`config/local.toml` 已被 `.gitignore` 排除，适合放你自己的覆盖项。**注意：`principal` 决定了个人版本的命名空间 `owner_key = sha256(principal)`，改成别的值会让你此前所有个人版本在新身份下“看不见”**（文件仍在 `registry/personal/<旧哈希>/` 里）。
+
+## 从原始文件到可训练快照
+
+### 第 1 步：把文件放进去
+
+CSV 至少要能映射出这些列（中英文列名都认，别名表在 `intake_clean.py`）：`日期`、`股票代码`、`开盘`、`最高`、`最低`、`收盘`、`成交量`。`来源` 与 `可用时间` 可在页面上确认。
+
+一个可用于试跑的最小文件 `data/local/intake/incoming/sample.csv`：
+
+```csv
+日期,股票代码,开盘,最高,最低,收盘,成交量
+2026-10-20,600000,10.0,10.5,9.9,10.2,120000
+2026-10-21,600000,10.2,10.3,9.8,10.0,90000
+2026-10-21,000001,12.0,12.4,11.9,12.3,300000
+2026-10-22,600000,10.0,10.6,9.95,10.45,140000
+```
+
+### 第 2 步：清洗
+
+```powershell
+uv run stock-mailer scan-incoming              # 扫描 incoming 目录里的全部文件
+uv run stock-mailer ingest-file <某个文件> --options opts.json   # 只处理一个文件，并带上元数据
+```
+
+清洗会做这些事，并且**逐行留痕**：识别业务类型（行情/财务/新闻/宏观/表格/文档）、把中文列名映射到标准字段、删除完全重复行、剔除价格非正或成交量负数或开高低收矛盾的行、统计缺失值、列出仍需人工确认的元数据。
+
+实测输出（5 行输入，含 1 条重复与 1 条高低价矛盾）：
+
+```json
+{"status": "needs_attention",
+ "tables": [{"kind": "bars", "input_rows": 5, "output_rows": 3,
+             "duplicates_removed": 1, "excluded_rows": 1,
+             "needs_confirmation": ["价格复权口径", "历史实际可用时间 available_at",
+                                    "成交量单位（股或手）", "数据来源"]}],
+ "issues": [{"row": 3, "code": "exact_duplicate", "message": "删除一条完全重复记录"},
+            {"row": 4, "code": "invalid_ohlcv", "message": "价格非正、成交量为负或开高低收关系矛盾"}]}
+```
+
+`opts.json` 用来一次性给出元数据，避免每次都手填：
+
+```json
+{"kind": "bars", "source": "自行采集 券商导出",
+ "price_basis": "unadjusted", "volume_unit": "shares",
+ "available_at": "2026-10-22T18:00:00+08:00"}
+```
+
+给了元数据后 `needs_confirmation` 会清空。**只要还有被剔除或存疑的行，状态就是 `needs_attention`，不能发布**——异常行不会静默进入训练集，必须先修源文件。
+
+### 第 3 步：发布成快照
+
+```powershell
+uv run stock-mailer uploads --port 8765
+```
+
+打开 http://127.0.0.1:8765，找到刚清洗完的文件，确认四项元数据后点发布。发布后写出 `snapshots/<snapshot_id>/`，其中 `manifest.json` 记录行数、证券数、起止日期、来源与原始哈希，`bars.parquet` 带哈希校验。**服务只绑定回环地址**，不对外暴露。
+
+如果你手上的 CSV 已经是规整的九列数据（`date, security_id, open, high, low, close, volume, available_at, source`），可以跳过清洗直接导入：
+
+```powershell
+uv run stock-mailer import-csv data/local/intake/incoming/bars.csv
+```
+
+注意这是**严格校验**而不是清洗：完全重复、OHLC 矛盾、负价、`available_at` 早于交易日、缺列都会直接报错，不会替你修。`available_at` 必须带时区（如 `2026-10-22T18:00:00+08:00`），表示这条记录在当时真正可用的时间。
+
+### 第 4 步：告诉系统这份数据能用来做什么
+
+```powershell
+uv run stock-mailer dataset-auth <snapshot_id>                                   # 查看当前记录
+uv run stock-mailer dataset-authorize <snapshot_id> --replay --note "允许回放做漂移诊断"   # 需要漂移/影子评分时
+uv run stock-mailer dataset-authorize <snapshot_id> --platform --note "已确认平台训练权利" # 仅当你确实有权时才做
+```
+
+自己导入的数据在导入时就是 `personal_training=true`、`platform_training=false`、`replay=false`。所以**个人训练什么都不用授权**；`--platform` 用于把这份数据变成平台候选的训练来源，`--replay` 用于 `model-drift` 与 `shadow-evaluate`。任何一项都可撤回，撤回立即生效。
+
+## 训练模型
+
+先用契约锁定“训练什么”。`config/task-demo.json` 固定了基准 `SYN000`、股票池 `SYN001–SYN005`、五个特征顺序与开盘到开盘五日超额收益标签。**换成自己的股票池要改这个文件**（`universe` 至少 3 只、不能包含基准、基准必须是数据里连续有行情的那只），改完 `contract-check` 会给出新的 `contract_id`，旧模型因契约不匹配自动失效：
+
+```powershell
+uv run stock-mailer contract-check config/task-demo.json
+```
+
+训练有两条路线，产物落在不同命名空间，互不覆盖。
+
+### 路线 A：平台候选（演示通道，适合验证链路）
+
+```powershell
+uv run stock-mailer demo-data --days 900 --stocks 16      # 或用自己的 snapshot_id
+uv run stock-mailer model-train <snapshot_id> --contract config/task-demo.json --cutoff 2021-06-01T20:00:00+08:00 --algorithm lightgbm --confirm-platform-data
+uv run stock-mailer model-evaluate <model_version> <snapshot_id> --cutoff 2023-06-14T20:00:00+08:00
+uv run stock-mailer model-publish <model_version> --evaluation <evaluation_id>
+uv run stock-mailer model-select <model_version> --allow-demo
+uv run stock-mailer model-predict <snapshot_id> --cutoff 2023-06-14T20:00:00+08:00 --allow-demo
+```
+
+算法可选 `ridge`、`lightgbm`、`zero`、`momentum`。训练要求至少 60 个成熟特征日与 3 只证券；评价要求至少 30 个成熟特征日，且必须严格晚于该模型全部训练标签的结束日期，否则直接拒绝。
+
+### 路线 B：个人重训练与比较（自采数据的正式路线）
+
+```powershell
+uv run stock-mailer train-submit <parent_version> --snapshot <snapshot_id> --cutoff 2026-10-24T20:00:00+08:00 --method full_retrain --priority 5
+uv run stock-mailer train-worker --once
+uv run stock-mailer train-status <job_id>
+uv run stock-mailer model-compare <candidate_version> --baseline <parent_version> --snapshot <snapshot_id> --cutoff 2026-10-24T20:00:00+08:00 --segments
+uv run stock-mailer model-select <candidate_version> --confirm-personal
+uv run stock-mailer model-predict <snapshot_id> --cutoff 2026-10-24T20:00:00+08:00 --allow-personal
+```
+
+`train-submit` 把父版本、快照、契约、切分时间与预算一起固化，相同规格的排队任务会合并；`train-worker` 在清洗过环境变量的子进程里训练，产物校验通过后原子落入 `registry/personal/<owner_key>/`。取消、超时、子进程异常、心跳过期都不产生版本，也不会改写你当前的选择。`model-compare` 只写比较记录，**不会自动切换模型**。
+
+## 每日增量
+
+```powershell
+uv run stock-mailer update-bars data/local/intake/incoming/bars_20261027.csv --base <昨天快照> --cutoff 2026-10-27T20:00:00+08:00 --market CN
+uv run stock-mailer update-history
+```
+
+`update-bars` 在基准快照上追加新交易日并**写出新快照，改写旧快照是不可能的**。它拒绝三类输入：与基准冲突的重述、跨文件重复、超过 `--max-staleness-days`（默认 5 天）的过期数据。每次更新都记进 `data_updates`，含基准快照、结果快照、文件、最新交易日、滞后天数与判定。
 
 ## 主要命令
 

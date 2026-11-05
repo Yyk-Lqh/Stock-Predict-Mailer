@@ -14,7 +14,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
-from ..agent_service.contracts import ServiceError
+from ..agent_service.contracts import ServiceError, decode
 
 # SDK diagnostics can contain raw provider messages. Export sanitized codes only.
 _sdk_log = logging.getLogger("mcp")
@@ -137,3 +137,41 @@ class MCPLayer:
                     schema_check(tool["outputSchema"])
             return bounded({"status": "ok", "tools": tools, "resources": resources,
                             "protocol_version": info.protocolVersion, "server": info.serverInfo.model_dump(mode="json")})
+
+    async def call(self, sid, name, arguments, *, effect="read", role_tools=None):
+        profile = self.store.get("mcp", sid)
+        if name not in profile["allowed_tools"] or profile["effects"].get(name, "deny") != effect:
+            raise ServiceError("PERMISSION_DENIED", "工具未授权或副作用类型不匹配")
+        if role_tools is not None and sid + ":" + name not in role_tools:
+            raise ServiceError("PERMISSION_DENIED", "此 Agent 未获该工具权限")
+        if effect == "email":
+            policy = self.store.settings()["mail"]
+            if policy["transport"] != "mcp" or policy["mcp_server_id"] != sid or policy["mcp_tool"] != name:
+                raise ServiceError("PERMISSION_DENIED", "不在邮件授权服务范围内")
+            if arguments.get("recipient") not in policy["recipient_allowlist"]:
+                raise ServiceError("PERMISSION_DENIED", "收件人未授权")
+        async with self.session(sid) as (client, _, _):
+            tools = await self.pages(client.list_tools)
+            tool = next((t for t in tools if t["name"] == name), None)
+            if tool is None:
+                raise ServiceError("TOOL_NOT_FOUND", "服务未提供此工具")
+            validate_data(tool["inputSchema"], arguments)
+            response = await client.call_tool(name, arguments)
+            if response.isError:
+                raise ServiceError("TOOL_FAILED", "外部工具执行失败")
+            result = response.structuredContent
+            if result is None and len(response.content) == 1 and response.content[0].type == "text":
+                result = decode(response.content[0].text.encode())
+            if not isinstance(result, dict):
+                raise ServiceError("INVALID_TOOL_DATA", "工具须提供结构化内容或单个 JSON text 对象")
+            if tool.get("outputSchema"):
+                validate_data(tool["outputSchema"], result)
+            return bounded(result)
+
+    async def read(self, sid, uri):
+        profile = self.store.get("mcp", sid)
+        if uri not in profile["allowed_resources"]:
+            raise ServiceError("PERMISSION_DENIED", "资源 URI 未授权")
+        async with self.session(sid) as (client, _, _):
+            result = await client.read_resource(uri)
+            return bounded(result.model_dump(mode="json", by_alias=True))

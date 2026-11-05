@@ -1,12 +1,20 @@
+import asyncio
 import json
+import os
+import socket
+import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from cryptography.fernet import Fernet
 
 from stock_predict_mailer.agent_service.contracts import ServiceError
+from stock_predict_mailer.control.mcp_layer import MCPLayer, schema_check
 from stock_predict_mailer.control.models import Budget, effective_temperature
 from stock_predict_mailer.control.schemas import Settings
 from stock_predict_mailer.control.store import Store
@@ -96,3 +104,96 @@ class ConfigurationTests(unittest.TestCase):
             b.reserve(0)
         with self.assertRaises(ServiceError):
             Budget({**Settings().limits.model_dump(), "budget_usd": 0.0}).reserve(.01)
+
+
+class MCPTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.f = Fixture()
+        self.addCleanup(self.f.close)
+        self.m = self.f.mcp()
+        self.layer = MCPLayer(self.f.store)
+
+    async def test_real_stdio_discovery_call_resource(self):
+        discovered = await self.layer.discover(self.m["id"])
+        self.assertIn("get_context", [t["name"] for t in discovered["tools"]])
+        self.assertTrue(discovered["resources"])
+        result = await self.layer.call(self.m["id"], "get_context", {"subject": "DEMO.SZ"}, role_tools=[self.m["id"] + ":get_context"])
+        self.assertEqual(result["subject"], "DEMO.SZ")
+        self.assertEqual(result["facts"][0]["source"], "mock")
+        resource = await self.layer.read(self.m["id"], "stock://demo/contract")
+        self.assertTrue(resource["contents"])
+
+    async def test_denied_tools_resources_and_email(self):
+        for call in (self.layer.call(self.m["id"], "get_context", {"subject": "DEMO.SZ"}, role_tools=[]),
+                     self.layer.call(self.m["id"], "send_email", {}, effect="email"),
+                     self.layer.read(self.m["id"], "stock://private")):
+            with self.assertRaises(ServiceError) as cm:
+                await call
+            self.assertEqual(cm.exception.code, "PERMISSION_DENIED")
+
+    async def test_disabled_and_unavailable(self):
+        self.f.store.put("mcp", {**self.m, "enabled": False}, self.m["id"])
+        with self.assertRaises(ServiceError) as cm:
+            await self.layer.discover(self.m["id"])
+        self.assertEqual(cm.exception.code, "SERVICE_DISABLED")
+        bad = self.f.store.put("mcp", {"name": "Unavailable", "url": "http://127.0.0.1:1/mcp", "timeout_seconds": 1})
+        with self.assertRaises(ServiceError):
+            await self.layer.discover(bad["id"])
+
+    async def test_input_schema_validation(self):
+        with self.assertRaises(ServiceError) as cm:
+            await self.layer.call(self.m["id"], "get_context", {"subject": 5})
+        self.assertEqual(cm.exception.code, "INVALID_TOOL_DATA")
+        with self.assertRaises(ServiceError):
+            schema_check({"$ref": "https://example.com/private"})
+
+    async def test_streamable_http_sdk_transport(self):
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        proc = subprocess.Popen([sys.executable, "-m", "stock_predict_mailer.control.mock_services", "--transport", "streamable-http", "--port", str(port)],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
+        try:
+            for _ in range(150):
+                try:
+                    with socket.create_connection(("127.0.0.1", port), timeout=.1):
+                        break
+                except OSError:
+                    await asyncio.sleep(.05)
+            profile = self.f.store.put("mcp", {"name": "HTTP Mock", "url": f"http://127.0.0.1:{port}/mcp"})
+            result = await self.layer.discover(profile["id"])
+            self.assertIn("get_context", [t["name"] for t in result["tools"]])
+        finally:
+            proc.terminate()
+            proc.wait(timeout=10)
+
+    async def test_mcp_authentication_and_timeout(self):
+        class Handler(BaseHTTPRequestHandler):
+            mode = "auth"
+            def log_message(self, *args):
+                pass
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                if type(self).mode == "slow":
+                    time.sleep(1.5)
+                self.send_response(401)
+                self.end_headers()
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        profile = self.f.store.put("mcp", {"name": "Auth Mock", "url": f"http://127.0.0.1:{server.server_port}/mcp", "timeout_seconds": 1,
+                                           "auth_token": "mock-invalid"})
+        try:
+            with self.assertRaises(ServiceError) as cm:
+                await self.layer.discover(profile["id"])
+            self.assertEqual(cm.exception.code, "AUTH_FAILED")
+            self.assertFalse(cm.exception.retryable)
+            Handler.mode = "slow"
+            with self.assertRaises(ServiceError) as cm:
+                await self.layer.discover(profile["id"])
+            self.assertEqual(cm.exception.code, "CALL_TIMEOUT")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)

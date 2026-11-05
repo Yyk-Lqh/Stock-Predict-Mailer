@@ -147,7 +147,7 @@ class AgentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "cfg.toml"
             path.write_text('workspace="work"\n[context]\nadapter="mock"\n', encoding="utf-8")
-            self.assertEqual(load(path)["workspace"], Path(tmp) / "work")
+            self.assertEqual(load(path)["workspace"], (Path(tmp) / "work").resolve())
             with redirect_stdout(io.StringIO()) as out:
                 self.assertEqual(main(["--config", str(path), "run", "--send"]), 0)
                 self.assertEqual(main(["--config", str(path), "run", "--send"]), 0)

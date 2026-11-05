@@ -81,3 +81,35 @@ class A2AClient:
             return result["data"]
         except (KeyError, IndexError, TypeError, ValueError):
             raise ServiceError("A2A_FAILED", "A2A 子任务缺少结构化产物") from None
+
+
+class A2AService:
+    def __init__(self, engine):
+        self.engine = engine
+
+    async def dispatch(self, rpc, role="main", inline=None):
+        rid = rpc.get("id") if isinstance(rpc, dict) else None
+        try:
+            if not isinstance(rpc, dict) or rpc.get("jsonrpc") != "2.0" or rid is None:
+                raise ServiceError("INVALID_REQUEST", "需要 JSON-RPC 2.0 请求及 id")
+            params = rpc.get("params", {})
+            if not isinstance(params, dict):
+                raise ServiceError("INVALID_PARAMS", "params 必须为对象")
+            method = rpc.get("method")
+            if method == "message/send":
+                data = data_part(params.get("message"))
+                if role == "main":
+                    result = self.engine.submit(data)
+                else:
+                    result = await self.engine.peer(role, data, inline)
+            elif method == "tasks/get":
+                result = self.engine.store.task(params.get("id"))
+            elif method == "tasks/cancel":
+                result = self.engine.cancel(params.get("id"))
+            else:
+                raise ServiceError("METHOD_NOT_FOUND", "不支持的 A2A 方法（不提供流式或推送）")
+            return {"jsonrpc": "2.0", "id": rid, "result": result}
+        except ServiceError as exc:
+            code = {"INVALID_REQUEST": -32600, "METHOD_NOT_FOUND": -32601, "INVALID_PARAMS": -32602,
+                    "NOT_FOUND": -32001, "TASK_NOT_CANCELABLE": -32002}.get(exc.code, -32602)
+            return {"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": exc.message, "data": {"code": exc.code}}}

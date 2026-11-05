@@ -26,6 +26,8 @@ jobs:
       - run: uv python install 3.11
       - run: uv sync --python 3.11 --locked
       - run: uv run python -m unittest discover -s tests -p test_agent_service.py -v
+      - run: uv run python -m unittest discover -s tests -p test_control.py -v
+      - run: node --check src/stock_predict_mailer/control/web/app.js
 
   tests:
     name: tests (${{ matrix.os }}, py${{ matrix.python }})

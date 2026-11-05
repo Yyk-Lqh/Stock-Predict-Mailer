@@ -13,9 +13,10 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
+from stock_predict_mailer.agent_service.adapters import MockPredictionAdapter
 from stock_predict_mailer.agent_service.contracts import ServiceError
 from stock_predict_mailer.control.mcp_layer import MCPLayer, schema_check
-from stock_predict_mailer.control.models import Budget, effective_temperature
+from stock_predict_mailer.control.models import Budget, ModelAdapter, effective_temperature
 from stock_predict_mailer.control.schemas import Settings
 from stock_predict_mailer.control.store import Store
 
@@ -197,3 +198,89 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+
+class ModelHTTPHandler(BaseHTTPRequestHandler):
+    mode = "ok"
+    attempts = 0
+    payload = None
+
+    def log_message(self, *args):
+        pass
+
+    def do_POST(self):
+        type(self).attempts += 1
+        type(self).payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        mode = type(self).mode
+        if mode == "slow":
+            time.sleep(1.2)
+        status = {"auth": 401, "bad": 400, "unavailable": 503}.get(mode, 200)
+        self.send_response(status)
+        self.end_headers()
+        data = json.loads(self.payload["messages"][-1]["content"])["data"]
+        result = {"conclusion_codes": ["MODEL_UP"], "evidence_ids": ["prediction:" + data["prediction"]["prediction_id"]],
+                  "uncertainty_codes": ["MODEL_UNVERIFIED"], "delegate_roles": []}
+        try:
+            self.wfile.write(json.dumps({"choices": [{"message": {"content": json.dumps(result)}}]}).encode())
+        except OSError:
+            pass
+
+
+class ModelHTTPTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.f = Fixture()
+        self.addCleanup(self.f.close)
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), ModelHTTPHandler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        ModelHTTPHandler.mode, ModelHTTPHandler.attempts = "ok", 0
+        self.model = self.f.store.put("models", {"name": "Compatible Mock", "provider": "openai_compatible", "model": "mock-v1",
+            "base_url": f"http://127.0.0.1:{self.server.server_port}/v1", "api_key": "mock-key", "timeout_seconds": 1,
+            "input_usd_per_million": 1.0, "output_usd_per_million": 2.0})
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+
+    async def generate(self):
+        return await ModelAdapter(self.f.store).generate(self.model["id"], "main", {"prediction": MockPredictionAdapter().fetch(), "facts": []},
+                                                        self.f.settings, Budget(self.f.settings["limits"]))
+
+    async def test_openai_wire_and_temperature(self):
+        self.assertEqual((await self.generate())["conclusion_codes"], ["MODEL_UP"])
+        self.assertEqual(ModelHTTPHandler.payload["temperature"], .2)
+        self.assertEqual(ModelHTTPHandler.payload["model"], "mock-v1")
+        self.assertEqual(ModelHTTPHandler.payload["response_format"], {"type": "json_object"})
+
+    async def test_invalid_credentials_no_retry(self):
+        ModelHTTPHandler.mode = "auth"
+        with self.assertRaises(ServiceError) as cm:
+            await self.generate()
+        self.assertEqual(cm.exception.code, "AUTH_FAILED")
+        self.assertEqual(ModelHTTPHandler.attempts, 1)
+        self.assertNotIn("mock-key", str(cm.exception))
+
+    async def test_incompatible_parameters(self):
+        ModelHTTPHandler.mode = "bad"
+        with self.assertRaises(ServiceError) as cm:
+            await self.generate()
+        self.assertEqual(cm.exception.code, "PARAMETER_UNSUPPORTED")
+
+    async def test_unavailable_retry_counts(self):
+        ModelHTTPHandler.mode = "unavailable"
+        with self.assertRaises(ServiceError):
+            await self.generate()
+        self.assertEqual(ModelHTTPHandler.attempts, 2)
+
+    async def test_timeout_and_budget_exhaustion(self):
+        ModelHTTPHandler.mode = "slow"
+        with self.assertRaises(ServiceError) as cm:
+            await self.generate()
+        self.assertEqual(cm.exception.code, "CALL_TIMEOUT")
+        self.f.settings["limits"]["budget_usd"] = 0.0
+        ModelHTTPHandler.attempts = 0
+        with self.assertRaises(ServiceError) as cm:
+            await self.generate()
+        self.assertEqual(cm.exception.code, "BUDGET_EXHAUSTED")
+        self.assertEqual(ModelHTTPHandler.attempts, 0)

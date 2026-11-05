@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
 from cryptography.fernet import Fernet
 
 from stock_predict_mailer.agent_service.adapters import MockPredictionAdapter
@@ -21,6 +22,7 @@ from stock_predict_mailer.control.mcp_layer import MCPLayer, schema_check
 from stock_predict_mailer.control.models import Budget, ModelAdapter, effective_temperature
 from stock_predict_mailer.control.orchestrator import Orchestrator
 from stock_predict_mailer.control.schemas import Settings
+from stock_predict_mailer.control.server import make_server
 from stock_predict_mailer.control.store import Store
 
 
@@ -423,3 +425,85 @@ class OrchestrationTests(unittest.IsolatedAsyncioTestCase):
         with patch("stock_predict_mailer.control.a2a.request_json", side_effect=reply), self.assertRaises(ServiceError):
             await A2AClient(self.f.store).delegate(endpoint["id"], {}, Budget({**self.f.settings["limits"], "max_calls": 1}))
         self.assertEqual(methods, ["message/send", "tasks/cancel"])
+
+
+class ConsoleAPITests(unittest.TestCase):
+    def setUp(self):
+        self.f = Fixture()
+        self.server = make_server(self.f.root, 0, self.f.key)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.client = httpx.Client(base_url=f"http://127.0.0.1:{self.server.server_port}", trust_env=False)
+        self.client.get("/")
+        self.csrf = self.client.get("/api/session").json()["csrf_token"]
+        self.client.headers["X-CSRF-Token"] = self.csrf
+
+    def tearDown(self):
+        self.client.close()
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+        self.f.close()
+
+    def test_session_csrf_origin_and_no_secret_response(self):
+        bad = self.client.post("/api/models", json={"name": "Bad"}, headers={"X-CSRF-Token": "bad"})
+        self.assertEqual(bad.status_code, 403)
+        bad = self.client.get("/api/models", headers={"Origin": "https://attacker.example"})
+        self.assertEqual(bad.status_code, 403)
+        response = self.client.post("/api/models", json={"name": "New", "api_key": "mock-api-marker"})
+        self.assertEqual(response.status_code, 201)
+        self.assertNotIn("mock-api-marker", response.text)
+
+    def test_api_edit_test_disable_delete_and_reset(self):
+        model = self.client.post("/api/models", json={"name": "API mock"}).json()
+        self.assertEqual(self.client.post(f"/api/models/{model['id']}/test", json={}).status_code, 200)
+        edited = self.client.put(f"/api/models/{model['id']}", json={**model, "enabled": False})
+        self.assertFalse(edited.json()["enabled"])
+        self.assertEqual(self.client.delete(f"/api/models/{model['id']}").status_code, 200)
+        value = self.f.store.settings()
+        value["global_temperature"] = .8
+        self.f.store.save_settings(value)
+        self.assertEqual(self.client.post("/api/settings/reset-temperature", json={}).json()["global_temperature"], .2)
+
+    def test_submit_poll_and_agent_card(self):
+        response = self.client.post("/api/tasks", json={"prediction": MockPredictionAdapter().fetch(), "complexity": "complex"})
+        self.assertEqual(response.status_code, 202)
+        tid = response.json()["id"]
+        for _ in range(100):
+            result = self.client.get("/api/tasks/" + tid).json()
+            if result["status"]["state"] in ("completed", "failed"):
+                break
+            time.sleep(.02)
+        self.assertEqual(result["status"]["state"], "completed")
+        self.assertEqual(self.client.get("/.well-known/agent-card.json").json()["protocolVersion"], "0.3.0")
+
+    def test_external_a2a_bearer_exchange(self):
+        with patch.dict(os.environ, {"SPM_A2A_TOKEN": "mock-peer-token"}):
+            endpoint = self.f.store.put("agents", {"name": "Risk peer", "url": f"http://127.0.0.1:{self.server.server_port}/a2a/risk",
+                                                  "auth_token": "mock-peer-token", "cost_ceiling_usd": 0.0})
+            budget = Budget(self.f.settings["limits"])
+            result = asyncio.run(A2AClient(self.f.store).delegate(endpoint["id"],
+                                 {"role": "risk", "prediction": MockPredictionAdapter().fetch(), "facts": [], "depth": 1, "tools": []}, budget))
+        self.assertIn("MARKET_RISK", result["conclusion_codes"])
+
+    def test_cancellation_stops_live_task(self):
+        async def slow(*args, **kwargs):
+            await asyncio.sleep(5)
+        with patch.object(self.server.engine.models, "generate", side_effect=slow):
+            response = self.client.post("/api/tasks", json={"prediction": MockPredictionAdapter().fetch()})
+            tid = response.json()["id"]
+            for _ in range(100):
+                if self.server.engine.active.get(tid, {}).get("loop"):
+                    break
+                time.sleep(.01)
+            result = self.client.post(f"/api/tasks/{tid}/cancel", json={})
+            self.assertEqual(result.json()["status"]["state"], "canceled")
+            for _ in range(100):
+                if tid not in self.server.engine.active:
+                    break
+                time.sleep(.01)
+            self.assertNotIn(tid, self.server.engine.active)
+
+
+if __name__ == "__main__":
+    unittest.main()

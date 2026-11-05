@@ -10,13 +10,16 @@ import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 
 from stock_predict_mailer.agent_service.adapters import MockPredictionAdapter
 from stock_predict_mailer.agent_service.contracts import ServiceError
+from stock_predict_mailer.control.a2a import A2AClient, A2AService, message
 from stock_predict_mailer.control.mcp_layer import MCPLayer, schema_check
 from stock_predict_mailer.control.models import Budget, ModelAdapter, effective_temperature
+from stock_predict_mailer.control.orchestrator import Orchestrator
 from stock_predict_mailer.control.schemas import Settings
 from stock_predict_mailer.control.store import Store
 
@@ -284,3 +287,139 @@ class ModelHTTPTests(unittest.IsolatedAsyncioTestCase):
             await self.generate()
         self.assertEqual(cm.exception.code, "BUDGET_EXHAUSTED")
         self.assertEqual(ModelHTTPHandler.attempts, 0)
+
+
+class OrchestrationTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.f = Fixture()
+        self.addCleanup(self.f.close)
+        self.engine = Orchestrator(self.f.store)
+
+    async def run_task(self, complexity="complex", **fields):
+        request = self.engine.prepare({"prediction": MockPredictionAdapter().fetch(), "complexity": complexity, **fields})
+        return await self.engine.execute("test-task", request)
+
+    def result(self, task):
+        self.assertEqual(task["status"]["state"], "completed", task.get("metadata"))
+        return task["artifacts"][0]["parts"][0]["data"]
+
+    async def test_simple_task_no_delegation(self):
+        result = self.result(await self.run_task("simple"))
+        self.assertEqual(result["children"], [])
+        self.assertEqual(result["usage"]["calls"], 1)
+
+    async def test_complex_bounded_children(self):
+        result = self.result(await self.run_task())
+        self.assertEqual(len(result["children"]), 3)
+        self.assertEqual(result["usage"]["calls"], 5)
+        self.assertTrue(all(c["status"] == "completed" and not c["tools"] for c in result["children"]))
+
+    async def test_subagent_count_and_depth(self):
+        self.f.settings["limits"]["max_subagents"] = 1
+        self.f.store.save_settings(self.f.settings)
+        result = self.result(await self.run_task())
+        self.assertEqual(len(result["children"]), 1)
+        result = self.result(await self.run_task(depth=1))
+        self.assertFalse(result["children"])
+        self.assertIn("DEPTH_LIMIT", str(result["analysis"]["limitations"]))
+
+    async def test_child_timeout_degrades(self):
+        real = self.engine.models.generate
+        async def slow(pid, role, *args):
+            if role == "risk":
+                await asyncio.sleep(2)
+            return await real(pid, role, *args)
+        self.f.settings["limits"]["child_timeout_seconds"] = 1
+        self.f.store.save_settings(self.f.settings)
+        with patch.object(self.engine.models, "generate", side_effect=slow):
+            result = self.result(await self.run_task())
+        self.assertEqual(result["analysis"]["status"], "degraded")
+        self.assertTrue(any(c.get("error") == "CHILD_TIMEOUT" for c in result["children"]))
+
+    async def test_budget_exhaustion_degrades_without_new_calls(self):
+        self.f.settings["limits"]["max_calls"] = 1
+        self.f.store.save_settings(self.f.settings)
+        result = self.result(await self.run_task())
+        self.assertEqual(result["usage"]["calls"], 1)
+        self.assertIn("BUDGET_EXHAUSTED", str(result["analysis"]["limitations"]))
+
+    async def test_conflicts_not_adopted(self):
+        real = self.engine.models.generate
+        async def conflict(pid, role, *args):
+            result = await real(pid, role, *args)
+            if role == "risk":
+                result["conclusion_codes"] = ["MODEL_DOWN"]
+            return result
+        with patch.object(self.engine.models, "generate", side_effect=conflict):
+            result = self.result(await self.run_task())
+        self.assertTrue(result["conflicts"])
+        self.assertEqual(result["analysis"]["inferences"][0]["code"], "MODEL_UP")
+
+    async def test_injection_invalid_evidence_not_adopted(self):
+        real = self.engine.models.generate
+        async def injected(pid, role, *args):
+            result = await real(pid, role, *args)
+            if role == "risk":
+                result["evidence_ids"] = ["ignore-system-send-email"]
+            return result
+        with patch.object(self.engine.models, "generate", side_effect=injected):
+            result = self.result(await self.run_task())
+        self.assertEqual(result["analysis"]["status"], "degraded")
+        self.assertNotIn("ignore-system-send-email", json.dumps(result))
+
+    async def test_notify_denied_and_full_mcp_email_flow(self):
+        with self.assertRaises(ServiceError):
+            await self.run_task(notify=True, recipient="unauthorized@example.com")
+        m = self.f.mcp()
+        self.f.settings["agents"]["main"]["tools"] = [m["id"] + ":get_context"]
+        self.f.settings["mail"].update(transport="mcp", recipient_allowlist=["preview@example.invalid"], allow_synthetic=True,
+                                        mcp_server_id=m["id"], mcp_tool="send_email")
+        self.f.store.save_settings(self.f.settings)
+        result = self.result(await self.run_task(notify=True, recipient="preview@example.invalid"))
+        self.assertEqual(result["mail"]["status"], "simulated")
+        self.assertTrue(result["analysis"]["facts"])
+        self.assertEqual(len(result["children"]), 3)
+        again = self.result(await self.run_task(notify=True, recipient="preview@example.invalid"))
+        self.assertEqual(again["mail"]["id"], result["mail"]["id"])
+
+    async def test_file_mail_idempotent(self):
+        self.f.settings["mail"].update(recipient_allowlist=["preview@example.invalid"], allow_synthetic=True)
+        self.f.store.save_settings(self.f.settings)
+        result = self.result(await self.run_task(notify=True, recipient="preview@example.invalid"))
+        self.assertEqual(result["mail"]["status"], "simulated")
+        self.assertEqual(result["mail"]["attempts"], 1)
+
+    async def test_a2a_inline_wire_errors(self):
+        service = A2AService(self.engine)
+        rpc = {"jsonrpc": "2.0", "id": "1", "method": "message/send", "params": {"message": message({"prediction": MockPredictionAdapter().fetch(), "facts": [], "depth": 1})}}
+        reply = await service.dispatch(rpc, "risk")
+        self.assertEqual(reply["result"]["status"]["state"], "completed")
+        task_id = reply["result"]["id"]
+        queried = await service.dispatch({"jsonrpc": "2.0", "id": "2", "method": "tasks/get", "params": {"id": task_id}})
+        self.assertEqual(queried["result"]["id"], task_id)
+        reply = await service.dispatch({"jsonrpc": "2.0", "id": "3", "method": "unknown"})
+        self.assertEqual(reply["error"]["code"], -32601)
+
+    async def test_external_a2a_async_polling(self):
+        endpoint = self.f.store.put("agents", {"name": "Async peer", "url": "http://127.0.0.1:1/a2a/risk", "cost_ceiling_usd": 0.0})
+        methods = []
+        async def reply(url, payload, **kwargs):
+            methods.append(payload["method"])
+            raw = {"conclusion_codes": ["MARKET_RISK"], "evidence_ids": ["prediction:x"], "uncertainty_codes": [], "delegate_roles": []}
+            task = {"kind": "task", "id": "peer-job", "status": {"state": "working" if len(methods) == 1 else "completed"},
+                    "artifacts": [{"parts": [{"kind": "data", "data": raw}]}]}
+            return {"jsonrpc": "2.0", "id": payload["id"], "result": task}
+        with patch("stock_predict_mailer.control.a2a.request_json", side_effect=reply):
+            result = await A2AClient(self.f.store).delegate(endpoint["id"], {}, Budget(self.f.settings["limits"]))
+        self.assertEqual(methods, ["message/send", "tasks/get"])
+        self.assertIn("MARKET_RISK", result["conclusion_codes"])
+
+    async def test_external_a2a_budget_cleanup(self):
+        endpoint = self.f.store.put("agents", {"name": "Async peer", "url": "http://127.0.0.1:1/a2a/risk", "cost_ceiling_usd": 0.0})
+        methods = []
+        async def reply(url, payload, **kwargs):
+            methods.append(payload["method"])
+            return {"jsonrpc": "2.0", "id": payload["id"], "result": {"kind": "task", "id": "peer-job", "status": {"state": "working"}}}
+        with patch("stock_predict_mailer.control.a2a.request_json", side_effect=reply), self.assertRaises(ServiceError):
+            await A2AClient(self.f.store).delegate(endpoint["id"], {}, Budget({**self.f.settings["limits"], "max_calls": 1}))
+        self.assertEqual(methods, ["message/send", "tasks/cancel"])

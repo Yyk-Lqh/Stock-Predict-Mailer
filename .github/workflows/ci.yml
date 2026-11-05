@@ -14,6 +14,19 @@ permissions:
   contents: read
 
 jobs:
+  agent-only:
+    name: agent without research dependencies (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
+      - run: uv python install 3.11
+      - run: uv sync --python 3.11 --locked
+      - run: uv run python -m unittest discover -s tests -p test_agent_service.py -v
+
   tests:
     name: tests (${{ matrix.os }}, py${{ matrix.python }})
     runs-on: ${{ matrix.os }}
@@ -31,7 +44,7 @@ jobs:
       - name: Install Python
         run: uv python install ${{ matrix.python }}
       - name: Sync dependencies
-        run: uv sync --extra trees --extra dev
+        run: uv sync --extra research --extra trees --extra dev
       - name: Lint
         run: uv run ruff check src tests scripts
       - name: Compile

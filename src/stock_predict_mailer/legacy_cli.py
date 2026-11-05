@@ -1,0 +1,179 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+from . import __version__
+from .core import connect, load_config, tracked_run
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="Local stock research; synthetic demo is not investment evidence")
+    parser.add_argument("--config", type=Path, default=Path("config/example.toml"))
+    parser.add_argument("--version", action="version", version=__version__)
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("init", help="Initialize local metadata")
+    sub.add_parser("status", help="Show recent runs")
+    demo = sub.add_parser("demo-data", help="Generate SYNTHETIC bars; weekdays are not an exchange calendar")
+    demo.add_argument("--days", type=int, default=900)
+    demo.add_argument("--stocks", type=int, default=16)
+    ingest = sub.add_parser("import-csv", help="Import licensed daily bars from CSV")
+    ingest.add_argument("path", type=Path)
+    ingest.add_argument("--synthetic", action="store_true")
+    summary = sub.add_parser("snapshot", help="Validate and summarize an immutable snapshot")
+    summary.add_argument("snapshot_id")
+    cal_import = sub.add_parser("calendar-import", help="Certify a trading-session list for one market")
+    cal_import.add_argument("path", type=Path)
+    cal_import.add_argument("--market", required=True)
+    cal_import.add_argument("--source", default="owner-import", help="Where this calendar came from, for re-checking")
+    cal_status = sub.add_parser("calendar-status", help="Show whether a market has a certified calendar")
+    cal_status.add_argument("--market", required=True)
+    actions_import = sub.add_parser("actions-import", help="Record corporate actions as price factors")
+    actions_import.add_argument("path", type=Path)
+    actions_import.add_argument("--source", default="owner-import")
+    update = sub.add_parser("update-bars", help="Merge self-collected daily files into a new snapshot with a freshness gate")
+    update.add_argument("paths", type=Path, nargs="+")
+    update.add_argument("--base", help="Base snapshot id; defaults to the newest snapshot in this workspace")
+    update.add_argument("--cutoff", required=True)
+    update.add_argument("--max-staleness-days", type=int, default=5)
+    update.add_argument("--allow-stale", action="store_true", help="Record a stale update instead of refusing it")
+    update.add_argument("--synthetic", action="store_true")
+    update.add_argument("--market", default="unknown", help="Recorded in provenance for later review")
+    sub.add_parser("update-history", help="List recorded incremental updates")
+    research = sub.add_parser("research", help="Run SYNTHETIC-only purged research")
+    research.add_argument("snapshot_id")
+    research.add_argument("--cutoff", required=True)
+    research.add_argument("--trees", action="store_true", help="Require optional LightGBM installation")
+    research.add_argument("--allow-unverified-real", action="store_true", help="Explicitly allow uncertified user CSV for exploratory research only")
+    kb_add = sub.add_parser("kb-add", help="Index local Markdown or text with explicit ACL")
+    kb_add.add_argument("path", type=Path)
+    kb_add.add_argument("--published-at", required=True)
+    kb_add.add_argument("--available-at", required=True)
+    kb_add.add_argument("--allow", action="append", required=True)
+    kb_search = sub.add_parser("kb-search", help="Search authorized, time-filtered local evidence")
+    kb_search.add_argument("query")
+    kb_search.add_argument("--cutoff", required=True)
+    kb_revoke = sub.add_parser("kb-revoke", help="Revoke a document version")
+    kb_revoke.add_argument("document_id")
+    report = sub.add_parser("report", help="Build escaped deterministic HTML with evidence")
+    report.add_argument("experiment_id")
+    report.add_argument("--query", default="风险 策略 模型")
+    pipeline = sub.add_parser("demo-run", help="Offline synthetic end-to-end pipeline; never sends mail")
+    pipeline.add_argument("--cutoff", required=True)
+    pipeline.add_argument("--recipient", default="preview@example.invalid")
+    pipeline.add_argument("--trees", action="store_true")
+    queue = sub.add_parser("queue-mail", help="Create local .eml preview, not delivery")
+    queue.add_argument("report_id")
+    queue.add_argument("--recipient", required=True)
+    queue.add_argument("--sender", default="research@example.invalid")
+    sub.add_parser("outbox", help="List local mail status")
+    send = sub.add_parser("send-mail", help="Explicitly deliver ONE queued message using SMTP environment")
+    send.add_argument("outbox_id")
+    send.add_argument("--allow-synthetic", action="store_true")
+    send.add_argument("--allow-stale", action="store_true")
+    serve = sub.add_parser("uploads", help="Start loopback-only data upload center")
+    serve.add_argument("--port", type=int, default=8765)
+    sub.add_parser("scan-incoming", help="Recognize and clean files in the intake directory")
+    ingest_file = sub.add_parser("ingest-file", help="Archive, identify and clean one supported local file")
+    ingest_file.add_argument("path", type=Path)
+    ingest_file.add_argument("--options", type=Path, help="Optional local JSON metadata and field mapping")
+    from .model_cli import COMMANDS, add_commands, dispatch
+    add_commands(sub)
+    args = parser.parse_args(argv)
+    cfg = load_config(args.config)
+    if args.command in COMMANDS:
+        dispatch(cfg, args)
+    elif args.command in ("uploads", "scan-incoming", "ingest-file"):
+        from .intake import scan_incoming, upload
+        if args.command == "uploads":
+            from .upload_server import serve
+            serve(cfg, args.port)
+        else:
+            with tracked_run(cfg, args.command):
+                if args.command == "scan-incoming":
+                    result = scan_incoming(cfg)
+                else:
+                    from .intake_readers import MAX_BYTES, IntakeError
+                    if args.path.stat().st_size > MAX_BYTES:
+                        raise IntakeError("文件超过 50MB")
+                    options = json.loads(args.options.read_text(encoding="utf-8")) if args.options else None
+                    result = upload(cfg, args.path.name, args.path.read_bytes(), options)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "init":
+        with tracked_run(cfg, "init"):
+            print(json.dumps({"workspace": str(cfg.workspace), "status": "initialized"}))
+    elif args.command == "status":
+        with connect(cfg) as con:
+            print(json.dumps([dict(row) for row in con.execute("SELECT * FROM runs ORDER BY started_at DESC LIMIT 20")], indent=2))
+    elif args.command in ("demo-run", "queue-mail", "outbox", "send-mail"):
+        from .delivery import deliver, enqueue, outbox
+        from .pipeline import demo_run
+        if args.command == "demo-run":
+            result = demo_run(cfg, args.cutoff, args.recipient, args.trees)
+        elif args.command == "queue-mail":
+            result = enqueue(cfg, args.report_id, args.recipient, args.sender)
+        elif args.command == "outbox":
+            result = outbox(cfg)
+        else:
+            result = {"status": deliver(cfg, args.outbox_id, allow_synthetic=args.allow_synthetic, allow_stale=args.allow_stale)}
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0 if result["status"] == "submitted" else 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command in ("kb-add", "kb-search", "kb-revoke", "report"):
+        from .knowledge import ingest_document, retrieve, revoke
+        from .report import build_report
+        with tracked_run(cfg, args.command):
+            if args.command == "kb-add":
+                result = ingest_document(cfg, args.path, args.published_at, args.available_at, args.allow)
+            elif args.command == "kb-search":
+                result = retrieve(cfg, args.query, args.cutoff)
+            elif args.command == "kb-revoke":
+                revoke(cfg, args.document_id)
+                result = {"revoked": args.document_id}
+            else:
+                built = build_report(cfg, args.experiment_id, args.query)
+                result = {"report_id": built["report_id"], "path": str(cfg.workspace / "reports" / built["report_id"] / "report.html")}
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "research":
+        from .research import experiment
+        with tracked_run(cfg, "research"):
+            result = experiment(cfg, args.snapshot_id, args.cutoff, trees=args.trees, allow_unverified_real=args.allow_unverified_real)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command in ("calendar-import", "calendar-status", "actions-import"):
+        from . import calendar as exchange_calendar
+        with tracked_run(cfg, args.command):
+            if args.command == "calendar-import":
+                result = exchange_calendar.import_calendar(cfg, args.path, args.market, args.source)
+            elif args.command == "calendar-status":
+                result = exchange_calendar.calendar_status(cfg, args.market)
+            else:
+                result = exchange_calendar.import_actions(cfg, args.path, args.source)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command in ("update-bars", "update-history"):
+        from .marketdata import update_bars, update_history
+        with tracked_run(cfg, args.command):
+            if args.command == "update-history":
+                print(json.dumps(update_history(cfg), ensure_ascii=False, indent=2))
+                return 0
+            print(json.dumps(update_bars(cfg, args.paths, base=args.base, cutoff=args.cutoff,
+                                         max_staleness_days=args.max_staleness_days, allow_stale=args.allow_stale,
+                                         synthetic=args.synthetic, market=args.market),
+                             ensure_ascii=False, indent=2))
+    else:
+        from .data import demo_csv, import_csv, snapshot_summary
+
+        with tracked_run(cfg, args.command):
+            if args.command == "demo-data":
+                path = demo_csv(cfg.workspace / "demo.csv", args.days, args.stocks)
+                result = import_csv(cfg, path, synthetic=True)
+            elif args.command == "import-csv":
+                result = import_csv(cfg, args.path, synthetic=args.synthetic)
+            else:
+                result = snapshot_summary(cfg, args.snapshot_id)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

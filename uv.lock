@@ -721,13 +721,6 @@ name = "stock-predict-mailer"
 version = "0.5.0"
 source = { editable = "." }
 dependencies = [
-    { name = "cryptography" },
-    { name = "duckdb" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "openpyxl" },
-    { name = "pyarrow" },
-    { name = "scikit-learn" },
     { name = "tzdata" },
 ]
 
@@ -735,23 +728,32 @@ dependencies = [
 dev = [
     { name = "ruff" },
 ]
+research = [
+    { name = "cryptography" },
+    { name = "duckdb" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "openpyxl" },
+    { name = "pyarrow" },
+    { name = "scikit-learn" },
+]
 trees = [
     { name = "lightgbm" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "cryptography", specifier = ">=43,<50" },
-    { name = "duckdb", specifier = ">=1.1,<2" },
+    { name = "cryptography", marker = "extra == 'research'", specifier = ">=43,<50" },
+    { name = "duckdb", marker = "extra == 'research'", specifier = ">=1.1,<2" },
     { name = "lightgbm", marker = "extra == 'trees'", specifier = ">=4,<5" },
-    { name = "numpy", specifier = ">=1.26,<3" },
-    { name = "openpyxl", specifier = ">=3.1,<4" },
-    { name = "pyarrow", specifier = ">=15,<24" },
+    { name = "numpy", marker = "extra == 'research'", specifier = ">=1.26,<3" },
+    { name = "openpyxl", marker = "extra == 'research'", specifier = ">=3.1,<4" },
+    { name = "pyarrow", marker = "extra == 'research'", specifier = ">=15,<24" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.17.2" },
-    { name = "scikit-learn", specifier = ">=1.4,<2" },
+    { name = "scikit-learn", marker = "extra == 'research'", specifier = ">=1.4,<2" },
     { name = "tzdata", specifier = ">=2024.1" },
 ]
-provides-extras = ["trees", "dev"]
+provides-extras = ["research", "trees", "dev"]
 
 [[package]]
 name = "threadpoolctl"

@@ -1,0 +1,37 @@
+# All paths are relative to this config file. No real credentials.
+workspace = "../data/agent-local"
+timezone = "Asia/Shanghai"
+
+[prediction]
+adapter = "mock" # mock | file | http
+# path = "../examples/prediction.json"
+# url = "https://prediction.example.invalid/v1/latest"
+# token_env = "PREDICTION_TOKEN"
+timeout_seconds = 15
+
+[context]
+adapter = "mock" # none | mock | file | http
+# path = "../examples/context.json"
+# url = "https://data.example.invalid/v1/context"
+
+[agent]
+provider = "deterministic" # deterministic | http (bounded policy protocol)
+max_age_seconds = 86400
+max_context_age_seconds = 86400
+timeout_seconds = 15
+# url = "https://agent.example.invalid/v1/analyze"
+# token_env = "AGENT_TOKEN"
+
+[mail]
+transport = "file" # file | smtp; file is a local simulated delivery
+sender = "research@example.invalid"
+recipient = "preview@example.invalid"
+host = "smtp.example.invalid"
+port = 587
+tls = "starttls" # starttls | ssl (port 465)
+user_env = "SMTP_USER"
+password_env = "SMTP_PASSWORD"
+timeout_seconds = 15
+max_attempts = 3
+retry_seconds = 60
+allow_synthetic = false

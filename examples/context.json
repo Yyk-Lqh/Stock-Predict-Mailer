@@ -1,0 +1,14 @@
+{
+  "schema_version": "1",
+  "context_id": "sample-context",
+  "subject": "DEMO.SZ",
+  "facts": [{
+    "id": "f1",
+    "name": "收盘价（合成）",
+    "value": 10.2,
+    "unit": "CNY",
+    "source": "mock",
+    "observed_at": "2026-11-05T07:00:00Z",
+    "available_at": "2026-11-05T07:01:00Z"
+  }]
+}

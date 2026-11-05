@@ -9,7 +9,7 @@
 ```powershell
 git clone https://github.com/Yyk-Lqh/Stock-Predict-Mailer.git
 cd Stock-Predict-Mailer
-uv sync --extra trees --extra dev
+uv sync --extra research --extra trees --extra dev
 ```
 
 - Python 3.11+，依赖由 `uv.lock` 锁定，请勿手工改 `uv.lock` 以外的版本号。
@@ -26,7 +26,7 @@ python scripts/check_repo_hygiene.py
 ```
 
 - 测试用标准库 **unittest**，项目没有 pytest 配置，请不要引入第二套测试框架。
-- 当前基线为 **50 项测试通过**，耗时约 40 秒。新增行为必须配测试；修 bug 请先补一个能复现的用例。
+- Agent 重构本机基线为 **125 项测试通过**，详见 docs/refactor-validation.md；新链路可单独运行 test_agent_service.py。新增行为必须配测试；修 bug 请先补一个能复现的用例。
 - CI 在 `ubuntu-latest` 与 `windows-latest`、Python 3.11 与 3.13 上跑同一套测试。只在本机通过的改动不算通过——Windows 的文件替换、时区与路径行为都与 Linux 不同。
 
 ## 3 流程

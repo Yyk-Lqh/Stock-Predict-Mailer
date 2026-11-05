@@ -1,0 +1,13 @@
+{
+  "schema_version": "1",
+  "prediction_id": "sample-20261105-001",
+  "subject": "DEMO.SZ",
+  "generated_at": "2026-11-05T07:05:00Z",
+  "valid_until": "2026-11-06T07:05:00Z",
+  "horizon": {"value": 5, "unit": "trading_days"},
+  "direction": "up",
+  "confidence": null,
+  "model_version": "team-model-v1",
+  "synthetic": true,
+  "metrics": {}
+}

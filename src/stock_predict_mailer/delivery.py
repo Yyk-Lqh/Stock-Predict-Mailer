@@ -11,7 +11,6 @@ from email import policy
 from email.message import EmailMessage
 
 from .core import Config, atomic_write, connect, digest, now, timestamp
-from .report import load_report
 
 
 def outbox_schema(con):
@@ -61,6 +60,8 @@ def process_lock(cfg: Config):
 
 
 def enqueue(cfg: Config, report_id: str, recipient: str, sender: str = "research@example.invalid") -> dict:
+    from .report import load_report
+
     recipient, sender = address(recipient), address(sender)
     report, body = load_report(cfg, report_id)
     identity = digest(f"{report_id}\n{recipient}\n{sender}".encode())
@@ -90,6 +91,8 @@ def outbox(cfg: Config) -> list[dict]:
 
 
 def deliver(cfg: Config, outbox_id: str, *, allow_synthetic: bool = False, allow_stale: bool = False, factory=None) -> str:
+    from .report import load_report
+
     with process_lock(cfg):
         with connect(cfg) as con:
             outbox_schema(con)

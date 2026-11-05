@@ -1,0 +1,10 @@
+{
+  "name": "Mock 股票与邮件服务",
+  "transport": "streamable_http",
+  "url": "http://127.0.0.1:8766/mcp",
+  "timeout_seconds": 15,
+  "enabled": true,
+  "allowed_tools": ["get_context", "send_email"],
+  "effects": {"get_context": "read", "send_email": "email"},
+  "allowed_resources": ["stock://demo/contract"]
+}

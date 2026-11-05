@@ -1,0 +1,15 @@
+{
+  "name": "本地 Mock 分析模型",
+  "provider": "mock",
+  "base_url": "https://api.openai.com/v1",
+  "model": "mock-analysis",
+  "timeout_seconds": 20,
+  "retries": 1,
+  "supported_parameters": ["temperature", "max_tokens", "response_format"],
+  "temperature_min": 0.0,
+  "temperature_max": 2.0,
+  "parameters": {"max_tokens": 512},
+  "input_usd_per_million": null,
+  "output_usd_per_million": null,
+  "enabled": true
+}

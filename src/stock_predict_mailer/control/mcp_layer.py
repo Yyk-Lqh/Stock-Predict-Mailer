@@ -115,3 +115,25 @@ class MCPLayer:
                 raise nested from None
             code = exception_code(exc)
             raise ServiceError(code, {"AUTH_FAILED": "MCP 认证失败", "CALL_TIMEOUT": "MCP 调用超时"}.get(code, "MCP 连接或调用失败"), code != "AUTH_FAILED") from None
+
+    async def pages(self, method):
+        cursor, result = None, []
+        for _ in range(10):
+            page = await method(cursor=cursor)
+            data = page.model_dump(mode="json", by_alias=True)
+            result.extend(data.get("tools", data.get("resources", [])))
+            cursor = data.get("nextCursor")
+            if not cursor:
+                return result
+        raise ServiceError("MCP_LIMIT", "发现结果超过 10 页上限")
+
+    async def discover(self, sid):
+        async with self.session(sid) as (client, info, _):
+            tools = await self.pages(client.list_tools) if info.capabilities.tools else []
+            resources = await self.pages(client.list_resources) if info.capabilities.resources else []
+            for tool in tools:
+                schema_check(tool["inputSchema"])
+                if tool.get("outputSchema"):
+                    schema_check(tool["outputSchema"])
+            return bounded({"status": "ok", "tools": tools, "resources": resources,
+                            "protocol_version": info.protocolVersion, "server": info.serverInfo.model_dump(mode="json")})

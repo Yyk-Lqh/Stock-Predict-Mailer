@@ -1,6 +1,8 @@
 """OpenAI-compatible adapter, explicit capabilities and conservative call budgets."""
 from __future__ import annotations
 
+import asyncio
+import json
 import time
 
 import httpx
@@ -76,3 +78,67 @@ Allowed conclusion codes: MODEL_UP, MODEL_DOWN, MODEL_FLAT, INSUFFICIENT, DATA_L
 Allowed uncertainty codes: NO_CONFIDENCE, NO_CONTEXT, MODEL_UNVERIFIED.
 Allowed delegate roles: prediction, risk, advice. Reference only supplied evidence IDs. MODEL_* must match supplied direction.
 Main may request delegation for a complex task. No tools or email may be requested through model output."""
+
+
+class ModelAdapter:
+    def __init__(self, store):
+        self.store = store
+
+    async def generate(self, pid, role, data, settings, budget):
+        profile = self.store.get("models", pid)
+        if not profile["enabled"]:
+            raise ServiceError("SERVICE_DISABLED", "模型配置已停用")
+        temp = effective_temperature(profile, settings, role)
+        if profile["provider"] == "mock":
+            budget.reserve()
+            p = data["prediction"]
+            codes = {"main": ["MODEL_" + p["direction"].upper()] if "direction" in p else ["INSUFFICIENT"],
+                     "prediction": ["MODEL_" + p["direction"].upper()] if "direction" in p else ["INSUFFICIENT"],
+                     "risk": ["DATA_LIMITED", "MARKET_RISK"], "advice": ["VERIFY", "WAIT"]}[role]
+            return {"conclusion_codes": codes, "evidence_ids": ["prediction:" + p["prediction_id"]],
+                    "uncertainty_codes": ["MODEL_UNVERIFIED"], "delegate_roles": ["prediction", "risk", "advice"] if role == "main" else []}
+        secret = self.store.secret("models", pid).get("api_key", "")
+        if not secret:
+            raise ServiceError("AUTH_FAILED", "未配置模型 API Key")
+        params = {**profile["parameters"]}
+        if temp is not None:
+            params["temperature"] = temp
+        if "response_format" in profile["supported_parameters"]:
+            params.setdefault("response_format", {"type": "json_object"})
+        payload = {"model": profile["model"], "messages": [{"role": "system", "content": SYSTEM},
+                   {"role": "user", "content": json.dumps({"role": role, "data": data}, ensure_ascii=False)}], **params}
+        raw_size = len(json.dumps(payload, ensure_ascii=False).encode())
+        if raw_size > 16000:
+            raise ServiceError("INPUT_TOO_LARGE", "模型输入超过本地 16 KiB 预算上限")
+        price_in, price_out = profile["input_usd_per_million"], profile["output_usd_per_million"]
+        if price_in is None or price_out is None:
+            raise ServiceError("PRICE_REQUIRED", "真实模型必须配置输入/输出单价才能执行费用预算")
+        out_limit = params.get("max_tokens", params.get("max_completion_tokens"))
+        reserve = ((raw_size + 1024) * price_in + out_limit * price_out) / 1_000_000
+        for attempt in range(profile["retries"] + 1):
+            budget.reserve(reserve)
+            try:
+                response = await request_json(profile["base_url"].rstrip("/") + "/chat/completions", payload,
+                                              token=secret, timeout=min(profile["timeout_seconds"], max(0.1, budget.deadline - time.monotonic())))
+                try:
+                    content = response["choices"][0]["message"]["content"]
+                    if not isinstance(content, str):
+                        raise ValueError()
+                    result = decode(content.encode())
+                except (KeyError, IndexError, TypeError, ValueError):
+                    raise ServiceError("INVALID_RESPONSE", "模型未返回结构化 JSON 内容") from None
+                budget.check()
+                return result
+            except ServiceError as exc:
+                if not exc.retryable or attempt >= profile["retries"]:
+                    raise
+                await asyncio.sleep(min(0.2 * 2**attempt, max(0, budget.deadline - time.monotonic())))
+
+    async def test(self, pid, settings):
+        from ..agent_service.adapters import MockPredictionAdapter
+        from .orchestrator import validate_result
+        budget = Budget(settings["limits"])
+        p = MockPredictionAdapter().fetch()
+        result = await self.generate(pid, "main", {"prediction": p, "facts": []}, settings, budget)
+        validate_result(result, "main", p, [])
+        return {"status": "ok", "message": "推理连接及结构化输出测试通过", "usage": budget.snapshot()}

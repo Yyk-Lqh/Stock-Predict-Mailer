@@ -34,9 +34,15 @@ def main(argv=None):
     send.add_argument("message_id")
     status = sub.add_parser("mail-status", help="查询邮件状态")
     status.add_argument("message_id")
+    console = sub.add_parser("console", help="启动本机模型、MCP 与 Agent 配置控制台")
+    console.add_argument("--port", type=int, default=8767)
     args = parser.parse_args(argv)
     try:
         cfg = load(args.config)
+        if args.command == "console":
+            from .control.server import serve
+            serve(cfg["workspace"], args.port)
+            return 0
         mail = MailService(cfg["workspace"], cfg["mail"], cfg["timezone"], analysis_settings=cfg["agent"])
         if args.command == "run":
             p = adapter(cfg["prediction"]["adapter"], {**cfg["prediction"], "role": "prediction"}).fetch()

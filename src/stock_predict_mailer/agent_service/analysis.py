@@ -89,7 +89,7 @@ def validate_analysis(value, settings=None):
     prediction(value["prediction"], max_age=settings.get("max_age_seconds", 86400))
     context({"schema_version": "1", "context_id": "analysis", "subject": value["prediction"]["subject"], "facts": value["facts"]},
             value["prediction"]["subject"], max_age=settings.get("max_context_age_seconds", 86400))
-    if value["generated_at"] != value["prediction"]["generated_at"] or value["mode"] not in ("deterministic_no_llm", "http_bounded_agent"):
+    if value["generated_at"] != value["prediction"]["generated_at"] or value["mode"] not in ("deterministic_no_llm", "http_bounded_agent", "orchestrated_bounded"):
         fail("分析时间或模式无效")
     for field in ("inferences", "recommendations", "limitations", "risks"):
         if not isinstance(value[field], list):

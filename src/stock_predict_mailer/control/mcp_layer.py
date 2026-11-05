@@ -1,10 +1,18 @@
 """Official MCP SDK sessions, discovery and deny-by-default execution."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
+from contextlib import AsyncExitStack, asynccontextmanager
+from datetime import timedelta
 
+import httpx
 from jsonschema import Draft202012Validator, ValidationError
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamable_http_client
 
 from ..agent_service.contracts import ServiceError
 
@@ -70,3 +78,40 @@ def service_error(exc):
         if result:
             return result
     return None
+
+
+class MCPLayer:
+    def __init__(self, store):
+        self.store = store
+
+    @asynccontextmanager
+    async def session(self, sid):
+        profile = self.store.get("mcp", sid)
+        if not profile["enabled"]:
+            raise ServiceError("SERVICE_DISABLED", "MCP 服务已停用")
+        secrets = self.store.secret("mcp", sid)
+        try:
+            async with asyncio.timeout(profile["timeout_seconds"]), AsyncExitStack() as stack:
+                if profile["transport"] == "stdio":
+                    env = {k: os.environ[k] for k in ("PATH", "SYSTEMROOT", "TEMP", "TMP", "COMSPEC", "PATHEXT", "USERPROFILE") if k in os.environ}
+                    env.update(secrets.get("env", {}))
+                    errlog = stack.enter_context(open(os.devnull, "w"))
+                    streams = await stack.enter_async_context(stdio_client(
+                        StdioServerParameters(command=profile["command"], args=profile["args"], env=env), errlog=errlog))
+                else:
+                    headers = {"Authorization": "Bearer " + secrets["auth_token"]} if secrets.get("auth_token") else {}
+                    http = await stack.enter_async_context(httpx.AsyncClient(headers=headers, timeout=profile["timeout_seconds"],
+                                                                            follow_redirects=False, trust_env=False))
+                    streams = await stack.enter_async_context(streamable_http_client(profile["url"], http_client=http))
+                client = await stack.enter_async_context(ClientSession(streams[0], streams[1],
+                                                                     read_timeout_seconds=timedelta(seconds=profile["timeout_seconds"])))
+                info = await client.initialize()
+                yield client, info, profile
+        except ServiceError:
+            raise
+        except Exception as exc:
+            nested = service_error(exc)
+            if nested:
+                raise nested from None
+            code = exception_code(exc)
+            raise ServiceError(code, {"AUTH_FAILED": "MCP 认证失败", "CALL_TIMEOUT": "MCP 调用超时"}.get(code, "MCP 连接或调用失败"), code != "AUTH_FAILED") from None

@@ -1,0 +1,341 @@
+"""Bounded orchestration is independent of A2A transport and model providers."""
+from __future__ import annotations
+
+import asyncio
+import json
+import threading
+import time
+import uuid
+from typing import Literal
+
+from pydantic import Field, ValidationError
+
+from ..agent_service.analysis import INFERENCES, RECOMMENDATIONS, AnalysisAgent, identity, validate_analysis
+from ..agent_service.contracts import ServiceError, context, prediction, utcnow
+from ..agent_service.mail import MailService
+from ..agent_service.reporting import render, save_report
+from .a2a import A2AClient
+from .mcp_layer import MCPLayer
+from .models import Budget, ModelAdapter
+from .schemas import Closed
+
+RISK_TEXT = {"DATA_LIMITED": "现有事实不足以验证模型可靠性，应补充独立资料。", "MARKET_RISK": "市场波动、模型偏差及分布漂移可能导致损失。"}
+UNCERTAINTY = {"NO_CONFIDENCE": "上游未提供置信度。", "NO_CONTEXT": "未提供可验证上下文。", "MODEL_UNVERIFIED": "模型输出尚未独立验证。"}
+
+
+class TaskRequest(Closed):
+    prediction: dict
+    context: dict | None = None
+    complexity: Literal["auto", "simple", "complex"] = "auto"
+    notify: bool = False
+    recipient: str | None = None
+    depth: int = Field(default=0, ge=0, le=3)
+
+
+def validate_result(raw, role, p, facts):
+    fields = {"conclusion_codes", "evidence_ids", "uncertainty_codes", "delegate_roles"}
+    allowed = set(INFERENCES) | set(RECOMMENDATIONS) | set(RISK_TEXT)
+    if not isinstance(raw, dict) or set(raw) != fields:
+        raise ServiceError("INVALID_AGENT_RESULT", "Agent 返回字段不合规")
+    for k in fields:
+        if not isinstance(raw[k], list) or len(raw[k]) > 20 or any(not isinstance(v, str) for v in raw[k]):
+            raise ServiceError("INVALID_AGENT_RESULT", "Agent 返回必须为有限字符串数组")
+    references = {"prediction:" + p["prediction_id"], *(f["id"] for f in facts)}
+    if not raw["conclusion_codes"] or set(raw["conclusion_codes"]) - allowed or set(raw["evidence_ids"]) - references:
+        raise ServiceError("INVALID_AGENT_RESULT", "Agent 结论或依据不在允许范围内")
+    if not raw["evidence_ids"] or set(raw["uncertainty_codes"]) - set(UNCERTAINTY):
+        raise ServiceError("INVALID_AGENT_RESULT", "Agent 缺少依据或不确定性不合规")
+    if ("NO_CONFIDENCE" in raw["uncertainty_codes"] and p["confidence"] is not None) or ("NO_CONTEXT" in raw["uncertainty_codes"] and facts):
+        raise ServiceError("INVALID_AGENT_RESULT", "Agent 的缺失数据声明与输入不一致")
+    if set(raw["delegate_roles"]) - {"prediction", "risk", "advice"} or (role != "main" and raw["delegate_roles"]):
+        raise ServiceError("DEPTH_LIMIT", "子 Agent 不能继续委派")
+    return {"role": role, "status": "completed", "conclusions": raw["conclusion_codes"], "evidence_ids": raw["evidence_ids"],
+            "uncertainty": raw["uncertainty_codes"], "delegate_roles": list(dict.fromkeys(raw["delegate_roles"]))}
+
+
+def a2a_task(tid, state, *, context_id=None, result=None, error=None):
+    value = {"kind": "task", "id": tid, "contextId": context_id or tid,
+             "status": {"state": state, "timestamp": utcnow().isoformat()}, "artifacts": []}
+    if result is not None:
+        value["artifacts"] = [{"artifactId": tid + "-result", "name": "analysis", "parts": [{"kind": "data", "data": result}]}]
+    if error:
+        value["metadata"] = {"error": error}
+    return value
+
+
+class Orchestrator:
+    def __init__(self, store):
+        self.store, self.models, self.mcp, self.a2a = store, ModelAdapter(store), MCPLayer(store), A2AClient(store)
+        self.active = {}
+        self.lock = threading.RLock()
+        with self.store.db() as con:
+            previous_tasks = con.execute("SELECT id,body FROM tasks").fetchall()
+        for tid, body in previous_tasks:
+            previous = json.loads(body)
+            if previous["status"]["state"] in ("working", "submitted"):
+                self.store.task(tid, a2a_task(tid, "failed", error={"code": "INTERRUPTED", "message": "进程重启，中断任务未自动重跑"}))
+
+    def prepare(self, raw):
+        try:
+            request = TaskRequest.model_validate(raw).model_dump()
+        except ValidationError:
+            raise ServiceError("INVALID_INPUT", "任务字段无效") from None
+        request["prediction"] = prediction(request["prediction"])
+        request["context"] = context(request["context"], request["prediction"]["subject"])
+        if request["notify"]:
+            policy = self.store.settings()["mail"]
+            if request["recipient"] not in policy["recipient_allowlist"]:
+                raise ServiceError("PERMISSION_DENIED", "收件人不在预授权范围内")
+            if request["prediction"]["synthetic"] and not policy["allow_synthetic"]:
+                raise ServiceError("PERMISSION_DENIED", "未授权合成报告邮件投递")
+        return request
+
+    def submit(self, raw):
+        request = self.prepare(raw)
+        tid, event = uuid.uuid4().hex, threading.Event()
+        with self.lock:
+            if len(self.active) >= 4:
+                raise ServiceError("BUSY", "最多同时运行 4 个主任务，请稍后再试", True)
+            self.active[tid] = {"event": event}
+            self.store.task(tid, a2a_task(tid, "submitted"))
+        def worker():
+            try:
+                asyncio.run(self.execute(tid, request, event))
+            finally:
+                with self.lock:
+                    self.active.pop(tid, None)
+        threading.Thread(target=worker, daemon=True, name="analysis-" + tid[:8]).start()
+        return self.store.task(tid)
+
+    def cancel(self, tid):
+        with self.lock:
+            task = self.store.task(tid)
+            running = self.active.get(tid)
+            if task["status"]["state"] in ("completed", "failed", "canceled"):
+                raise ServiceError("TASK_NOT_CANCELABLE", "任务已经结束")
+            if running:
+                running["event"].set()
+                if running.get("loop") and running.get("task"):
+                    running["loop"].call_soon_threadsafe(running["task"].cancel)
+            task["status"]["state"] = "canceled"
+            self.store.task(tid, task)
+            return task
+
+    async def execute(self, tid, request, event=None):
+        settings = self.store.settings()
+        budget = Budget(settings["limits"], event)
+        if tid in self.active:
+            self.active[tid].update(loop=asyncio.get_running_loop(), task=asyncio.current_task())
+        self.store.task(tid, a2a_task(tid, "working"))
+        try:
+            async with asyncio.timeout(settings["limits"]["timeout_seconds"]):
+                output = await self.analyze(tid, request, settings, budget)
+                budget.check()
+                self.store.task(tid, a2a_task(tid, "completed", result=output))
+        except (ServiceError, TimeoutError) as exc:
+            error = exc.as_dict()["error"] if isinstance(exc, ServiceError) else {"code": "TASK_TIMEOUT", "message": "任务超时", "retryable": True}
+            self.store.task(tid, a2a_task(tid, "failed", error=error))
+        except asyncio.CancelledError:
+            self.store.task(tid, a2a_task(tid, "canceled"))
+        except Exception:
+            self.store.task(tid, a2a_task(tid, "failed", error={"code": "INTERNAL_ERROR", "message": "任务执行失败", "retryable": False}))
+        return self.store.task(tid)
+
+    async def role(self, role, data, settings, budget, *, local_only=False):
+        budget.check()
+        conf = settings["agents"][role]
+        if conf["endpoint_id"] and not local_only:
+            endpoint = self.store.get("agents", conf["endpoint_id"])
+            raw = await self.a2a.delegate(conf["endpoint_id"], {"role": role, "prediction": data["prediction"],
+                                           "facts": data.get("facts", []), "depth": 1, "tools": [],
+                                           "cost_ceiling_usd": endpoint["cost_ceiling_usd"]}, budget)
+        else:
+            mid = conf["model_id"] or settings["default_model_id"]
+            if not mid:
+                raise ServiceError("MODEL_REQUIRED", "请先配置默认模型或此角色模型")
+            raw = await self.models.generate(mid, role, data, settings, budget)
+        budget.check()
+        return validate_result(raw, role, data["prediction"], data.get("facts", []))
+
+    async def peer(self, role, data, inline=None):
+        if role not in ("prediction", "risk", "advice"):
+            raise ServiceError("INVALID_PARAMS", "未知 Agent 角色")
+        if not isinstance(data, dict) or set(data) - {"role", "prediction", "facts", "depth", "tools", "cost_ceiling_usd"}:
+            raise ServiceError("INVALID_PARAMS", "子任务数据字段无效")
+        if data.get("tools", []) or type(data.get("depth", 1)) is not int or data.get("depth", 1) != 1:
+            raise ServiceError("DEPTH_LIMIT", "当前子 Agent 仅接受深度 1 且无外部工具的任务")
+        p = prediction(data.get("prediction"))
+        c = context({"schema_version": "1", "context_id": "peer", "subject": p["subject"], "facts": data.get("facts", [])}, p["subject"])
+        tid = inline[2] if inline and len(inline) > 2 else uuid.uuid4().hex
+        self.store.task(tid, a2a_task(tid, "working"))
+        settings, budget = inline[:2] if inline else (self.store.settings(), None)
+        peer_event = threading.Event()
+        if budget is None:
+            limits = {**settings["limits"]}
+            ceiling = data.get("cost_ceiling_usd", limits["budget_usd"])
+            if type(ceiling) not in (int, float) or not 0 <= ceiling <= 100:
+                raise ServiceError("INVALID_PARAMS", "子任务费用上限无效")
+            limits["budget_usd"] = min(limits["budget_usd"], ceiling)
+            limits["max_calls"] = min(limits["max_calls"], 1)
+            budget = Budget(limits, peer_event)
+            with self.lock:
+                if len(self.active) >= 4:
+                    raise ServiceError("BUSY", "本机 Agent 并发上限已达到", True)
+                self.active[tid] = {"event": peer_event, "loop": asyncio.get_running_loop(), "task": asyncio.current_task()}
+        try:
+            async with asyncio.timeout(settings["limits"]["child_timeout_seconds"]):
+                result = await self.role(role, {"prediction": p, "facts": c["facts"]}, settings, budget, local_only=True)
+            raw = {"conclusion_codes": result["conclusions"], "evidence_ids": result["evidence_ids"],
+                   "uncertainty_codes": result["uncertainty"], "delegate_roles": []}
+            task = a2a_task(tid, "completed", result=raw)
+            self.store.task(tid, task)
+            return task
+        except asyncio.CancelledError:
+            self.store.task(tid, a2a_task(tid, "canceled"))
+            raise
+        except (ServiceError, TimeoutError) as exc:
+            code = exc.code if isinstance(exc, ServiceError) else "CHILD_TIMEOUT"
+            self.store.task(tid, a2a_task(tid, "failed", error={"code": code}))
+            raise ServiceError(code, "子 Agent 执行失败或超时") from None
+        except Exception:
+            self.store.task(tid, a2a_task(tid, "failed", error={"code": "CHILD_FAILED"}))
+            raise
+        finally:
+            if not inline:
+                with self.lock:
+                    self.active.pop(tid, None)
+
+    async def analyze(self, tid, request, settings, budget):
+        p, c = request["prediction"], request["context"]
+        facts = c["facts"] if c else []
+        notes, children, results, conflicts = [], [], [], []
+        # Tools are invoked only from preconfigured role bindings, never from model text.
+        for tool in settings["agents"]["main"]["tools"]:
+            sid, name = tool.split(":", 1)
+            budget.reserve()
+            raw = await self.mcp.call(sid, name, {"subject": p["subject"]}, role_tools=settings["agents"]["main"]["tools"])
+            validated = context(raw, p["subject"])
+            for fact in validated["facts"]:
+                if any(f["id"] == fact["id"] for f in facts):
+                    raise ServiceError("INVALID_TOOL_DATA", "外部事实 ID 与已有事实冲突")
+                facts = [*facts, fact]
+        c = {"schema_version": "1", "context_id": "task-" + tid, "subject": p["subject"], "facts": facts} if facts else None
+        data = {"prediction": p, "facts": facts}
+        try:
+            main = await self.role("main", data, settings, budget)
+            results.append(main)
+        except ServiceError as exc:
+            main = {"delegate_roles": []}
+            notes.append(exc.code + "：主 Agent 降级为确定性分析。")
+        complexity = request["complexity"]
+        complex_task = complexity == "complex" or (complexity == "auto" and (len(facts) > 1 or bool(p["metrics"])))
+        planned = main["delegate_roles"] if complex_task else []
+        limit = settings["limits"]
+        if request["depth"] >= limit["max_depth"]:
+            if planned:
+                notes.append("DEPTH_LIMIT：达到委派深度，主 Agent 直接完成。")
+            planned = []
+        if len(planned) > limit["max_subagents"]:
+            notes.append("SUBAGENT_LIMIT：委派数量已按上限裁剪。")
+        for role in planned[:limit["max_subagents"]]:
+            budget.check()
+            child_id = uuid.uuid4().hex
+            child = {"id": child_id, "role": role, "status": "working", "depth": request["depth"] + 1,
+                     "tools": [], "data_fields": ["prediction", "facts"]}
+            self.store.task(child_id, a2a_task(child_id, "working", context_id=tid))
+            try:
+                async with asyncio.timeout(min(limit["child_timeout_seconds"], max(0.01, budget.deadline - time.monotonic()))):
+                    # Lifecycle belongs here; local child uses the same structured A2A contract.
+                    from .a2a import A2AService, message
+                    if settings["agents"][role]["endpoint_id"]:
+                        result = await self.role(role, data, settings, budget)
+                    else:
+                        reply = await A2AService(self).dispatch({"jsonrpc": "2.0", "id": child_id, "method": "message/send",
+                                                                "params": {"message": message({**data, "depth": 1, "tools": []}, tid)}}, role,
+                                                               inline=(settings, budget, child_id))
+                        if "error" in reply:
+                            raise ServiceError(reply["error"]["data"]["code"], "子 Agent 失败")
+                        raw = reply["result"]["artifacts"][0]["parts"][0]["data"]
+                        result = validate_result(raw, role, p, facts)
+                results.append(result)
+                child.update(status="completed", result=result)
+                self.store.task(child_id, a2a_task(child_id, "completed", context_id=tid, result=result))
+            except (ServiceError, TimeoutError) as exc:
+                code = exc.code if isinstance(exc, ServiceError) else "CHILD_TIMEOUT"
+                child.update(status="degraded", error=code)
+                notes.append(f"{role}/{code}：子 Agent 失败，未采纳其结论。")
+                self.store.task(child_id, a2a_task(child_id, "failed", context_id=tid, error={"code": code}))
+            except asyncio.CancelledError:
+                self.store.task(child_id, a2a_task(child_id, "canceled", context_id=tid))
+                raise
+            children.append(child)
+        if children and results:
+            try:
+                merged = await self.role("main", {**data, "peer_results": results}, settings, budget)
+                results.append(merged)
+            except ServiceError as exc:
+                notes.append(exc.code + "：汇总调用失败，采用经过校验的已有结论。")
+        analysis = AnalysisAgent().analyze(p, c)
+        expected = "MODEL_" + p["direction"].upper() if "direction" in p else None
+        accepted = set()
+        for result in results:
+            for code in result["conclusions"]:
+                if code.startswith("MODEL_") and code != expected:
+                    conflicts.append({"role": result["role"], "code": code, "reason": "与上游预测方向冲突"})
+                else:
+                    accepted.add(code)
+        if conflicts:
+            notes.append("RESULT_CONFLICT：存在与上游方向冲突的 Agent 结论，已排除；保留不确定性。")
+        if accepted & set(RECOMMENDATIONS):
+            analysis["recommendations"] = [RECOMMENDATIONS[k] for k in sorted(accepted & set(RECOMMENDATIONS))]
+        analysis["risks"] += [RISK_TEXT[k] for k in sorted(accepted & set(RISK_TEXT))]
+        for code in sorted({u for result in results for u in result["uncertainty"]}):
+            if UNCERTAINTY[code] not in analysis["limitations"]:
+                analysis["limitations"].append(UNCERTAINTY[code])
+        analysis["limitations"] += notes
+        analysis["status"] = "degraded" if notes else "ok"
+        analysis["mode"] = "orchestrated_bounded"
+        analysis["analysis_id"] = identity({k: v for k, v in analysis.items() if k != "analysis_id"})
+        validate_analysis(analysis)
+        folder = save_report(self.store.root, analysis)
+        mail = None
+        if request["notify"]:
+            budget.check()
+            mail = await self.notify(analysis, request["recipient"], budget)
+        return {"analysis": analysis, "children": children, "conflicts": conflicts, "usage": budget.snapshot(),
+                "mail": mail, "report_path": str(folder / "report.html")}
+
+    async def notify(self, analysis, recipient, budget):
+        # Always reload authorization immediately before the external effect.
+        policy = self.store.settings()["mail"]
+        if recipient not in policy["recipient_allowlist"] or (analysis["prediction"]["synthetic"] and not policy["allow_synthetic"]):
+            raise ServiceError("PERMISSION_DENIED", "邮件授权已撤销或收件人未授权")
+        if policy["transport"] != "mcp":
+            service = MailService(self.store.root, policy)
+            queued = service.enqueue(analysis, recipient)
+            budget.reserve()
+            return await asyncio.to_thread(service.deliver, queued["id"])
+        key = identity([analysis["analysis_id"], recipient, policy["sender"], policy["mcp_server_id"], policy["mcp_tool"]])
+        # Durable MCP mail marker. Ambiguous tool errors must never be retried automatically.
+        with self.store.db() as con:
+            con.execute("CREATE TABLE IF NOT EXISTS mcp_mail (id TEXT PRIMARY KEY,status TEXT)")
+            row = con.execute("SELECT status FROM mcp_mail WHERE id=?", (key,)).fetchone()
+            if row:
+                status = "uncertain" if row[0] == "sending" else row[0]
+                con.execute("UPDATE mcp_mail SET status=? WHERE id=?", (status, key))
+                return {"id": key, "status": status}
+            budget.reserve()
+            con.execute("INSERT INTO mcp_mail VALUES (?,'sending')", (key,))
+        text, html = render(analysis)
+        try:
+            result = await self.mcp.call(policy["mcp_server_id"], policy["mcp_tool"],
+                                         {"recipient": recipient, "subject": "预测分析报告", "text": text, "html": html, "idempotency_key": key}, effect="email")
+            status = ("submitted" if result.get("status") in ("submitted", "sent") else
+                      "simulated" if result.get("status") == "simulated" else "uncertain")
+        except (ServiceError, asyncio.CancelledError):
+            with self.store.db() as con:
+                con.execute("UPDATE mcp_mail SET status='uncertain' WHERE id=?", (key,))
+            raise
+        with self.store.db() as con:
+            con.execute("UPDATE mcp_mail SET status=? WHERE id=?", (status, key))
+        return {"id": key, "status": status}

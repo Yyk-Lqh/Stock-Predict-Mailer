@@ -11,6 +11,8 @@ uv run stock-mailer --config config/agent-example.toml run --send
 
 命令输出报告路径、分析状态及邮件 ID。默认 `simulated` 表示邮件写入 `data/agent-local/sent/`；真实 SMTP 返回 `submitted` 表示邮件服务器已接受。重复运行相同输入不会重复投递。使用 `run` 可仅生成报告并入队；`send <mail.id>` 可执行发送或到期重试。
 
+模型/MCP/A2A 配置控制台已提供。设置服务端 `SPM_MASTER_KEY` 后运行 `uv run stock-mailer console --port 8767`，打开本机页面管理模型、加密凭据、工具授权、角色温度和分析任务。启动及完整 Mock 验收见 [控制台手册](docs/control-console.md)，后端接口见 [配置与协议 API](docs/control-api.md)。默认 CLI `run` 继续独立可用。
+
 目录结构：
 
 ```text
@@ -24,6 +26,7 @@ src/stock_predict_mailer/
     config.py      # TOML 配置，凭据仅引用环境变量
   cli.py           # 新默认入口
   legacy_cli.py    # 旧研究、训练、上传兼容入口
+  control/         # 配置界面/API、凭据库、模型/MCP/A2A、编排与预算
   core.py          # 复用原子文件写入等基础设施
 config/agent-example.toml
 examples/prediction.json

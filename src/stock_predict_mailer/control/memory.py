@@ -85,3 +85,19 @@ def entry_identity(value):
     else:
         identity = [value["kind"], value["subject"], value["applies_at"], value["data_version"], value["content"]]
     return hashlib.sha256(encoded(identity)).hexdigest(), topic
+
+
+def explicit_memory(message, subject):
+    """Extract an explicit remember request without interpreting arbitrary prose."""
+    match = re.fullmatch(r"(?:请)?记住[：:，,\s]*([^。！？\n]{1,800})[。！？]?", message.strip())
+    if not match:
+        return None
+    content = match[1].strip()
+    if not content or re.search(r"密钥|密码|令牌|api.?key|secret|password|bearer", content, re.I):
+        return None
+    if re.fullmatch(r"(?:我)?(?:偏好|喜欢|默认使用)(?:简版|标准版)报告", content):
+        return MemoryEntry(content=content, kind="preference", tags=["报告格式"],
+                           report_format="brief" if "简版" in content else "standard").model_dump()
+    if re.fullmatch(r"(?:持续)?关注(?:这只股票|" + re.escape(subject) + r")", content, re.I) and len(subject) <= 60:
+        return MemoryEntry(content=content, kind="watchlist", tags=["关注标的"], subject=subject).model_dump()
+    return MemoryEntry(content=content, kind="user_statement", tags=["用户明确要求"]).model_dump()

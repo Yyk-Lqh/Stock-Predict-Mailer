@@ -16,6 +16,8 @@ class Budget:
         self.deadline = time.monotonic() + limits["timeout_seconds"]
         self.calls, self.reserved_usd = 0, 0.0
         self.progress = None
+        self.memory_context = None
+        self.recalled = []
 
     def check(self):
         if self.cancelled and self.cancelled.is_set():

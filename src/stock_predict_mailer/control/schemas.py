@@ -7,6 +7,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .execution import DEFAULT_EFFORT, PRESETS, Effort
+
 ROLES = ("main", "prediction", "risk", "advice")
 PARAMETERS = {"temperature", "top_p", "max_tokens", "max_completion_tokens", "response_format", "seed",
               "presence_penalty", "frequency_penalty"}
@@ -30,6 +32,7 @@ class Closed(BaseModel):
 
 
 class ModelProfile(Closed):
+    reasoning_effort_map: dict[Effort, str] = Field(default_factory=dict)
     name: str = Field(min_length=1, max_length=100)
     provider: Literal["mock", "openai_compatible"] = "mock"
     base_url: str = "https://api.openai.com/v1"
@@ -47,6 +50,10 @@ class ModelProfile(Closed):
     @model_validator(mode="after")
     def compatible(self):
         self.base_url = endpoint(self.base_url)
+        if set(self.reasoning_effort_map) - PRESETS.keys() or any(
+            v not in ("none", "minimal", "low", "medium", "high", "xhigh", "max") for v in self.reasoning_effort_map.values()
+        ):
+            raise ValueError("推理强度映射无效")
         if set(self.supported_parameters) - PARAMETERS or set(self.parameters) - set(self.supported_parameters):
             raise ValueError("生成参数不在模型声明的支持范围内")
         if self.temperature_min > self.temperature_max:
@@ -140,6 +147,7 @@ class MailPolicy(Closed):
 
 
 class Settings(Closed):
+    default_reasoning_effort: Effort = DEFAULT_EFFORT
     default_model_id: str | None = None
     global_temperature: float = Field(default=0.2, ge=0, le=2)
     agents: dict[str, RoleConfig] = Field(default_factory=lambda: {r: RoleConfig() for r in ROLES})

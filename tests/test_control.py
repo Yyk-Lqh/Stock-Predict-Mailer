@@ -326,6 +326,19 @@ class OrchestrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result["execution"]["effort"], effort)
                 self.assertLessEqual(result["usage"]["calls"], result["execution"]["limits"]["max_calls"])
 
+    async def test_react_retry_and_continue_without_tool_data(self):
+        mcp = self.f.mcp()
+        self.f.settings["agents"]["main"]["tools"] = [mcp["id"] + ":get_context"]
+        self.f.store.save_settings(self.f.settings)
+        with patch.object(self.engine.mcp, "call", side_effect=ServiceError("MCP_UNAVAILABLE", "private tool details", True)) as call:
+            result = self.result(await self.run_task(reasoning_effort="high"))
+        self.assertEqual(call.call_count, 2)
+        self.assertEqual(result["analysis"]["status"], "degraded")
+        events = self.f.store.events("test-task")
+        self.assertEqual(sum(e["kind"] == "tool" and e["status"] == "failed" for e in events), 2)
+        self.assertTrue(any(e["kind"] == "adjustment" and "重试" in e["label"] for e in events))
+        self.assertNotIn("private tool details", json.dumps(events))
+
     async def test_complex_bounded_children(self):
         result = self.result(await self.run_task())
         self.assertEqual(len(result["children"]), 3)

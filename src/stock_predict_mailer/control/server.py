@@ -119,6 +119,32 @@ def make_server(root, port=8767, master_key=None):
                 if len(parts) < 2 or parts[0] != "api":
                     raise ServiceError("NOT_FOUND", "接口不存在")
                 kind = parts[1]
+                if kind in ("conversations", "memory"):
+                    route = parts[2:]
+                    if kind == "memory" and route == ["access"] and method == "POST":
+                        self.output(engine.memory.create_owner(), 201)
+                        return
+                    owner = engine.memory.owner(self.headers.get("X-Memory-Key", ""))
+                    if kind == "conversations" and not route and method == "POST":
+                        self.output(engine.memory.new(owner), 201)
+                    elif kind == "conversations" and not route and method == "GET":
+                        self.output(engine.memory.conversations(owner))
+                    elif kind == "conversations" and len(route) == 1 and method == "GET":
+                        self.output(engine.memory.conversation(owner, route[0]))
+                    elif kind == "memory" and route == ["settings"] and method in ("GET", "PUT"):
+                        self.output(engine.memory.settings(owner, self.body() if method == "PUT" else None))
+                    elif kind == "memory" and route == ["pending"] and method == "GET":
+                        self.output(engine.memory.pending(owner))
+                    elif kind == "memory" and not route and method == "GET":
+                        self.output(engine.memory.entries(owner))
+                    elif kind == "memory" and len(route) == 1 and method == "PUT":
+                        self.output(engine.memory.update(owner, route[0], self.body()))
+                    elif kind == "memory" and len(route) == 1 and method == "DELETE":
+                        engine.memory.delete(owner, route[0])
+                        self.output({"status": "deleted"})
+                    else:
+                        raise ServiceError("NOT_FOUND", "记忆接口不存在")
+                    return
                 if kind == "settings":
                     if method == "GET" and len(parts) == 2:
                         self.output(store.settings())

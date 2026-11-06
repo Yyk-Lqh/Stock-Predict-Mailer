@@ -148,14 +148,20 @@ class Orchestrator:
                 raise ServiceError("PERMISSION_DENIED", "未授权合成报告邮件投递")
         return request
 
-    def submit(self, raw):
-        request = self.prepare(raw)
+    def submit(self, raw, owner=None):
         tid, event = uuid.uuid4().hex, threading.Event()
         with self.lock:
             if len(self.active) >= 4:
                 raise ServiceError("BUSY", "最多同时运行 4 个主任务，请稍后再试", True)
+            request = self.prepare(raw, owner)
+            if cid := request["conversation_id"]:
+                previous = self.memory.state(owner, cid)
+                if previous.get("task") in self.active:
+                    raise ServiceError("BUSY", "会话任务正在收尾", True)
+                self.memory.begin(owner, cid, tid, request, a2a_task(tid, "submitted"))
+            else:
+                self.store.task(tid, a2a_task(tid, "submitted"))
             self.active[tid] = {"event": event}
-            self.store.task(tid, a2a_task(tid, "submitted"))
         def worker():
             try:
                 asyncio.run(self.execute(tid, request, event))

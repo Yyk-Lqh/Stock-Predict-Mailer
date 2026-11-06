@@ -185,3 +185,13 @@ class Store:
         if row is None:
             raise ServiceError("NOT_FOUND", "任务不存在")
         return json.loads(row[0])
+
+    def append_event(self, tid, value):
+        with self.db() as con:
+            con.execute("INSERT INTO task_events(task_id,body) VALUES (?,?)", (tid, json.dumps(value, ensure_ascii=False)))
+
+    def events(self, tid, after=0):
+        self.task(tid)
+        with self.db() as con:
+            rows = con.execute("SELECT seq,body FROM task_events WHERE task_id=? AND seq>? ORDER BY seq LIMIT 100", (tid, after)).fetchall()
+        return [{"seq": seq, **json.loads(body)} for seq, body in rows]

@@ -136,7 +136,8 @@ class Store:
 
     def settings(self):
         with self.db() as con:
-            return json.loads(con.execute("SELECT body FROM state WHERE id='settings'").fetchone()[0])
+            body = con.execute("SELECT body FROM state WHERE id='settings'").fetchone()[0]
+        return Settings.model_validate_json(body).model_dump()
 
     def save_settings(self, raw):
         try:

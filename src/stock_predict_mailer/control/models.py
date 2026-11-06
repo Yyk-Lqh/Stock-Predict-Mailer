@@ -101,6 +101,9 @@ class ModelAdapter:
         if not secret:
             raise ServiceError("AUTH_FAILED", "未配置模型 API Key")
         params = {**profile["parameters"]}
+        native_effort = profile.get("reasoning_effort_map", {}).get(settings.get("reasoning_effort"))
+        if native_effort:
+            params["reasoning_effort"] = native_effort
         if temp is not None:
             params["temperature"] = temp
         if "response_format" in profile["supported_parameters"]:

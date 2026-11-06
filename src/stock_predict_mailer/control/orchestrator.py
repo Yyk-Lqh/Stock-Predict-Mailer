@@ -16,7 +16,7 @@ from ..agent_service.contracts import ServiceError, context, prediction, utcnow
 from ..agent_service.mail import MailService
 from ..agent_service.reporting import render, save_report
 from .a2a import A2AClient
-from .execution import Effort
+from .execution import DEFAULT_EFFORT, Effort, Progress, envelope
 from .mcp_layer import MCPLayer
 from .models import Budget, ModelAdapter
 from .schemas import Closed
@@ -129,7 +129,12 @@ class Orchestrator:
 
     async def execute(self, tid, request, event=None):
         settings = self.store.settings()
-        budget = Budget(settings["limits"], event)
+        level = request.get("reasoning_effort") or settings.get("default_reasoning_effort", DEFAULT_EFFORT)
+        limits = envelope(level, settings["limits"])
+        settings = {**settings, "reasoning_effort": level, "limits": limits}
+        budget = Budget(limits, event)
+        progress = Progress(self.store, tid, budget)
+        budget.progress = progress
         if tid in self.active:
             self.active[tid].update(loop=asyncio.get_running_loop(), task=asyncio.current_task())
         self.store.task(tid, a2a_task(tid, "working"))

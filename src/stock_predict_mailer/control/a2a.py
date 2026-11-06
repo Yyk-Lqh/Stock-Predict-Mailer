@@ -96,6 +96,8 @@ class A2AService:
             if not isinstance(params, dict):
                 raise ServiceError("INVALID_PARAMS", "params 必须为对象")
             method = rpc.get("method")
+            if method in ("tasks/get", "tasks/cancel") and self.engine.memory.task_owner(params.get("id")):
+                raise ServiceError("NOT_FOUND", "任务不存在")
             if method == "message/send":
                 data = data_part(params.get("message"))
                 if role == "main":

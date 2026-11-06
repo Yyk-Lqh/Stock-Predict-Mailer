@@ -134,6 +134,9 @@ def make_server(root, port=8767, master_key=None):
                         raise ServiceError("NOT_FOUND", "设置接口不存在")
                     return
                 if kind == "tasks":
+                    if len(parts) >= 3 and (owner := engine.memory.task_owner(parts[2])):
+                        if engine.memory.owner(self.headers.get("X-Memory-Key", "")) != owner:
+                            raise ServiceError("FORBIDDEN", "此任务属于其他会话所有者")
                     if method == "POST" and len(parts) == 2:
                         self.output(engine.submit(self.body()), 202)
                     elif method == "GET" and len(parts) == 3:

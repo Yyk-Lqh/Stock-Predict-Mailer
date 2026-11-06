@@ -164,7 +164,9 @@ def make_server(root, port=8767, master_key=None):
                         if engine.memory.owner(self.headers.get("X-Memory-Key", "")) != owner:
                             raise ServiceError("FORBIDDEN", "此任务属于其他会话所有者")
                     if method == "POST" and len(parts) == 2:
-                        self.output(engine.submit(self.body()), 202)
+                        payload = self.body()
+                        owner = engine.memory.owner(self.headers.get("X-Memory-Key", "")) if payload.get("conversation_id") is not None else None
+                        self.output(engine.submit(payload, owner), 202)
                     elif method == "GET" and len(parts) == 3:
                         self.output(store.task(parts[2]))
                     elif method == "GET" and len(parts) == 4 and parts[3] == "events":

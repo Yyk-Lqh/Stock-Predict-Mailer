@@ -40,3 +40,9 @@ class MemoryEntry(Closed):
                 except ServiceError as exc:
                     raise ValueError(exc.message) from None
         return self
+
+
+class MemorySettings(Closed):
+    enabled: bool = True
+    context_bytes: int = Field(default=10000, ge=1024, le=15000)
+    recent_turns: int = Field(default=2, ge=1, le=6)

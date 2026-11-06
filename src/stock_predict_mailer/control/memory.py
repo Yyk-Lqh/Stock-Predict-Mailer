@@ -177,3 +177,30 @@ class Memory:
             else:
                 con.execute("UPDATE conversations SET state=?,updated=? WHERE owner=? AND id=?",
                             (self.seal(state), utcnow().isoformat(), owner, cid))
+
+    def task_owner(self, tid):
+        with self.store.db() as con:
+            row = con.execute("SELECT owner FROM memory_tasks WHERE task=?", (tid,)).fetchone()
+        return row[0] if row else None
+
+    def begin(self, owner, cid, tid, request, task):
+        state = self.state(owner, cid)
+        if state.get("task"):
+            status = self.store.task(state["task"])["status"]["state"]
+            if status in ("working", "submitted"):
+                raise ServiceError("BUSY", "该会话已有任务正在执行", True)
+        p = request["prediction"]
+        previous = state.get("request", {})
+        if previous.get("prediction") != p or request.get("fresh_context"):
+            state.pop("checkpoint", None)
+        state.update(task=tid, request=request)
+        turn = {"message": request.get("message", ""), "constraints": request.get("constraints", []),
+                "goal": request["goal"], "task": tid, "prediction": p}
+        with self.store.db() as con:
+            con.execute("INSERT INTO tasks VALUES (?,?)", (tid, json.dumps(task)))
+            seq = con.execute("INSERT INTO conversation_turns(conversation,body) VALUES (?,?)", (cid, self.seal(turn))).lastrowid
+            con.execute("INSERT INTO memory_tasks VALUES (?,?,?)", (tid, owner, cid))
+            for item in request.get("remember", []):
+                con.execute("INSERT INTO memory_pending VALUES (?,?,?,?,?)", (uuid.uuid4().hex, owner, cid, seq, self.seal(item)))
+            con.execute("UPDATE conversations SET state=?,updated=? WHERE owner=? AND id=?",
+                        (self.seal(state), utcnow().isoformat(), owner, cid))

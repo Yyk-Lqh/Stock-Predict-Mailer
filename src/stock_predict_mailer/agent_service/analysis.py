@@ -83,7 +83,7 @@ class AnalysisAgent:
 def validate_analysis(value, settings=None):
     settings = settings or {}
     keys(value, ("schema_version", "analysis_id", "generated_at", "status", "mode", "prediction", "facts", "inferences",
-                 "recommendations", "limitations", "risks"), ("charts",))
+                 "recommendations", "limitations", "risks"), ("charts", "report_format", "user_constraints"))
     unsigned = {k: v for k, v in value.items() if k != "analysis_id"}
     if identity(unsigned) != value["analysis_id"] or value["schema_version"] != "1" or value["status"] not in ("ok", "degraded"):
         fail("分析摘要、版本或状态无效")

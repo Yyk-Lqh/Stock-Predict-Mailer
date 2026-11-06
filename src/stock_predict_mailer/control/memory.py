@@ -5,10 +5,12 @@ import hashlib
 import json
 import math
 import re
+import secrets
+import uuid
 from collections import Counter
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 
 from ..agent_service.contracts import ServiceError, instant
 from .schemas import Closed
@@ -126,3 +128,27 @@ class Memory:
 
     def open(self, value):
         return json.loads(self.store.cipher.decrypt(value))
+
+    def create_owner(self):
+        token, owner = secrets.token_urlsafe(32), uuid.uuid4().hex
+        with self.store.db() as con:
+            con.execute("INSERT INTO memory_owners VALUES (?,?,?)",
+                        (owner, hashlib.sha256(token.encode()).hexdigest(), MemorySettings().model_dump_json()))
+        return {"key": token, "owner": owner}
+
+    def owner(self, token):
+        with self.store.db() as con:
+            row = con.execute("SELECT id FROM memory_owners WHERE token_hash=?", (hashlib.sha256(token.encode()).hexdigest(),)).fetchone()
+        if row is None:
+            raise ServiceError("FORBIDDEN", "需要有效的记忆访问密钥")
+        return row[0]
+
+    def settings(self, owner, value=None):
+        with self.store.db() as con:
+            if value is not None:
+                try:
+                    config = MemorySettings.model_validate(value)
+                except ValidationError:
+                    raise ServiceError("INVALID_CONFIG", "记忆阈值或保留轮数无效") from None
+                con.execute("UPDATE memory_owners SET settings=? WHERE id=?", (config.model_dump_json(), owner))
+            return json.loads(con.execute("SELECT settings FROM memory_owners WHERE id=?", (owner,)).fetchone()[0])

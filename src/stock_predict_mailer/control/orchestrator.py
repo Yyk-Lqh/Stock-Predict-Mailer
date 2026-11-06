@@ -372,6 +372,7 @@ class Orchestrator:
                     accepted.add(code)
         if conflicts:
             notes.append("RESULT_CONFLICT：存在与上游方向冲突的 Agent 结论，已排除；保留不确定性。")
+            progress.emit("adjustment", label=notes[-1], step="report")
         if accepted & set(RECOMMENDATIONS):
             analysis["recommendations"] = [RECOMMENDATIONS[k] for k in sorted(accepted & set(RECOMMENDATIONS))]
         analysis["risks"] += [RISK_TEXT[k] for k in sorted(accepted & set(RISK_TEXT))]

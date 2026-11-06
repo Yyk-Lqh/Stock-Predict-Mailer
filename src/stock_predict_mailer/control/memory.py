@@ -213,3 +213,19 @@ class Memory:
     def bind_child(self, owner, cid, tid):
         with self.store.db() as con:
             con.execute("INSERT INTO memory_tasks VALUES (?,?,?)", (tid, owner, cid))
+
+    def _write_vector(self, con, owner, value, *, mid=None):
+        dedup, topic = entry_identity(value)
+        old = con.execute("SELECT id FROM memory_vectors WHERE owner=? AND dedup=?", (owner, dedup)).fetchone()
+        if mid and old and old[0] != mid:
+            con.execute("DELETE FROM memory_vectors WHERE owner=? AND id=?", (owner, old[0]))
+        mid = mid or (old[0] if old else uuid.uuid4().hex)
+        item = {**value, "id": mid, "owner": owner, "recorded_at": utcnow().isoformat()}
+        features = vector(" ".join([item["content"], *item["tags"], item["subject"] or "", topic]))
+        con.execute("INSERT OR REPLACE INTO memory_vectors VALUES (?,?,?,?,?,?,?)",
+                    (mid, owner, dedup, item["kind"], item["expires_at"], self.seal(item), self.seal(features)))
+        return item
+
+    def entries(self, owner):
+        with self.store.db() as con:
+            return [self.open(row[0]) for row in con.execute("SELECT body FROM memory_vectors WHERE owner=? ORDER BY rowid DESC LIMIT 100", (owner,))]

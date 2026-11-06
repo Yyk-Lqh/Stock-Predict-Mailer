@@ -123,6 +123,9 @@ class ModelAdapter:
         reserve = ((raw_size + 1024) * price_in + out_limit * price_out) / 1_000_000
         for attempt in range(profile["retries"] + 1):
             budget.reserve(reserve)
+            if budget.progress:
+                budget.progress.emit("model", label=f"{role} 调用模型（第 {attempt + 1} 次）",
+                                     role=role, temperature=temp, native_reasoning_effort=native_effort)
             try:
                 response = await request_json(profile["base_url"].rstrip("/") + "/chat/completions", payload,
                                               token=secret, timeout=min(profile["timeout_seconds"], max(0.1, budget.deadline - time.monotonic())))

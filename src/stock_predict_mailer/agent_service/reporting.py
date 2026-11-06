@@ -21,6 +21,8 @@ def render(analysis, timezone="Asia/Shanghai", *, charts="inline"):
     lines += [f"[{f['id']}] {f['name']}：{f['value']} {f['unit']}；来源：{f['source']}；观测：{f['observed_at']}；可用：{f['available_at']}"
               for f in analysis["facts"]] or ["无可用上下文。"]
     lines += ["Agent 推断"] + [f"{i['text']}（依据：{', '.join(i['evidence_ids'])}）" for i in analysis["inferences"]]
+    if analysis.get("user_constraints"):
+        lines += ["本轮用户约束", *analysis["user_constraints"]]
     for title, key in (("不确定性与限制", "limitations"), ("风险提示", "risks"), ("建议（不作收益保证）", "recommendations")):
         lines += [title] + analysis[key]
     figures = analysis.get("charts", [])

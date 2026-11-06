@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import Field, ValidationError, model_validator
 
-from ..agent_service.contracts import ServiceError, instant
+from ..agent_service.contracts import ServiceError, instant, utcnow
 from .schemas import Closed
 
 Kind = Literal["user_statement", "preference", "watchlist", "constraint", "prediction", "inference"]
@@ -152,3 +152,28 @@ class Memory:
                     raise ServiceError("INVALID_CONFIG", "记忆阈值或保留轮数无效") from None
                 con.execute("UPDATE memory_owners SET settings=? WHERE id=?", (config.model_dump_json(), owner))
             return json.loads(con.execute("SELECT settings FROM memory_owners WHERE id=?", (owner,)).fetchone()[0])
+
+    def new(self, owner):
+        cid = uuid.uuid4().hex
+        self.save(owner, cid, {}, create=True)
+        return {"id": cid}
+
+    def conversations(self, owner):
+        with self.store.db() as con:
+            return [{"id": cid, "updated": updated, "subject": self.open(body).get("request", {}).get("prediction", {}).get("subject")}
+                    for cid, body, updated in con.execute("SELECT id,state,updated FROM conversations WHERE owner=? ORDER BY updated DESC LIMIT 100", (owner,))]
+
+    def state(self, owner, cid):
+        with self.store.db() as con:
+            row = con.execute("SELECT state FROM conversations WHERE owner=? AND id=?", (owner, cid)).fetchone()
+        if row is None:
+            raise ServiceError("NOT_FOUND", "会话不存在")
+        return self.open(row[0])
+
+    def save(self, owner, cid, state, *, create=False):
+        with self.store.db() as con:
+            if create:
+                con.execute("INSERT INTO conversations VALUES (?,?,?,?)", (cid, owner, self.seal(state), utcnow().isoformat()))
+            else:
+                con.execute("UPDATE conversations SET state=?,updated=? WHERE owner=? AND id=?",
+                            (self.seal(state), utcnow().isoformat(), owner, cid))

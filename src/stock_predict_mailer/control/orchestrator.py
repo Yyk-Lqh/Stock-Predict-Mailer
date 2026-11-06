@@ -394,8 +394,11 @@ class Orchestrator:
         analysis["status"] = "degraded" if notes else "ok"
         analysis["mode"] = "orchestrated_bounded"
         analysis["analysis_id"] = identity({k: v for k, v in analysis.items() if k != "analysis_id"})
-        validate_analysis(analysis)
-        folder = save_report(self.store.root, analysis)
+        with progress.step("report", "校验并保存分析报告"):
+            validate_analysis(analysis)
+            folder = save_report(self.store.root, analysis)
+        progress.emit("report", step="report", label="分析报告已保存",
+                      preview={"inferences": analysis["inferences"], "risks": analysis["risks"], "limitations": analysis["limitations"]})
         mail = None
         if request["notify"]:
             budget.check()

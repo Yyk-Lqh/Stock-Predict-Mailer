@@ -15,6 +15,7 @@ from email.message import EmailMessage
 from ..core import Config, atomic_write, digest
 from ..delivery import address, process_lock
 from .analysis import identity, validate_analysis
+from .charts import chart_svg
 from .contracts import ServiceError, instant, utcnow
 from .reporting import render
 
@@ -64,6 +65,7 @@ class MailService:
         except ValueError:
             raise ServiceError("INVALID_INPUT", "收发件人必须为单一邮箱地址") from None
         transport = self.settings.get("transport", "file")
+        chart_delivery = self.settings.get("chart_delivery", "inline")
         message_id = identity([analysis["analysis_id"], recipient, sender, transport])
         with process_lock(self.cfg):
             with self.db() as con:
@@ -73,9 +75,16 @@ class MailService:
                 msg = EmailMessage(policy=policy.SMTP)
                 msg["From"], msg["To"], msg["Message-ID"] = sender, recipient, f"<{message_id}@stock-predict-mailer.local>"
                 msg["Subject"] = "预测分析报告" + (" [MOCK]" if analysis["prediction"]["synthetic"] else "")
-                text, html = render(analysis, self.timezone)
+                text, html = render(analysis, self.timezone, charts="cid" if chart_delivery == "inline" else "attachment")
                 msg.set_content(text)
                 msg.add_alternative(html, subtype="html")
+                for idx, chart in enumerate(analysis.get("charts", [])):
+                    svg = chart_svg(chart).encode()
+                    if chart_delivery == "inline":
+                        msg.get_payload()[-1].add_related(svg, maintype="image", subtype="svg+xml",
+                                                         cid=f"<chart-{idx}@stock-predict-mailer.local>", disposition="inline")
+                    else:
+                        msg.add_attachment(svg, maintype="image", subtype="svg+xml", filename=f"analysis-chart-{idx + 1}.svg")
                 payload = msg.as_bytes()
                 atomic_write(self.workspace / "agent-outbox" / f"{message_id}.eml", payload)
                 con.execute("INSERT INTO mail VALUES (?,?,?,?,'pending',0,?,NULL,?,?)",

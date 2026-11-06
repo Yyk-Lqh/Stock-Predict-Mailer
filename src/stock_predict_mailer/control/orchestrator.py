@@ -353,8 +353,11 @@ class Orchestrator:
                 raise
             children.append(child)
         if children and results:
+            progress.emit("adjustment", label="加入子 Agent 结果汇总步骤。",
+                          steps=[{"id": "merge", "label": "复核子 Agent 结果"}])
             try:
-                merged = await self.role("main", {**data, "peer_results": results}, settings, budget)
+                with progress.step("merge", "复核与汇总子 Agent 结果"):
+                    merged = await self.role("main", {**data, "goal": goal, "peer_results": results}, settings, budget)
                 results.append(merged)
             except ServiceError as exc:
                 notes.append(exc.code + "：汇总调用失败，采用经过校验的已有结论。")

@@ -305,7 +305,7 @@ class Orchestrator:
             progress.emit("adjustment", label=notes[-1], step="main")
         complexity = request["complexity"]
         complex_task = complexity == "complex" or (complexity == "auto" and (len(facts) > 1 or bool(p["metrics"])))
-        planned = main["delegate_roles"] if complex_task else []
+        planned = main["delegate_roles"] if complex_task and budget.limits["max_subagents"] else []
         limit = settings["limits"]
         if request["depth"] >= limit["max_depth"]:
             if planned:

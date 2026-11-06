@@ -37,6 +37,7 @@ docs/
 
 - [接口契约、字段及示例](docs/interfaces.md)：采集 → 系统、预测 → Agent、分析 → 邮件及可选 HTTP Agent 协议。
 - [项目介绍与前端开发交接](docs/frontend-handoff.md)：业务边界、页面任务、字段与接口、状态展示、同源部署约束及 Mock 验收，供接手前端的开发者优先阅读。
+- [混合执行与图表进度](docs/hybrid-execution.md)记录五档推理预算、时间序列契约、进度接口和邮件图表配置。
 - [运行与邮件配置](docs/mail-and-running.md)：真实 SMTP、环境变量、新鲜度、失败处理及真实上游适配。
 - [重构方案与清理说明](docs/refactor-plan.md)、[保留文件清单](docs/inventory.md)。
 - [验收记录](docs/refactor-validation.md)：测试结果、边界及待团队配合事项。

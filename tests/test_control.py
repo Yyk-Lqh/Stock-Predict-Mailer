@@ -339,6 +339,45 @@ class OrchestrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(e["kind"] == "adjustment" and "重试" in e["label"] for e in events))
         self.assertNotIn("private tool details", json.dumps(events))
 
+    async def test_chart_data_report_preview_and_mail_share_artifact(self):
+        from datetime import timedelta
+        from email import policy
+        from email.parser import BytesParser
+
+        from stock_predict_mailer.agent_service.contracts import instant
+
+        p = {**MockPredictionAdapter().fetch(), "value": 12, "value_unit": "CNY"}
+        t = instant(p["generated_at"])
+        def at(days):
+            return (t + timedelta(days=days)).isoformat()
+        data = {"unit": "CNY", "series": {
+            "observed": {"source": "Mock feed", "points": [{"at": at(-2), "value": 9}, {"at": at(-1), "value": 10}]},
+            "forecast": {"source": "Mock model", "points": [{"at": at(5), "value": 12, "lower": 11, "upper": 13}]},
+            "backtest": {"source": "Mock archive", "points": [{"at": at(-1), "issued_at": at(-3), "value": 9}]}}}
+        self.f.settings["mail"].update(recipient_allowlist=["preview@example.invalid"], allow_synthetic=True)
+        for delivery in ("inline", "attachment"):
+            self.f.settings["mail"]["chart_delivery"] = delivery
+            self.f.store.save_settings(self.f.settings)
+            request = self.engine.prepare({"prediction": {**p, "prediction_id": p["prediction_id"] + "-" + delivery},
+                                           "chart_data": data, "reasoning_effort": "high", "notify": True,
+                                           "recipient": "preview@example.invalid"})
+            result = self.result(await self.engine.execute("chart-" + delivery, request))
+            charts = result["analysis"]["charts"]
+            self.assertEqual(len(charts), 2)
+            self.assertIn("平均绝对误差 1 CNY", charts[1]["caption"])
+            report = Path(result["report_path"]).read_text(encoding="utf-8")
+            events = self.f.store.events("chart-" + delivery)
+            svg = next(e["svg"] for e in events if e["kind"] == "chart")
+            self.assertIn(svg, report)
+            mail = self.f.root / "sent" / (result["mail"]["id"] + ".eml")
+            msg = BytesParser(policy=policy.default).parsebytes(mail.read_bytes())
+            image = next(part for part in msg.walk() if part.get_content_type() == "image/svg+xml")
+            self.assertEqual(image.get_payload(decode=True).decode(), svg)
+            self.assertEqual(image.get_content_disposition(), delivery)
+        data["series"]["forecast"]["points"][0]["value"] = 11
+        with self.assertRaises(ServiceError):
+            self.engine.prepare({"prediction": p, "chart_data": data})
+
     async def test_complex_bounded_children(self):
         result = self.result(await self.run_task())
         self.assertEqual(len(result["children"]), 3)

@@ -229,3 +229,16 @@ class Memory:
     def entries(self, owner):
         with self.store.db() as con:
             return [self.open(row[0]) for row in con.execute("SELECT body FROM memory_vectors WHERE owner=? ORDER BY rowid DESC LIMIT 100", (owner,))]
+
+    def pending(self, owner):
+        with self.store.db() as con:
+            rows = con.execute("SELECT id,conversation,turn,body FROM memory_pending WHERE owner=? ORDER BY rowid LIMIT 100", (owner,)).fetchall()
+        return [{"id": pid, "source_conversation": cid, "source_message": seq, **self.open(body)} for pid, cid, seq, body in rows]
+
+    def conversation(self, owner, cid):
+        state = self.state(owner, cid)
+        with self.store.db() as con:
+            rows = con.execute("SELECT seq,body FROM conversation_turns WHERE conversation=? ORDER BY seq DESC LIMIT 20", (cid,)).fetchall()
+        return {"id": cid, "task": state.get("task"), "summary": state.get("summary", []),
+                "completed_step": state.get("checkpoint", {}).get("completed_step"),
+                "messages": [{"seq": seq, **self.open(body)} for seq, body in reversed(rows)]}

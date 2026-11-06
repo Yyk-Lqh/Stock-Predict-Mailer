@@ -34,6 +34,8 @@ class Store:
             CREATE TABLE IF NOT EXISTS profiles (kind TEXT,id TEXT,body TEXT,secrets BLOB,PRIMARY KEY(kind,id));
             CREATE TABLE IF NOT EXISTS state (id TEXT PRIMARY KEY,body TEXT);
             CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY,body TEXT);
+            CREATE TABLE IF NOT EXISTS task_events (seq INTEGER PRIMARY KEY, task_id TEXT NOT NULL, body TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS task_events_lookup ON task_events(task_id,seq);
             """)
             con.execute("INSERT OR IGNORE INTO state VALUES ('settings',?)", (Settings().model_dump_json(),))
             marker = con.execute("SELECT body FROM state WHERE id='vault_check'").fetchone()

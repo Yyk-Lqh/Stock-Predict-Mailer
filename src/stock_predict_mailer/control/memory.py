@@ -242,3 +242,30 @@ class Memory:
         return {"id": cid, "task": state.get("task"), "summary": state.get("summary", []),
                 "completed_step": state.get("checkpoint", {}).get("completed_step"),
                 "messages": [{"seq": seq, **self.open(body)} for seq, body in reversed(rows)]}
+
+    def update(self, owner, mid, raw):
+        try:
+            value = MemoryEntry.model_validate(raw).model_dump()
+        except ValidationError:
+            raise ServiceError("INVALID_INPUT", "记忆字段无效") from None
+        with self.store.db() as con:
+            row = con.execute("SELECT body FROM memory_vectors WHERE owner=? AND id=?", (owner, mid)).fetchone()
+            if not row:
+                raise ServiceError("NOT_FOUND", "记忆不存在")
+            old = self.open(row[0])
+            self._discard_replaced_pending(con, owner, entry_identity(old)[0], entry_identity(value)[0])
+            return self._write_vector(con, owner, {**old, **value}, mid=mid)
+
+    def delete(self, owner, mid):
+        with self.store.db() as con:
+            row = con.execute("SELECT dedup FROM memory_vectors WHERE owner=? AND id=?", (owner, mid)).fetchone()
+            if not row:
+                raise ServiceError("NOT_FOUND", "记忆不存在")
+            self._discard_replaced_pending(con, owner, row[0])
+            con.execute("DELETE FROM memory_vectors WHERE owner=? AND id=?", (owner, mid))
+
+    def _discard_replaced_pending(self, con, owner, *identities):
+        rows = con.execute("SELECT id,body FROM memory_pending WHERE owner=?", (owner,)).fetchall()
+        for pid, body in rows:
+            if entry_identity(self.open(body))[0] in identities:
+                con.execute("DELETE FROM memory_pending WHERE id=?", (pid,))

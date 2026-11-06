@@ -29,7 +29,34 @@ function renderSettings(){options($('default-model'),profiles,settings.default_m
 $('endpoint-save').onclick=async()=>{try{const id=$('endpoint-id').value;const old=endpoints.find(e=>e.id===id);await api('agents'+(id?'/'+id:''),id?'PUT':'POST',{name:$('endpoint-name').value,url:$('endpoint-url').value,cost_ceiling_usd:num('endpoint-cost'),auth_token:$('endpoint-token').value,enabled:old?.enabled??true});$('endpoint-id').value='';$('endpoint-token').value='';await refresh();notice('A2A 对端已保存');}catch(e){notice(e.message,true);}};
 $('settings-form').onsubmit=async e=>{e.preventDefault();try{const value=structuredClone(settings);value.default_model_id=$('default-model').value||null;value.global_temperature=num('global-temperature');value.default_reasoning_effort=$('default-effort').value;value.mail.chart_delivery=$('chart-delivery').value;for(const role of Object.keys(roles)){const temp=$(`role-${role}-temperature`);value.agents[role]={model_id:$(`role-${role}-model_id`).value||null,endpoint_id:role==='main'?null:$(`role-${role}-endpoint_id`).value||null,temperature:temp.disabled||temp.value===''?null:Number(temp.value),tools:role==='main'?csv($(`role-${role}-tools`).value):[]};}for(const key of Object.keys(value.limits))value.limits[key]=num('limit-'+key);const m=value.mail;for(const key of ['transport','sender','host','tls'])m[key]=$('mail-'+key).value;m.port=num('mail-port');m.recipient_allowlist=lines($('mail-allowlist').value);m.allow_synthetic=$('mail-synthetic').checked;m.mcp_server_id=$('mail-mcp-server').value||null;m.mcp_tool=$('mail-mcp-tool').value||null;await api('settings','PUT',value);await refresh();notice('协作边界与邮件授权已保存');}catch(err){notice(err.message,true);}};
 $('reset-temperature').onclick=async()=>{try{await api('settings/reset-temperature','POST',{});await refresh();notice('全局温度已恢复为 0.2，角色覆盖已清空；模型生成参数中的显式温度可在模型配置中清除。');}catch(e){notice(e.message,true);}};
-function mockInput(){const now=new Date();now.setUTCMinutes(0,0,0);const time=now.toISOString();const p={schema_version:'1',prediction_id:'console-mock-'+time,subject:'DEMO.SZ',generated_at:time,valid_until:new Date(now.getTime()+86400000).toISOString(),horizon:{value:5,unit:'trading_days'},direction:'up',confidence:null,model_version:'mock-v1',synthetic:true,metrics:{}};$('task-data').value=JSON.stringify({prediction:p,context:null},null,2);}
+function mockInput() {
+  const now = new Date();
+  now.setUTCMinutes(0, 0, 0);
+  const time = now.toISOString();
+  const day = 86400000;
+  const at = offset => {
+    let time = now.getTime();
+    let remaining = Math.abs(offset);
+    while (remaining) {
+      time += Math.sign(offset) * day;
+      const weekday = new Date(time).getUTCDay();
+      if (weekday !== 0 && weekday !== 6) remaining--;
+    }
+    return new Date(time).toISOString();
+  };
+  const prediction = {schema_version:'1', prediction_id:'console-mock-'+time, subject:'DEMO.SZ',
+    generated_at:time, valid_until:at(1), horizon:{value:5,unit:'trading_days'},
+    direction:'up', value:11.2, value_unit:'CNY', confidence:null, model_version:'mock-v1', synthetic:true, metrics:{}};
+  const observed = Array.from({length:12}, (_, i) => ({at:at(i-12), value:9.4+i*.09}));
+  const forecast = [1, 3, 5].map((offset, i) => ({at:at(offset), value:[10.6,10.9,11.2][i], lower:10+i*.15, upper:11.3+i*.2}));
+  const backtest = observed.slice(-6).map((point, i) => ({at:point.at, issued_at:at(i-7), value:point.value+.08}));
+  const chart_data = {unit:'CNY', series:{
+    observed:{source:'Mock 历史数据',points:observed},
+    forecast:{source:'Mock 上游模型',points:forecast},
+    backtest:{source:'Mock 历史预测',points:backtest}
+  }};
+  $('task-data').value = JSON.stringify({prediction, context:null, chart_data}, null, 2);
+}
 $('load-mock').onclick=mockInput;
 function showTask(task){$('task-output').textContent=JSON.stringify(task,null,2);const el=$('task-summary');el.replaceChildren();text(el,'h3',`任务 ${task.status.state}`);text(el,'p',task.id);if(task.metadata?.error)text(el,'p',`${task.metadata.error.code} · ${task.metadata.error.message||''}`);const result=task.artifacts?.[0]?.parts?.[0]?.data;if(result){text(el,'p',`分析：${result.analysis.status} · 调用 ${result.usage.calls} 次 · 费用预留 $${result.usage.reserved_usd}`);for(const child of result.children)text(el,'p',`${roles[child.role]} · ${child.status}${child.error?' / '+child.error:''}`);for(const [label,values] of [['推断',result.analysis.inferences.map(i=>i.text)],['限制',result.analysis.limitations],['风险',result.analysis.risks],['建议',result.analysis.recommendations]]){text(el,'h3',label);const ul=document.createElement('ul');for(const v of values)text(ul,'li',v);el.append(ul);}if(result.mail)text(el,'p',`邮件：${result.mail.status} · ${result.mail.id}`);}const finished=['completed','failed','canceled'].includes(task.status.state);$('task-cancel').hidden=finished;return finished;}
 async function poll(id){try{const task=await api('tasks/'+id);if(!showTask(task)&&currentTask===id)setTimeout(()=>poll(id),900);}catch(e){notice(e.message,true);}}

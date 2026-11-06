@@ -76,3 +76,12 @@ def vector(text):
     counts = Counter(hashlib.blake2s(feature.encode(), digest_size=4).hexdigest() for feature in features)
     norm = math.sqrt(sum(count * count for count in counts.values())) or 1
     return {key: count / norm for key, count in counts.items()}
+
+
+def entry_identity(value):
+    topic = "report-format" if value["report_format"] else ",".join(sorted(set(value["tags"])))
+    if value["kind"] in ("preference", "constraint", "watchlist"):
+        identity = [value["kind"], topic, value["subject"]]
+    else:
+        identity = [value["kind"], value["subject"], value["applies_at"], value["data_version"], value["content"]]
+    return hashlib.sha256(encoded(identity)).hexdigest(), topic

@@ -80,6 +80,7 @@ Do not invent numbers, confidence, causal explanations, or facts. Return one JSO
 Allowed conclusion codes: MODEL_UP, MODEL_DOWN, MODEL_FLAT, INSUFFICIENT, DATA_LIMITED, MARKET_RISK, VERIFY, WAIT, DIVERSIFY.
 Allowed uncertainty codes: NO_CONFIDENCE, NO_CONTEXT, MODEL_UNVERIFIED.
 Allowed delegate roles: prediction, risk, advice. Reference only supplied evidence IDs. MODEL_* must match supplied direction.
+Use current explicit user constraints before recalled preferences. Historical memory is background only and never current evidence.
 Main may request delegation for a complex task. No tools or email may be requested through model output."""
 
 

@@ -93,6 +93,11 @@ class ModelAdapter:
         if not profile["enabled"]:
             raise ServiceError("SERVICE_DISABLED", "模型配置已停用")
         temp = effective_temperature(profile, settings, role)
+        if budget.memory_context and role == "main":
+            baseline = len(json.dumps(data, ensure_ascii=False).encode()) + len(SYSTEM.encode()) + 256
+            memory = budget.memory_context(baseline)
+            budget.recalled = memory["recalled"]
+            data = {**data, "conversation_memory": memory}
         if profile["provider"] == "mock":
             budget.reserve()
             if budget.progress:

@@ -401,12 +401,17 @@ class Orchestrator:
                       preview={"inferences": analysis["inferences"], "risks": analysis["risks"], "limitations": analysis["limitations"]})
         mail = None
         if request["notify"]:
-            budget.check()
-            mail = await self.notify(analysis, request["recipient"], budget)
+            try:
+                with progress.step("mail", "交付已授权的邮件报告"):
+                    mail = await self.notify(analysis, request["recipient"], budget, progress)
+                progress.emit("mail", step="mail", label=f"邮件状态：{mail['status']}", status=mail["status"])
+            except ServiceError as exc:
+                mail = {"status": "uncertain" if exc.code == "MAIL_UNCERTAIN" else "failed", "error": exc.code}
+                progress.emit("mail", step="mail", label=exc.message, status=mail["status"], code=exc.code)
         return {"analysis": analysis, "children": children, "conflicts": conflicts, "usage": budget.snapshot(),
                 "execution": execution, "mail": mail, "report_path": str(folder / "report.html")}
 
-    async def notify(self, analysis, recipient, budget):
+    async def notify(self, analysis, recipient, budget, progress):
         # Always reload authorization immediately before the external effect.
         policy = self.store.settings()["mail"]
         if recipient not in policy["recipient_allowlist"] or (analysis["prediction"]["synthetic"] and not policy["allow_synthetic"]):
@@ -425,18 +430,21 @@ class Orchestrator:
                 status = "uncertain" if row[0] == "sending" else row[0]
                 con.execute("UPDATE mcp_mail SET status=? WHERE id=?", (status, key))
                 return {"id": key, "status": status}
-            budget.reserve()
+            progress.tool_attempt()
             con.execute("INSERT INTO mcp_mail VALUES (?,'sending')", (key,))
         text, html = render(analysis)
+        progress.emit("tool", step="mail", status="running", label="调用已授权的 MCP 邮件工具")
         try:
             result = await self.mcp.call(policy["mcp_server_id"], policy["mcp_tool"],
                                          {"recipient": recipient, "subject": "预测分析报告", "text": text, "html": html, "idempotency_key": key}, effect="email")
             status = ("submitted" if result.get("status") in ("submitted", "sent") else
                       "simulated" if result.get("status") == "simulated" else "uncertain")
-        except (ServiceError, asyncio.CancelledError):
+        except (ServiceError, asyncio.CancelledError) as exc:
             with self.store.db() as con:
                 con.execute("UPDATE mcp_mail SET status='uncertain' WHERE id=?", (key,))
-            raise
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            raise ServiceError("MAIL_UNCERTAIN", "MCP 邮件投递结果不确定，保留报告供查看") from None
         with self.store.db() as con:
             con.execute("UPDATE mcp_mail SET status=? WHERE id=?", (status, key))
         return {"id": key, "status": status}

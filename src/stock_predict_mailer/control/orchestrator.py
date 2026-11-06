@@ -193,6 +193,9 @@ class Orchestrator:
         budget = Budget(limits, event)
         progress = Progress(self.store, tid, budget)
         budget.progress = progress
+        if cid := request.get("conversation_id"):
+            owner = request["_owner"]
+            budget.memory_context = lambda size: self.memory.context(owner, cid, request, size, progress)
         if tid in self.active:
             self.active[tid].update(loop=asyncio.get_running_loop(), task=asyncio.current_task())
         self.store.task(tid, a2a_task(tid, "working"))
@@ -224,6 +227,8 @@ class Orchestrator:
         else:
             mid = conf["model_id"] or settings["default_model_id"]
             if not mid:
+                if role == "main" and budget.memory_context:
+                    budget.recalled = budget.memory_context(0)["recalled"]
                 raise ServiceError("MODEL_REQUIRED", "请先配置默认模型或此角色模型")
             raw = await self.models.generate(mid, role, data, settings, budget)
         budget.check()

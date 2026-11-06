@@ -15,6 +15,7 @@ class Budget:
         self.limits, self.cancelled = limits, cancelled
         self.deadline = time.monotonic() + limits["timeout_seconds"]
         self.calls, self.reserved_usd = 0, 0.0
+        self.progress = None
 
     def check(self):
         if self.cancelled and self.cancelled.is_set():
@@ -91,6 +92,8 @@ class ModelAdapter:
         temp = effective_temperature(profile, settings, role)
         if profile["provider"] == "mock":
             budget.reserve()
+            if budget.progress:
+                budget.progress.emit("model", label=f"{role} 使用 Mock 模型", role=role, temperature=temp)
             p = data["prediction"]
             codes = {"main": ["MODEL_" + p["direction"].upper()] if "direction" in p else ["INSUFFICIENT"],
                      "prediction": ["MODEL_" + p["direction"].upper()] if "direction" in p else ["INSUFFICIENT"],

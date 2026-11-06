@@ -6,6 +6,7 @@ import json
 import math
 import re
 import secrets
+import sqlite3
 import uuid
 from collections import Counter
 from typing import Literal
@@ -305,3 +306,68 @@ class Memory:
                 score += .2
             scored.append((score, item))
         return [item for _, item in sorted(scored, key=lambda pair: (pair[0], pair[1]["recorded_at"]), reverse=True)[:5]]
+
+    def context(self, owner, cid, request, size, progress):
+        config = self.settings(owner)
+        state = self.state(owner, cid)
+        failed = False
+        if config["enabled"]:
+            try:
+                saved = self.flush(owner, cid)
+                if saved and progress:
+                    progress.emit("memory", label=f"已保存 {saved} 条长期记忆")
+            except (sqlite3.Error, OSError, RuntimeError, ServiceError):
+                failed = True
+                if progress:
+                    progress.emit("memory", label="向量写入失败，保留源消息与待写记录", code="MEMORY_WRITE_PENDING")
+        with self.store.db() as con:
+            rows = con.execute("SELECT seq,body FROM conversation_turns WHERE conversation=? AND seq>? ORDER BY seq",
+                               (cid, state.get("compacted_through", 0))).fetchall()
+        turns = [(seq, self.open(body)) for seq, body in rows]
+        # The current task already carries the latest validated prediction.
+        recent = [{"seq": seq, "message": turn["message"], "constraints": turn["constraints"], "goal": turn["goal"],
+                   "subject": turn["prediction"]["subject"]} for seq, turn in turns]
+        summary = state.get("summary", [])
+        recalled = self.recall(owner, request) if config["enabled"] else []
+        estimated = size + len(encoded([summary, recent, recalled, request.get("constraints", [])]))
+        if estimated >= config["context_bytes"] and len(turns) > config["recent_turns"] and not failed:
+            trim = len(turns) - config["recent_turns"]
+            for seq, turn in turns[:trim]:
+                p = turn["prediction"]
+                previous = self.store.task(turn["task"])
+                steps = {event["step"]: event["status"] for event in self.store.events(turn["task"])
+                         if event["kind"] == "step"}
+                analysis = next((part.get("data", {}).get("analysis", {}) for a in previous.get("artifacts", []) for part in a.get("parts", [])), {})
+                requirements = [s.strip() for s in re.split(r"[。！？\n]", turn["message"])
+                                if 0 < len(s.strip()) <= 240 and re.search(r"请|必须|不要|只|限制|周期|only|must", s, re.I)]
+                summary.append({"source_message": seq, "goal": turn["goal"], "constraints": turn["constraints"],
+                                "requirements": requirements[:4],
+                                "prediction": {key: p[key] for key in ("subject", "prediction_id", "generated_at", "horizon", "model_version", "value", "value_unit") if key in p},
+                                "facts": [{k: f[k] for k in ("id", "value", "unit", "source", "observed_at")} for f in analysis.get("facts", [])[:4]],
+                                "task_status": previous["status"]["state"],
+                                "steps": steps,
+                                "open_issues": analysis.get("limitations", [])[:3],
+                                "next": "复核已保存报告并按本轮要求继续" if previous["status"]["state"] == "completed" else "检查未完成步骤"})
+            summary = summary[-6:]
+            while summary and len(encoded(summary)) > 4000:
+                summary.pop(0)
+            state.update(summary=summary, compacted_through=turns[trim - 1][0])
+            self.save(owner, cid, state)
+            recent = recent[trim:]
+            if progress:
+                progress.emit("memory", label=f"已压缩 {trim} 轮早期对话，保留精确预测字段与用户约束")
+        if recalled and progress:
+            detail = "，包括报告格式偏好" if any(item["report_format"] for item in recalled) else ""
+            progress.emit("memory", label=f"已召回 {len(recalled)} 条相关记忆{detail}",
+                          types=sorted({item["kind"] for item in recalled}))
+        data = {"summary": summary, "recent": recent, "recalled": recalled, "constraints": request.get("constraints", [])}
+        if size + len(encoded(data)) > 14500:
+            if failed:
+                raise ServiceError("MEMORY_WRITE_PENDING", "待写原文超过模型上下文上限，已保存供恢复")
+            while data["recalled"] and size + len(encoded(data)) > 14500:
+                data["recalled"].pop()
+            while data["summary"] and size + len(encoded(data)) > 14500:
+                data["summary"] = data["summary"][1:]
+            if size + len(encoded(data)) > 14500:
+                raise ServiceError("CONTEXT_LIMIT", "当前输入与保留轮次超过模型上下文上限")
+        return data

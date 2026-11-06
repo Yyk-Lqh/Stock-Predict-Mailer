@@ -101,3 +101,28 @@ def explicit_memory(message, subject):
     if re.fullmatch(r"(?:持续)?关注(?:这只股票|" + re.escape(subject) + r")", content, re.I) and len(subject) <= 60:
         return MemoryEntry(content=content, kind="watchlist", tags=["关注标的"], subject=subject).model_dump()
     return MemoryEntry(content=content, kind="user_statement", tags=["用户明确要求"]).model_dump()
+
+
+class Memory:
+    def __init__(self, store):
+        self.store = store
+        with store.db() as con:
+            con.executescript("""
+                CREATE TABLE IF NOT EXISTS memory_owners (id TEXT PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, settings TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, owner TEXT NOT NULL, state BLOB NOT NULL, updated TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS conversation_owner ON conversations(owner,updated);
+                CREATE TABLE IF NOT EXISTS conversation_turns (seq INTEGER PRIMARY KEY, conversation TEXT NOT NULL, body BLOB NOT NULL);
+                CREATE INDEX IF NOT EXISTS conversation_turn_index ON conversation_turns(conversation,seq);
+                CREATE TABLE IF NOT EXISTS memory_tasks (task TEXT PRIMARY KEY, owner TEXT NOT NULL, conversation TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS memory_pending (id TEXT PRIMARY KEY, owner TEXT NOT NULL, conversation TEXT NOT NULL, turn INTEGER NOT NULL, body BLOB NOT NULL);
+                CREATE INDEX IF NOT EXISTS memory_pending_owner ON memory_pending(owner,conversation);
+                CREATE TABLE IF NOT EXISTS memory_vectors (id TEXT PRIMARY KEY, owner TEXT NOT NULL, dedup TEXT NOT NULL,
+                    kind TEXT NOT NULL, expires TEXT, body BLOB NOT NULL, vector BLOB NOT NULL, UNIQUE(owner,dedup));
+                CREATE INDEX IF NOT EXISTS memory_filter ON memory_vectors(owner,kind,expires);
+            """)
+
+    def seal(self, value):
+        return self.store.cipher.encrypt(encoded(value))
+
+    def open(self, value):
+        return json.loads(self.store.cipher.decrypt(value))

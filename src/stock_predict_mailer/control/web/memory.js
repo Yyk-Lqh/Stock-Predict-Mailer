@@ -87,3 +87,30 @@ $('memory-settings-actions').append(action('保存记忆设置', async () => {
   await refreshMemory();
   notice('记忆设置已保存。');
 }));
+$('conversation-actions').append(action('新建会话', async () => {
+  const conversation = await api('conversations', 'POST', {});
+  await refreshMemory();
+  $('conversation-id').value = conversation.id;
+  $('conversation-summary').textContent = '已创建会话，请先提交预测输入。';
+}), action('沿用上轮输入', async () => {
+  const id = $('conversation-id').value;
+  if (!id) throw new Error('请先选择已有会话');
+  const session = await api('conversations/' + id);
+  if (!session.messages.length) throw new Error('此会话还没有预测输入');
+  $('task-data').value = '{}';
+  $('conversation-summary').textContent = '将沿用最近一轮预测和约束，并校验其有效期。';
+}));
+$('conversation-id').onchange = async event => {
+  const id = event.target.value;
+  if (!id) {
+    $('conversation-summary').textContent = '';
+    return;
+  }
+  try {
+    const session = await api('conversations/' + id);
+    $('conversation-summary').textContent = `近期消息 ${session.messages.length} 轮 · 已压缩摘要 ${session.summary.length} 条 · 最近检查点 ${session.completed_step || '暂无'}`;
+  } catch (error) {
+    notice(error.message, true);
+  }
+};
+refreshMemory().catch(error => notice(error.message, true));

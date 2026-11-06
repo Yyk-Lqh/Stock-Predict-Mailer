@@ -9,7 +9,7 @@ import secrets
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from ..agent_service.contracts import ServiceError, decode
 from .a2a import A2AService, card
@@ -138,6 +138,14 @@ def make_server(root, port=8767, master_key=None):
                         self.output(engine.submit(self.body()), 202)
                     elif method == "GET" and len(parts) == 3:
                         self.output(store.task(parts[2]))
+                    elif method == "GET" and len(parts) == 4 and parts[3] == "events":
+                        try:
+                            after = int(parse_qs(urlsplit(self.path).query).get("after", ["0"])[0])
+                            if not 0 <= after <= 2**63 - 1:
+                                raise ValueError()
+                        except ValueError:
+                            raise ServiceError("INVALID_INPUT", "进度游标无效") from None
+                        self.output({"events": store.events(parts[2], after)})
                     elif method == "POST" and len(parts) == 4 and parts[3] == "cancel":
                         self.output(engine.cancel(parts[2]))
                     else:

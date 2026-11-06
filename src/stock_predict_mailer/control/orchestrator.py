@@ -313,12 +313,17 @@ class Orchestrator:
             planned = []
         if len(planned) > limit["max_subagents"]:
             notes.append("SUBAGENT_LIMIT：委派数量已按上限裁剪。")
+        if planned:
+            progress.emit("adjustment", label="复杂任务需要分工，加入 A2A 子步骤。",
+                          steps=[{"id": role, "label": role} for role in planned[:limit["max_subagents"]]])
         for role in planned[:limit["max_subagents"]]:
             budget.check()
             child_id = uuid.uuid4().hex
             child = {"id": child_id, "role": role, "status": "working", "depth": request["depth"] + 1,
                      "tools": [], "data_fields": ["prediction", "facts"]}
             self.store.task(child_id, a2a_task(child_id, "working", context_id=tid))
+            progress.steps += 1
+            progress.emit("step", step=role, status="running", label=f"{role} 子 Agent 通过 A2A 分析", child_id=child_id)
             try:
                 async with asyncio.timeout(min(limit["child_timeout_seconds"], max(0.01, budget.deadline - time.monotonic()))):
                     # Lifecycle belongs here; local child uses the same structured A2A contract.
@@ -336,11 +341,13 @@ class Orchestrator:
                 results.append(result)
                 child.update(status="completed", result=result)
                 self.store.task(child_id, a2a_task(child_id, "completed", context_id=tid, result=result))
+                progress.emit("step", step=role, status="completed", label=f"{role} 子 Agent 已完成", summary=result["conclusions"])
             except (ServiceError, TimeoutError) as exc:
                 code = exc.code if isinstance(exc, ServiceError) else "CHILD_TIMEOUT"
                 child.update(status="degraded", error=code)
                 notes.append(f"{role}/{code}：子 Agent 失败，未采纳其结论。")
                 self.store.task(child_id, a2a_task(child_id, "failed", context_id=tid, error={"code": code}))
+                progress.emit("step", step=role, status="failed", label=notes[-1], code=code)
             except asyncio.CancelledError:
                 self.store.task(child_id, a2a_task(child_id, "canceled", context_id=tid))
                 raise

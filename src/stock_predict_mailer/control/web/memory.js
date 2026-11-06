@@ -50,3 +50,40 @@ async function refreshMemory() {
     list.append(card);
   }
 }
+
+async function useMemoryKey(key) {
+  const previous = memoryKey;
+  memoryKey = key;
+  try {
+    await refreshMemory();
+    currentTask = null;
+    $('conversation-id').value = '';
+    sessionStorage.setItem('spm_memory_key', memoryKey);
+  } catch (error) {
+    memoryKey = previous;
+    await refreshMemory();
+    throw error;
+  }
+}
+
+$('memory-access-actions').append(
+  action('创建记忆访问密钥', async () => {
+    const access = await api('memory/access', 'POST', {});
+    await useMemoryKey(access.key);
+    $('memory-key').value = access.key;
+    notice('已创建独立记忆空间。请保存密钥以便下次恢复。');
+  }),
+  action('使用已有密钥', async () => {
+    await useMemoryKey($('memory-key').value.trim());
+    $('memory-key').value = '';
+    notice('已切换记忆空间。');
+  })
+);
+$('memory-settings-actions').append(action('保存记忆设置', async () => {
+  await api('memory/settings', 'PUT', {
+    enabled:$('memory-enabled').checked, context_bytes:Number($('memory-threshold').value),
+    recent_turns:Number($('memory-recent').value)
+  });
+  await refreshMemory();
+  notice('记忆设置已保存。');
+}));

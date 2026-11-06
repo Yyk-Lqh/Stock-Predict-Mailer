@@ -513,6 +513,35 @@ class ConsoleAPITests(unittest.TestCase):
         self.thread.join(timeout=2)
         self.f.close()
 
+    def test_progress_endpoint_returns_running_step_and_incremental_cursor(self):
+        original = self.server.engine.models.generate
+        entered, release = threading.Event(), threading.Event()
+
+        async def hold(*args):
+            entered.set()
+            await asyncio.to_thread(release.wait, 5)
+            return await original(*args)
+
+        with patch.object(self.server.engine.models, "generate", side_effect=hold):
+            submitted = self.client.post("/api/tasks", json={"prediction": MockPredictionAdapter().fetch(), "reasoning_effort": "high"})
+            tid = submitted.json()["id"]
+            try:
+                self.assertTrue(entered.wait(5))
+                self.assertEqual(self.client.get(f"/api/tasks/{tid}").json()["status"]["state"], "working")
+                events = self.client.get(f"/api/tasks/{tid}/events").json()["events"]
+                self.assertTrue(any(e.get("step") == "main" and e.get("status") == "running" for e in events))
+                self.assertEqual(self.client.get(f"/api/tasks/{tid}/events?after={events[-1]['seq']}").json()["events"], [])
+            finally:
+                release.set()
+            for _ in range(100):
+                task = self.client.get(f"/api/tasks/{tid}").json()
+                if task["status"]["state"] == "completed":
+                    break
+                time.sleep(.02)
+            self.assertEqual(task["status"]["state"], "completed")
+            more = self.client.get(f"/api/tasks/{tid}/events?after={events[-1]['seq']}").json()["events"]
+            self.assertTrue(any(e["kind"] == "report" for e in more))
+
     def test_session_csrf_origin_and_no_secret_response(self):
         bad = self.client.post("/api/models", json={"name": "Bad"}, headers={"X-CSRF-Token": "bad"})
         self.assertEqual(bad.status_code, 403)

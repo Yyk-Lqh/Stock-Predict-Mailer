@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import Field, ValidationError
 
 from ..agent_service.analysis import INFERENCES, RECOMMENDATIONS, AnalysisAgent, identity, validate_analysis
-from ..agent_service.charts import chart_data
+from ..agent_service.charts import build_charts, chart_data, chart_svg
 from ..agent_service.contracts import ServiceError, context, prediction, utcnow
 from ..agent_service.mail import MailService
 from ..agent_service.reporting import render, save_report
@@ -379,7 +379,18 @@ class Orchestrator:
         for code in sorted({u for result in results for u in result["uncertainty"]}):
             if UNCERTAINTY[code] not in analysis["limitations"]:
                 analysis["limitations"].append(UNCERTAINTY[code])
-        analysis["limitations"] += notes
+        progress.emit("analysis", label="已有分析可预览", preview={"inferences": analysis["inferences"], "risks": analysis["risks"]})
+        with progress.step("charts", "根据已校验数据生成图表"):
+            figures, chart_notes = build_charts(series)
+            if goal == "comparison":
+                figures.reverse()
+            if figures:
+                analysis["charts"] = figures
+            for chart in figures:
+                progress.emit("chart", label=chart["title"] + "已生成", svg=chart_svg(chart), caption=chart["caption"])
+            if chart_notes:
+                progress.emit("adjustment", step="charts", label=" ".join(chart_notes))
+        analysis["limitations"] += notes + chart_notes
         analysis["status"] = "degraded" if notes else "ok"
         analysis["mode"] = "orchestrated_bounded"
         analysis["analysis_id"] = identity({k: v for k, v in analysis.items() if k != "analysis_id"})

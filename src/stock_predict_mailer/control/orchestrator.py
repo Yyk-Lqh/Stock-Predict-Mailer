@@ -333,6 +333,8 @@ class Orchestrator:
         notes, children, results, conflicts = [], [], [], []
         tools = settings["agents"]["main"]["tools"]
         series = request.get("chart_data")
+        cid, owner = request.get("conversation_id"), request.get("_owner")
+        checkpoint = self.memory.state(owner, cid).get("checkpoint", {}) if cid else {}
         goal = request.get("goal", "overview")
         focus = {"overview": "综合解读", "risk": "风险分析", "comparison": "历史预测对比"}[goal]
         subject = p["subject"] if re.fullmatch(r"[\w.-]{1,40}", p["subject"]) else "所选股票"
@@ -354,7 +356,19 @@ class Orchestrator:
             context(c, p["subject"])
         if tools:
             with progress.step("tools", f"为 {subject} 补充行情与事实"):
-                facts, series = await self.collect(p, facts, series, tools, progress, notes)
+                if checkpoint.get("tools") == tools and "facts" in checkpoint:
+                    try:
+                        saved_context = context({"schema_version": "1", "context_id": "checkpoint", "subject": p["subject"],
+                                                 "facts": checkpoint["facts"]}, p["subject"])
+                        facts, series = saved_context["facts"], series or checkpoint.get("chart_data")
+                        progress.emit("memory", label="已复用同一预测的校验数据步骤")
+                    except ServiceError:
+                        progress.emit("memory", label="会话数据已过期，重新执行补查")
+                        facts, series = await self.collect(p, facts, series, tools, progress, notes)
+                else:
+                    facts, series = await self.collect(p, facts, series, tools, progress, notes)
+                if cid and not notes:
+                    self.memory.checkpoint(owner, cid, facts=facts, chart_data=series, tools=tools, completed_step="tools")
         c = {"schema_version": "1", "context_id": "task-" + tid, "subject": p["subject"], "facts": facts} if facts else None
         data = {"prediction": p, "facts": facts}
         try:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 import time
 import uuid
@@ -16,7 +17,7 @@ from ..agent_service.contracts import ServiceError, context, prediction, utcnow
 from ..agent_service.mail import MailService
 from ..agent_service.reporting import render, save_report
 from .a2a import A2AClient
-from .execution import DEFAULT_EFFORT, Effort, Progress, envelope
+from .execution import DEFAULT_EFFORT, LABELS, Effort, Progress, envelope
 from .mcp_layer import MCPLayer
 from .models import Budget, ModelAdapter
 from .schemas import Closed
@@ -140,7 +141,7 @@ class Orchestrator:
         self.store.task(tid, a2a_task(tid, "working"))
         try:
             async with asyncio.timeout(settings["limits"]["timeout_seconds"]):
-                output = await self.analyze(tid, request, settings, budget)
+                output = await self.analyze(tid, request, settings, budget, progress)
                 budget.check()
                 self.store.task(tid, a2a_task(tid, "completed", result=output))
         except (ServiceError, TimeoutError) as exc:
@@ -219,28 +220,89 @@ class Orchestrator:
                 with self.lock:
                     self.active.pop(tid, None)
 
-    async def analyze(self, tid, request, settings, budget):
+    async def collect(self, p, facts, series, tools, progress, notes):
+        for index, binding in enumerate(tools):
+            sid, name = binding.split(":", 1)
+            safe_name = name if re.fullmatch(r"[\w.-]{1,80}", name) else "已授权行情工具"
+            for attempt in range(1, 3):
+                try:
+                    progress.tool_attempt()
+                except ServiceError as exc:
+                    notes.append(f"{exc.code}：停止补查，报告使用已校验的数据。")
+                    progress.emit("adjustment", label=notes[-1], step="tools", code=exc.code)
+                    return facts, series
+                progress.emit("tool", step="tools", status="running", label=f"调用 {safe_name} 补充上下文", attempt=attempt)
+                try:
+                    raw = await self.mcp.call(sid, name, {"subject": p["subject"]}, role_tools=tools)
+                    extra = chart_data(raw.get("chart_data"), p)
+                    validated = context({k: v for k, v in raw.items() if k != "chart_data"}, p["subject"])
+                    incoming = validated["facts"]
+                    if {f["id"] for f in facts} & {f["id"] for f in incoming}:
+                        raise ServiceError("INVALID_TOOL_DATA", "外部事实 ID 与已有事实冲突")
+                except ServiceError as exc:
+                    progress.emit("tool", step="tools", status="failed", label=f"{safe_name} 调用失败", code=exc.code, attempt=attempt)
+                    retry = exc.retryable and attempt == 1 and progress.tools < progress.budget.limits["max_tool_calls"]
+                    if retry:
+                        progress.emit("adjustment", step="tools", label=f"{exc.code}：在预算内重试 {safe_name}。")
+                        continue
+                    notes.append(f"{exc.code}：{safe_name} 未补充数据，后续结论仅使用已有事实。")
+                    progress.emit("adjustment", step="tools", label=notes[-1])
+                    break
+                facts = [*facts, *incoming]
+                if extra and series and extra["unit"] == series["unit"]:
+                    series = {**series, "series": {**extra["series"], **series["series"]}}
+                else:
+                    series = series or extra
+                dates = sorted(point["at"] for s in (extra or {}).get("series", {}).values() for point in s["points"])
+                detail = f"，覆盖 {dates[0][:10]} 至 {dates[-1][:10]} UTC" if dates else ""
+                progress.emit("tool", step="tools", status="completed",
+                              label=f"{safe_name} 返回 {len(incoming)} 条事实、{len(dates)} 个图表点{detail}")
+                if index + 1 < len(tools):
+                    if facts and {"observed", "forecast", "backtest"} <= (series or {}).get("series", {}).keys():
+                        progress.emit("adjustment", step="tools", label="事实与三类时间序列已齐备，跳过剩余补查。")
+                        return facts, series
+                    progress.emit("adjustment", step="tools", label="事实或图表序列仍有缺项，继续查询下一项获准工具。")
+                break
+        return facts, series
+
+    async def analyze(self, tid, request, settings, budget, progress):
         p, c = request["prediction"], request["context"]
         facts = c["facts"] if c else []
         notes, children, results, conflicts = [], [], [], []
-        # Tools are invoked only from preconfigured role bindings, never from model text.
-        for tool in settings["agents"]["main"]["tools"]:
-            sid, name = tool.split(":", 1)
-            budget.reserve()
-            raw = await self.mcp.call(sid, name, {"subject": p["subject"]}, role_tools=settings["agents"]["main"]["tools"])
-            validated = context(raw, p["subject"])
-            for fact in validated["facts"]:
-                if any(f["id"] == fact["id"] for f in facts):
-                    raise ServiceError("INVALID_TOOL_DATA", "外部事实 ID 与已有事实冲突")
-                facts = [*facts, fact]
+        tools = settings["agents"]["main"]["tools"]
+        series = request.get("chart_data")
+        goal = request.get("goal", "overview")
+        focus = {"overview": "综合解读", "risk": "风险分析", "comparison": "历史预测对比"}[goal]
+        subject = p["subject"] if re.fullmatch(r"[\w.-]{1,40}", p["subject"]) else "所选股票"
+        plan = [("validate", "校验预测与数据"), ("main", "主 Agent 分析"), ("charts", "生成分析图表"), ("report", "汇总并保存报告")]
+        if tools:
+            plan.insert(1, ("tools", "通过 MCP 补充数据"))
+        if request["notify"]:
+            plan.append(("mail", "按授权交付邮件"))
+        mid = settings["agents"]["main"]["model_id"] or settings["default_model_id"]
+        profile = self.store.get("models", mid) if mid else {}
+        level = settings["reasoning_effort"]
+        native = profile.get("reasoning_effort_map", {}).get(level) if profile.get("provider") == "openai_compatible" else None
+        execution = {"effort": level, "label": LABELS[level], "limits": budget.limits,
+                     "model": profile.get("model"), "native_reasoning_effort": native}
+        progress.emit("plan", label=f"{subject} · {focus}计划", execution=execution,
+                      steps=[{"id": key, "label": label} for key, label in plan])
+        with progress.step("validate", f"校验 {subject} 未来 {p['horizon']['value']} {p['horizon']['unit']} 的预测结果"):
+            prediction(p)
+            context(c, p["subject"])
+        if tools:
+            with progress.step("tools", f"为 {subject} 补充行情与事实"):
+                facts, series = await self.collect(p, facts, series, tools, progress, notes)
         c = {"schema_version": "1", "context_id": "task-" + tid, "subject": p["subject"], "facts": facts} if facts else None
         data = {"prediction": p, "facts": facts}
         try:
-            main = await self.role("main", data, settings, budget)
+            with progress.step("main", "主 Agent 分析预测、风险与建议"):
+                main = await self.role("main", {**data, "goal": goal}, settings, budget)
             results.append(main)
         except ServiceError as exc:
             main = {"delegate_roles": []}
             notes.append(exc.code + "：主 Agent 降级为确定性分析。")
+            progress.emit("adjustment", label=notes[-1], step="main")
         complexity = request["complexity"]
         complex_task = complexity == "complex" or (complexity == "auto" and (len(facts) > 1 or bool(p["metrics"])))
         planned = main["delegate_roles"] if complex_task else []

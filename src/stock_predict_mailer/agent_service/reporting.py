@@ -26,6 +26,10 @@ def render(analysis, timezone="Asia/Shanghai", *, charts="inline"):
     for title, key in (("不确定性与限制", "limitations"), ("风险提示", "risks"), ("建议（不作收益保证）", "recommendations")):
         lines += [title] + analysis[key]
     figures = analysis.get("charts", [])
+    if analysis.get("report_format") == "brief":
+        headline = ["简版摘要", f"{p['subject']} · {p['horizon']['value']} {p['horizon']['unit']}",
+                    *[item["text"] for item in analysis["inferences"]], "完整依据与风险见下方。"]
+        lines = headline + lines
     text = "\n\n".join(lines + [f"{chart['title']}：{chart['caption']}" for chart in figures])
     html = '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>预测分析报告</title><body>'
     html += "".join(f"<p>{escape(line)}</p>" for line in lines)

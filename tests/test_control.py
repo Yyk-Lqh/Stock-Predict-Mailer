@@ -257,6 +257,14 @@ class ModelHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ModelHTTPHandler.payload["temperature"], .2)
         self.assertEqual(ModelHTTPHandler.payload["model"], "mock-v1")
         self.assertEqual(ModelHTTPHandler.payload["response_format"], {"type": "json_object"})
+        self.f.store.put("models", {**self.model, "reasoning_effort_map": {"high": "medium"}}, self.model["id"])
+        self.f.settings["reasoning_effort"] = "high"
+        await self.generate()
+        self.assertEqual(ModelHTTPHandler.payload["reasoning_effort"], "medium")
+        self.assertEqual(ModelHTTPHandler.payload["temperature"], .2)
+        self.f.settings["reasoning_effort"] = "ultra"
+        await self.generate()
+        self.assertNotIn("reasoning_effort", ModelHTTPHandler.payload)
 
     async def test_invalid_credentials_no_retry(self):
         ModelHTTPHandler.mode = "auth"

@@ -141,6 +141,8 @@ class ModelAdapter:
             except ServiceError as exc:
                 if not exc.retryable or attempt >= profile["retries"]:
                     raise
+                if budget.progress:
+                    budget.progress.emit("adjustment", label=f"{role} 模型调用失败，按策略重试", code=exc.code)
                 await asyncio.sleep(min(0.2 * 2**attempt, max(0, budget.deadline - time.monotonic())))
 
     async def test(self, pid, settings):

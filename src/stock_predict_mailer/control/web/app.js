@@ -1,8 +1,9 @@
 const $ = id => document.getElementById(id);
 let csrf = '', profiles = [], servers = [], endpoints = [], settings = null, currentTask = null;
+let memoryKey = sessionStorage.getItem('spm_memory_key') || '';
 const roles = {main:'主 Agent',prediction:'预测分析',risk:'风险分析',advice:'建议生成'};
 function notice(message, error=false){const el=$('notice');el.textContent=message;el.classList.toggle('error',error);el.hidden=false;}
-async function api(path,method='GET',body){const response=await fetch('/api/'+path,{method,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:body===undefined?undefined:JSON.stringify(body)});const data=await response.json();if(!response.ok)throw new Error(`${data.error?.code||response.status} · ${data.error?.message||'请求失败'}`);return data;}
+async function api(path,method='GET',body){const response=await fetch('/api/'+path,{method,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf,'X-Memory-Key':memoryKey},body:body===undefined?undefined:JSON.stringify(body)});const data=await response.json();if(!response.ok)throw new Error(`${data.error?.code||response.status} · ${data.error?.message||'请求失败'}`);return data;}
 function action(label,fn){const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=async()=>{b.disabled=true;try{await fn();}catch(e){notice(e.message,true);}finally{b.disabled=false;}};return b;}
 function text(parent,tag,value,cls){const el=document.createElement(tag);el.textContent=value;if(cls)el.className=cls;parent.append(el);return el;}
 const csv=value=>value.split(',').map(s=>s.trim()).filter(Boolean);

@@ -145,7 +145,10 @@ class Orchestrator:
                 self.store.task(tid, a2a_task(tid, "completed", result=output))
         except (ServiceError, TimeoutError) as exc:
             error = exc.as_dict()["error"] if isinstance(exc, ServiceError) else {"code": "TASK_TIMEOUT", "message": "任务超时", "retryable": True}
-            self.store.task(tid, a2a_task(tid, "failed", error=error))
+            if isinstance(exc, ServiceError) and exc.code == "CANCELLED":
+                self.store.task(tid, a2a_task(tid, "canceled"))
+            else:
+                self.store.task(tid, a2a_task(tid, "failed", error=error))
         except asyncio.CancelledError:
             self.store.task(tid, a2a_task(tid, "canceled"))
         except Exception:

@@ -5,6 +5,7 @@ import json
 
 from ..core import digest
 from .adapters import http_json
+from .charts import chart_data
 from .contracts import ServiceError, context, fail, keys, prediction
 
 INFERENCES = {
@@ -82,11 +83,17 @@ class AnalysisAgent:
 def validate_analysis(value, settings=None):
     settings = settings or {}
     keys(value, ("schema_version", "analysis_id", "generated_at", "status", "mode", "prediction", "facts", "inferences",
-                 "recommendations", "limitations", "risks"))
+                 "recommendations", "limitations", "risks"), ("charts",))
     unsigned = {k: v for k, v in value.items() if k != "analysis_id"}
     if identity(unsigned) != value["analysis_id"] or value["schema_version"] != "1" or value["status"] not in ("ok", "degraded"):
         fail("分析摘要、版本或状态无效")
     prediction(value["prediction"], max_age=settings.get("max_age_seconds", 86400))
+    if "charts" in value:
+        if not isinstance(value["charts"], list) or len(value["charts"]) > 2:
+            fail("图表数量无效")
+        for chart in value["charts"]:
+            keys(chart, ("title", "caption", "series", "unit"))
+            chart_data({"series": chart["series"], "unit": chart["unit"]}, value["prediction"])
     context({"schema_version": "1", "context_id": "analysis", "subject": value["prediction"]["subject"], "facts": value["facts"]},
             value["prediction"]["subject"], max_age=settings.get("max_context_age_seconds", 86400))
     if value["generated_at"] != value["prediction"]["generated_at"] or value["mode"] not in ("deterministic_no_llm", "http_bounded_agent", "orchestrated_bounded"):

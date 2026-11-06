@@ -92,13 +92,14 @@ def make_server(root, port=8767, master_key=None):
         def handle_request(self, method):
             try:
                 path = urlsplit(self.path).path
-                if method == "GET" and path in ("/", "/app.js", "/style.css"):
+                if method == "GET" and path in ("/", "/app.js", "/memory.js", "/style.css"):
                     # Check Host/Origin even before minting a local session.
                     allowed = {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
                     if self.headers.get("Host") not in allowed or self.headers.get("Origin") not in (None, *("http://" + a for a in allowed)):
                         raise ServiceError("FORBIDDEN", "仅允许本机同源访问")
                     filename = "index.html" if path == "/" else path[1:]
-                    content_type = {"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8"}[filename]
+                    content_type = ("text/javascript" if filename.endswith(".js") else
+                                    "text/css" if filename.endswith(".css") else "text/html") + "; charset=utf-8"
                     self.output((STATIC / filename).read_bytes(), content_type=content_type, cookie=path == "/")
                     return
                 self.guard(method != "GET", a2a=path.startswith("/a2a/") or path == "/.well-known/agent-card.json")

@@ -119,6 +119,7 @@ async function poll(id) {
       eventCursor = event.seq;
     }
     if (!showTask(task) || progress.events.length === 100) setTimeout(() => poll(id), 600);
+    else if (memoryKey) refreshMemory().catch(error => notice(error.message, true));
   } catch (error) {
     notice(error.message, true);
   }
@@ -129,10 +130,25 @@ $('task-form').onsubmit = async event => {
   button.disabled = true;
   try {
     const input = JSON.parse($('task-data').value);
-    const task = await api('tasks', 'POST', {...input, complexity:$('task-complexity').value,
-      goal:$('task-goal').value, reasoning_effort:$('task-effort').value || null,
+    const conversationId = $('conversation-id').value;
+    const controls = {complexity:$('task-complexity').value, goal:$('task-goal').value, reasoning_effort:$('task-effort').value || null};
+    const request = conversationId && !input.prediction ? {...input} : {...input, ...controls};
+    if (conversationId) {
+      request.conversation_id = conversationId;
+      request.message = $('conversation-message').value;
+      if ($('conversation-constraints').value.trim()) request.constraints = lines($('conversation-constraints').value);
+      if ($('conversation-format').value) request.report_format = $('conversation-format').value;
+      const remember = [];
+      const format = $('remember-format').value;
+      if (format) remember.push({kind:'preference', tags:['报告格式'], content:format === 'brief' ? '偏好简版报告' : '偏好标准版报告', report_format:format});
+      if ($('remember-text').value.trim()) remember.push({kind:'user_statement', tags:['用户明确要求'], content:$('remember-text').value});
+      if (remember.length) request.remember = remember;
+    }
+    const task = await api('tasks', 'POST', {...request,
       notify:$('task-notify').checked, recipient:$('task-recipient').value || null});
     currentTask = task.id;
+    $('remember-format').value = '';
+    $('remember-text').value = '';
     eventCursor = 0;
     stepRows.clear();
     for (const id of ['execution-plan','execution-events','chart-preview','analysis-preview']) $(id).replaceChildren();

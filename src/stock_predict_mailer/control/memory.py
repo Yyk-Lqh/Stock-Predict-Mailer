@@ -269,3 +269,11 @@ class Memory:
         for pid, body in rows:
             if entry_identity(self.open(body))[0] in identities:
                 con.execute("DELETE FROM memory_pending WHERE id=?", (pid,))
+
+    def flush(self, owner, cid):
+        with self.store.db() as con:
+            pending = con.execute("SELECT id,turn,body FROM memory_pending WHERE owner=? AND conversation=? ORDER BY rowid", (owner, cid)).fetchall()
+            for pid, seq, body in pending:
+                self._write_vector(con, owner, {**self.open(body), "source_conversation": cid, "source_message": seq})
+                con.execute("DELETE FROM memory_pending WHERE id=?", (pid,))
+            return len(pending)

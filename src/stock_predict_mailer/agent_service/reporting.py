@@ -5,10 +5,11 @@ from html import escape
 from zoneinfo import ZoneInfo
 
 from ..core import atomic_write, write_json
+from .charts import chart_svg
 from .contracts import instant
 
 
-def render(analysis, timezone="Asia/Shanghai"):
+def render(analysis, timezone="Asia/Shanghai", *, charts="inline"):
     p = analysis["prediction"]
     time = instant(p["generated_at"]).astimezone(ZoneInfo(timezone)).isoformat()
     lines = ["预测分析报告" + (" [MOCK 合成演示]" if p["synthetic"] else ""),
@@ -25,8 +26,11 @@ def render(analysis, timezone="Asia/Shanghai"):
     figures = analysis.get("charts", [])
     text = "\n\n".join(lines + [f"{chart['title']}：{chart['caption']}" for chart in figures])
     html = '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>预测分析报告</title><body>'
-    html += "".join(f"<p>{escape(line)}</p>" for line in lines) + "</body></html>"
-    return text, html
+    html += "".join(f"<p>{escape(line)}</p>" for line in lines)
+    for idx, chart in enumerate(figures):
+        visual = chart_svg(chart) if charts == "inline" else f'<img src="cid:chart-{idx}@stock-predict-mailer.local" alt="{escape(chart["title"])}">' if charts == "cid" else ""
+        html += f"<figure><h2>{escape(chart['title'])}</h2>{visual}<figcaption>{escape(chart['caption'])}</figcaption></figure>"
+    return text, html + "</body></html>"
 
 
 def save_report(workspace, analysis, timezone="Asia/Shanghai"):

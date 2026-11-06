@@ -59,7 +59,91 @@ function mockInput() {
 }
 $('load-mock').onclick=mockInput;
 function showTask(task){$('task-output').textContent=JSON.stringify(task,null,2);const el=$('task-summary');el.replaceChildren();text(el,'h3',`任务 ${task.status.state}`);text(el,'p',task.id);if(task.metadata?.error)text(el,'p',`${task.metadata.error.code} · ${task.metadata.error.message||''}`);const result=task.artifacts?.[0]?.parts?.[0]?.data;if(result){text(el,'p',`分析：${result.analysis.status} · 调用 ${result.usage.calls} 次 · 费用预留 $${result.usage.reserved_usd}`);for(const child of result.children)text(el,'p',`${roles[child.role]} · ${child.status}${child.error?' / '+child.error:''}`);for(const [label,values] of [['推断',result.analysis.inferences.map(i=>i.text)],['限制',result.analysis.limitations],['风险',result.analysis.risks],['建议',result.analysis.recommendations]]){text(el,'h3',label);const ul=document.createElement('ul');for(const v of values)text(ul,'li',v);el.append(ul);}if(result.mail)text(el,'p',`邮件：${result.mail.status} · ${result.mail.id}`);}const finished=['completed','failed','canceled'].includes(task.status.state);$('task-cancel').hidden=finished;return finished;}
-async function poll(id){try{const task=await api('tasks/'+id);if(!showTask(task)&&currentTask===id)setTimeout(()=>poll(id),900);}catch(e){notice(e.message,true);}}
-$('task-form').onsubmit=async e=>{e.preventDefault();try{const data=JSON.parse($('task-data').value);const task=await api('tasks','POST',{...data,complexity:$('task-complexity').value,notify:$('task-notify').checked,recipient:$('task-recipient').value||null});currentTask=task.id;showTask(task);poll(task.id);notice('任务已提交，可查看实时状态。');}catch(err){notice(err.message,true);}};
+let eventCursor = 0;
+const stepRows = new Map();
+const progressStates = {pending:'待执行', running:'运行中', completed:'已完成', failed:'失败'};
+function addPlanStep(step) {
+  if (stepRows.has(step.id)) return;
+  const row = document.createElement('li');
+  const marker = stepRows.get('charts');
+  if (marker && ['prediction','risk','advice','merge'].includes(step.id)) marker.before(row);
+  else $('execution-plan').append(row);
+  row.textContent = `${roles[step.label] || step.label} · 待执行`;
+  row.dataset.status = 'pending';
+  stepRows.set(step.id, row);
+}
+function showEvent(event) {
+  for (const step of event.steps || []) addPlanStep(step);
+  if (event.execution) {
+    const {label, limits, native_reasoning_effort: native, model} = event.execution;
+    $('effective-effort').textContent = `${label} · ${model || '确定性分析'} · 原生推理 ${native || '未配置'} · ${limits.max_steps} 步 / ${limits.max_tool_calls} 次工具 / ${limits.max_calls} 次调用 / ${limits.timeout_seconds} 秒 / ${limits.max_subagents} 个子 Agent / $${limits.budget_usd}`;
+  }
+  if (event.kind === 'step' && stepRows.has(event.step)) {
+    const row = stepRows.get(event.step);
+    row.dataset.status = event.status;
+    row.textContent = `${event.label} · ${progressStates[event.status] || event.status}`;
+  }
+  const localTime = new Date(event.timestamp).toLocaleTimeString('zh-CN');
+  const row = text($('execution-events'), 'li', `${localTime} · ${event.label}${event.code ? ' · '+event.code : ''}`);
+  row.dataset.status = event.status || event.kind;
+  if (event.summary?.length) text(row, 'small', event.summary.join(' / '));
+  if (event.kind === 'model') {
+    text(row, 'small', `温度 ${event.temperature ?? '由服务决定'} · 原生推理 ${event.native_reasoning_effort || '未配置'}`);
+  }
+  if (event.preview) {
+    const preview = $('analysis-preview');
+    preview.replaceChildren();
+    text(preview, 'h3', event.kind === 'report' ? '报告摘要' : '阶段分析');
+    for (const item of event.preview.inferences) text(preview, 'p', item.text);
+    for (const note of event.preview.limitations || []) text(preview, 'p', note);
+  }
+  if (event.kind === 'chart') {
+    const figure = document.createElement('figure');
+    const image = document.createElement('img');
+    image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(event.svg);
+    image.alt = event.label;
+    figure.append(image);
+    text(figure, 'figcaption', event.caption);
+    $('chart-preview').append(figure);
+  }
+}
+async function poll(id) {
+  if (currentTask !== id) return;
+  try {
+    const task = await api('tasks/'+id);
+    const progress = await api(`tasks/${id}/events?after=${eventCursor}`);
+    if (currentTask !== id) return;
+    for (const event of progress.events) {
+      showEvent(event);
+      eventCursor = event.seq;
+    }
+    if (!showTask(task) || progress.events.length === 100) setTimeout(() => poll(id), 600);
+  } catch (error) {
+    notice(error.message, true);
+  }
+}
+$('task-form').onsubmit = async event => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('[type=submit]');
+  button.disabled = true;
+  try {
+    const input = JSON.parse($('task-data').value);
+    const task = await api('tasks', 'POST', {...input, complexity:$('task-complexity').value,
+      goal:$('task-goal').value, reasoning_effort:$('task-effort').value || null,
+      notify:$('task-notify').checked, recipient:$('task-recipient').value || null});
+    currentTask = task.id;
+    eventCursor = 0;
+    stepRows.clear();
+    for (const id of ['execution-plan','execution-events','chart-preview','analysis-preview']) $(id).replaceChildren();
+    $('effective-effort').textContent = '正在读取生效配置';
+    $('task-progress').hidden = false;
+    showTask(task);
+    poll(task.id);
+  } catch (error) {
+    notice(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+};
 $('task-cancel').onclick=async()=>{try{showTask(await api(`tasks/${currentTask}/cancel`,'POST',{}));}catch(e){notice(e.message,true);}};
 (async()=>{try{csrf=(await api('session')).csrf_token;await refresh();mockInput();}catch(e){notice(e.message,true);}})();

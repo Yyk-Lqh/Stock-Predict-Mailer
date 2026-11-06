@@ -471,12 +471,18 @@ class Orchestrator:
             if chart_notes:
                 progress.emit("adjustment", step="charts", label=" ".join(chart_notes))
         analysis["limitations"] += notes + chart_notes
+        if cid:
+            preference = next((item["report_format"] for item in budget.recalled if item.get("report_format")), None)
+            analysis["report_format"] = request.get("report_format") or preference or "standard"
+            analysis["user_constraints"] = request.get("constraints", [])
         analysis["status"] = "degraded" if notes else "ok"
         analysis["mode"] = "orchestrated_bounded"
         analysis["analysis_id"] = identity({k: v for k, v in analysis.items() if k != "analysis_id"})
         with progress.step("report", "校验并保存分析报告"):
             validate_analysis(analysis)
             folder = save_report(self.store.root, analysis)
+            if cid:
+                self.memory.checkpoint(owner, cid, completed_step="report", analysis_id=analysis["analysis_id"])
         progress.emit("report", step="report", label="分析报告已保存",
                       preview={"inferences": analysis["inferences"], "risks": analysis["risks"], "limitations": analysis["limitations"]})
         mail = None

@@ -371,9 +371,11 @@ class Orchestrator:
                     self.memory.checkpoint(owner, cid, facts=facts, chart_data=series, tools=tools, completed_step="tools")
         c = {"schema_version": "1", "context_id": "task-" + tid, "subject": p["subject"], "facts": facts} if facts else None
         data = {"prediction": p, "facts": facts}
+        main_data = {**data, "goal": goal, "user_constraints": request.get("constraints", []),
+                     "report_format": request.get("report_format")}
         try:
             with progress.step("main", "主 Agent 分析预测、风险与建议"):
-                main = await self.role("main", {**data, "goal": goal}, settings, budget)
+                main = await self.role("main", main_data, settings, budget)
             results.append(main)
         except ServiceError as exc:
             main = {"delegate_roles": []}
@@ -433,7 +435,7 @@ class Orchestrator:
                           steps=[{"id": "merge", "label": "复核子 Agent 结果"}])
             try:
                 with progress.step("merge", "复核与汇总子 Agent 结果"):
-                    merged = await self.role("main", {**data, "goal": goal, "peer_results": results}, settings, budget)
+                    merged = await self.role("main", {**main_data, "peer_results": results}, settings, budget)
                 results.append(merged)
             except ServiceError as exc:
                 notes.append(exc.code + "：汇总调用失败，采用经过校验的已有结论。")

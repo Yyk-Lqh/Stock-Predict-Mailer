@@ -204,3 +204,12 @@ class Memory:
                 con.execute("INSERT INTO memory_pending VALUES (?,?,?,?,?)", (uuid.uuid4().hex, owner, cid, seq, self.seal(item)))
             con.execute("UPDATE conversations SET state=?,updated=? WHERE owner=? AND id=?",
                         (self.seal(state), utcnow().isoformat(), owner, cid))
+
+    def checkpoint(self, owner, cid, **values):
+        state = self.state(owner, cid)
+        state["checkpoint"] = {**state.get("checkpoint", {}), **values}
+        self.save(owner, cid, state)
+
+    def bind_child(self, owner, cid, tid):
+        with self.store.db() as con:
+            con.execute("INSERT INTO memory_tasks VALUES (?,?,?)", (tid, owner, cid))

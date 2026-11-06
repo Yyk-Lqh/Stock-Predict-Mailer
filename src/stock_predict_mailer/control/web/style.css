@@ -19,3 +19,11 @@
 .execution-panel figure { margin: 14px 0; border: 1px solid var(--line); }
 .execution-panel img { width: 100%; height: auto; display: block; }
 .execution-panel figcaption { padding: 8px 10px; background: #edf0e9; }
+#conversation-fields { min-width: 0; }
+#conversation-fields legend { font-size: 13px; font-weight: 700; padding: 0 6px; }
+#memory-access-actions, #memory-settings-actions, #conversation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+#memory-entries article button { margin: 10px 8px 0 0; }

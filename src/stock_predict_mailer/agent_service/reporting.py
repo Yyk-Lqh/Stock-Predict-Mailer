@@ -22,7 +22,8 @@ def render(analysis, timezone="Asia/Shanghai"):
     lines += ["Agent 推断"] + [f"{i['text']}（依据：{', '.join(i['evidence_ids'])}）" for i in analysis["inferences"]]
     for title, key in (("不确定性与限制", "limitations"), ("风险提示", "risks"), ("建议（不作收益保证）", "recommendations")):
         lines += [title] + analysis[key]
-    text = "\n\n".join(lines)
+    figures = analysis.get("charts", [])
+    text = "\n\n".join(lines + [f"{chart['title']}：{chart['caption']}" for chart in figures])
     html = '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>预测分析报告</title><body>'
     html += "".join(f"<p>{escape(line)}</p>" for line in lines) + "</body></html>"
     return text, html

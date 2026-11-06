@@ -397,6 +397,8 @@ class Orchestrator:
         for role in planned[:limit["max_subagents"]]:
             budget.check()
             child_id = uuid.uuid4().hex
+            if cid:
+                self.memory.bind_child(owner, cid, child_id)
             child = {"id": child_id, "role": role, "status": "working", "depth": request["depth"] + 1,
                      "tools": [], "data_fields": ["prediction", "facts"]}
             self.store.task(child_id, a2a_task(child_id, "working", context_id=tid))

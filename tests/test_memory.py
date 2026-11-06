@@ -1,3 +1,4 @@
+import sqlite3
 import time
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -92,3 +93,21 @@ class MemoryFlowTests(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/api/memory/{mid}").status_code, 200)
         after, _ = self.run_task(self.conversation(), prediction=p)
         self.assertFalse(any("preference" in event.get("types", []) for event in self.client.get(f"/api/tasks/{after}/events").json()["events"]))
+
+    def test_vector_write_failure_preserves_turn_until_retry(self):
+        self.access()
+        cid = self.conversation()
+        self.client.put("/api/memory/settings", json={"enabled": True, "context_bytes": 1024, "recent_turns": 1})
+        self.run_task(cid, prediction=MockPredictionAdapter().fetch(), message="保留较早原文和 3.14 CNY")
+        with patch.object(self.server.engine.memory, "_write_vector", side_effect=sqlite3.OperationalError("simulated write failure")):
+            tid, _ = self.run_task(cid, message="请记住持续关注这只股票",
+                                   remember=[{"kind": "watchlist", "content": "关注 DEMO.SZ", "subject": "DEMO.SZ", "tags": ["关注标的"]}])
+        events = self.client.get(f"/api/tasks/{tid}/events").json()["events"]
+        self.assertTrue(any(event.get("code") == "MEMORY_WRITE_PENDING" for event in events))
+        state = self.client.get(f"/api/conversations/{cid}").json()
+        self.assertEqual(state["summary"], [])
+        self.assertIn("3.14 CNY", state["messages"][0]["message"])
+        self.assertEqual(len(self.client.get("/api/memory/pending").json()), 1)
+        self.run_task(cid, message="继续")
+        self.assertEqual(self.client.get("/api/memory/pending").json(), [])
+        self.assertEqual(self.client.get("/api/memory").json()[0]["content"], "关注 DEMO.SZ")

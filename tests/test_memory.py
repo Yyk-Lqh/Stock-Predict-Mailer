@@ -63,3 +63,32 @@ class MemoryFlowTests(unittest.TestCase):
         events = self.client.get(f"/api/tasks/{tid}/events").json()["events"]
         self.assertTrue(any("已压缩" in event["label"] for event in events))
         self.assertTrue(any("复用" in event["label"] for event in events))
+
+    def test_cross_conversation_recall_edit_delete_and_owner_boundaries(self):
+        key = self.access()
+        cid = self.conversation()
+        p = MockPredictionAdapter().fetch()
+        pref = {"kind": "preference", "content": "偏好简版报告", "tags": ["报告格式"], "report_format": "brief"}
+        historic = {"kind": "prediction", "content": "旧预测", "tags": ["预测"], "subject": p["subject"],
+                    "applies_at": p["generated_at"], "data_version": p["model_version"]}
+        self.run_task(cid, prediction={**p, "direction": "down"}, remember=[historic])
+        self.run_task(cid, message="请记住我偏好简版报告")
+        tid, analysis = self.run_task(self.conversation(), prediction={**p, "direction": "up"}, message="生成报告")
+        self.assertEqual(analysis["report_format"], "brief")
+        self.assertEqual(analysis["prediction"]["direction"], "up")
+        self.assertEqual(analysis["inferences"][0]["code"], "MODEL_UP")
+        events = self.client.get(f"/api/tasks/{tid}/events").json()["events"]
+        self.assertTrue(any("prediction" in event.get("types", []) for event in events))
+        mid = next(item["id"] for item in self.client.get("/api/memory").json() if item["kind"] == "preference")
+        self.access()
+        self.assertEqual(self.client.get("/api/memory").json(), [])
+        for path in (f"/api/tasks/{tid}", f"/api/tasks/{tid}/events", f"/api/conversations/{cid}"):
+            self.assertIn(self.client.get(path).status_code, (403, 404))
+        self.assertEqual(self.client.delete(f"/api/memory/{mid}").status_code, 404)
+        self.client.headers["X-Memory-Key"] = key
+        self.assertEqual(self.client.put(f"/api/memory/{mid}", json={**pref, "content": "偏好标准版", "report_format": "standard"}).status_code, 200)
+        _, corrected = self.run_task(self.conversation(), prediction=p)
+        self.assertEqual(corrected["report_format"], "standard")
+        self.assertEqual(self.client.delete(f"/api/memory/{mid}").status_code, 200)
+        after, _ = self.run_task(self.conversation(), prediction=p)
+        self.assertFalse(any("preference" in event.get("types", []) for event in self.client.get(f"/api/tasks/{after}/events").json()["events"]))

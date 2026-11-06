@@ -277,3 +277,31 @@ class Memory:
                 self._write_vector(con, owner, {**self.open(body), "source_conversation": cid, "source_message": seq})
                 con.execute("DELETE FROM memory_pending WHERE id=?", (pid,))
             return len(pending)
+
+    def recall(self, owner, request):
+        p = request["prediction"]
+        subject = p["subject"]
+        dates = set(re.findall(r"\b\d{4}-\d{2}-\d{2}\b", request.get("message", "")))
+        query = vector(" ".join([subject, request.get("message", ""), request["goal"], "报告 格式 风险 预测", *request.get("constraints", [])]))
+        scored = []
+        with self.store.db() as con:
+            rows = con.execute("""SELECT body,vector FROM memory_vectors
+                WHERE owner=? AND kind IN ('user_statement','preference','watchlist','constraint','prediction','inference')
+                AND (expires IS NULL OR expires>?)""", (owner, utcnow().isoformat())).fetchall()
+        for body, features in rows:
+            item = self.open(body)
+            if not item["confirmed"] or item["subject"] not in (None, subject):
+                continue
+            historical = item["kind"] in ("prediction", "inference")
+            if historical and instant(item["applies_at"]) > utcnow():
+                continue
+            if historical and dates and item["applies_at"][:10] not in dates:
+                continue
+            similarity = sum(query.get(key, 0) * weight for key, weight in self.open(features).items())
+            if similarity < .08 and item["subject"] != subject and not item["report_format"]:
+                continue
+            score = similarity + .3 * (item["subject"] == subject) + .03 * item["importance"]
+            if historical and dates:
+                score += .2
+            scored.append((score, item))
+        return [item for _, item in sorted(scored, key=lambda pair: (pair[0], pair[1]["recorded_at"]), reverse=True)[:5]]

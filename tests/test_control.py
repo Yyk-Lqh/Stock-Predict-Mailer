@@ -318,6 +318,14 @@ class OrchestrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["children"], [])
         self.assertEqual(result["usage"]["calls"], 1)
 
+    async def test_effort_paths_use_effective_limits(self):
+        for effort, complexity, count in (("high", "complex", 0), ("extreme", "simple", 0), ("ultra", "complex", 3)):
+            with self.subTest(effort=effort, complexity=complexity):
+                result = self.result(await self.run_task(complexity, reasoning_effort=effort))
+                self.assertEqual(len(result["children"]), count)
+                self.assertEqual(result["execution"]["effort"], effort)
+                self.assertLessEqual(result["usage"]["calls"], result["execution"]["limits"]["max_calls"])
+
     async def test_complex_bounded_children(self):
         result = self.result(await self.run_task())
         self.assertEqual(len(result["children"]), 3)

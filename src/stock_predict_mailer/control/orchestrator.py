@@ -404,7 +404,7 @@ class Orchestrator:
             budget.check()
             mail = await self.notify(analysis, request["recipient"], budget)
         return {"analysis": analysis, "children": children, "conflicts": conflicts, "usage": budget.snapshot(),
-                "mail": mail, "report_path": str(folder / "report.html")}
+                "execution": execution, "mail": mail, "report_path": str(folder / "report.html")}
 
     async def notify(self, analysis, recipient, budget):
         # Always reload authorization immediately before the external effect.

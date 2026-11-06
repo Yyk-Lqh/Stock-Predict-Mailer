@@ -133,6 +133,7 @@ class Limits(Closed):
 
 
 class MailPolicy(Closed):
+    chart_delivery: Literal["inline", "attachment"] = "inline"
     transport: Literal["file", "smtp", "mcp"] = "file"
     sender: str = "research@example.invalid"
     recipient_allowlist: list[str] = Field(default_factory=list)
@@ -156,6 +157,8 @@ class Settings(Closed):
 
     @model_validator(mode="after")
     def roles(self):
+        if self.mail.transport == "mcp" and self.mail.chart_delivery == "attachment":
+            raise ValueError("当前 MCP 邮件工具契约支持 HTML 内嵌图表")
         if set(self.agents) != set(ROLES):
             raise ValueError("必须配置 main/prediction/risk/advice 四个角色")
         return self

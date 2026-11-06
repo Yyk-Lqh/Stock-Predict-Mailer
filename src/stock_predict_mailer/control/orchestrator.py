@@ -11,10 +11,12 @@ from typing import Literal
 from pydantic import Field, ValidationError
 
 from ..agent_service.analysis import INFERENCES, RECOMMENDATIONS, AnalysisAgent, identity, validate_analysis
+from ..agent_service.charts import chart_data
 from ..agent_service.contracts import ServiceError, context, prediction, utcnow
 from ..agent_service.mail import MailService
 from ..agent_service.reporting import render, save_report
 from .a2a import A2AClient
+from .execution import Effort
 from .mcp_layer import MCPLayer
 from .models import Budget, ModelAdapter
 from .schemas import Closed
@@ -30,6 +32,9 @@ class TaskRequest(Closed):
     notify: bool = False
     recipient: str | None = None
     depth: int = Field(default=0, ge=0, le=3)
+    reasoning_effort: Effort | None = None
+    chart_data: dict | None = None
+    goal: Literal["overview", "risk", "comparison"] = "overview"
 
 
 def validate_result(raw, role, p, facts):
@@ -82,6 +87,7 @@ class Orchestrator:
             raise ServiceError("INVALID_INPUT", "任务字段无效") from None
         request["prediction"] = prediction(request["prediction"])
         request["context"] = context(request["context"], request["prediction"]["subject"])
+        request["chart_data"] = chart_data(request["chart_data"], request["prediction"])
         if request["notify"]:
             policy = self.store.settings()["mail"]
             if request["recipient"] not in policy["recipient_allowlist"]:

@@ -19,6 +19,7 @@ from ..agent_service.reporting import render, save_report
 from .a2a import A2AClient
 from .execution import DEFAULT_EFFORT, LABELS, Effort, Progress, envelope
 from .mcp_layer import MCPLayer
+from .memory import Memory, MemoryEntry, ReportFormat, explicit_memory
 from .models import Budget, ModelAdapter
 from .schemas import Closed
 
@@ -27,7 +28,7 @@ UNCERTAINTY = {"NO_CONFIDENCE": "上游未提供置信度。", "NO_CONTEXT": "�
 
 
 class TaskRequest(Closed):
-    prediction: dict
+    prediction: dict | None = None
     context: dict | None = None
     complexity: Literal["auto", "simple", "complex"] = "auto"
     notify: bool = False
@@ -36,6 +37,12 @@ class TaskRequest(Closed):
     reasoning_effort: Effort | None = None
     chart_data: dict | None = None
     goal: Literal["overview", "risk", "comparison"] = "overview"
+    conversation_id: str | None = None
+    message: str = Field(default="", max_length=4000)
+    constraints: list[str] = Field(default_factory=list, max_length=12)
+    report_format: ReportFormat | None = None
+    remember: list[MemoryEntry] = Field(default_factory=list, max_length=10)
+    fresh_context: bool = False
 
 
 def validate_result(raw, role, p, facts):
@@ -72,6 +79,7 @@ def a2a_task(tid, state, *, context_id=None, result=None, error=None):
 class Orchestrator:
     def __init__(self, store):
         self.store, self.models, self.mcp, self.a2a = store, ModelAdapter(store), MCPLayer(store), A2AClient(store)
+        self.memory = Memory(store)
         self.active = {}
         self.lock = threading.RLock()
         with self.store.db() as con:
@@ -81,14 +89,57 @@ class Orchestrator:
             if previous["status"]["state"] in ("working", "submitted"):
                 self.store.task(tid, a2a_task(tid, "failed", error={"code": "INTERRUPTED", "message": "进程重启，中断任务未自动重跑"}))
 
-    def prepare(self, raw):
+    def prepare(self, raw, owner=None):
+        cid = raw.get("conversation_id")
+        state = {}
+        if cid is not None:
+            if not owner:
+                raise ServiceError("FORBIDDEN", "会话任务需要记忆访问密钥")
+            if not isinstance(cid, str):
+                raise ServiceError("INVALID_INPUT", "会话 ID 无效")
+            state = self.memory.state(owner, cid)
+        elif raw.get("remember") or raw.get("message"):
+            raise ServiceError("INVALID_INPUT", "请先创建会话")
+        raw = dict(raw)
+        previous = state.get("request", {})
+        replacement = raw.get("prediction")
+        same_subject = replacement is None or (isinstance(replacement, dict) and
+                                               replacement.get("subject") == previous.get("prediction", {}).get("subject"))
+        if cid and previous and same_subject:
+            for key in ("constraints", "goal", "complexity", "reasoning_effort", "report_format"):
+                raw.setdefault(key, previous[key])
+        if cid and previous and replacement is None:
+            raw["prediction"] = previous["prediction"]
+            if not raw.get("fresh_context") and "context" not in raw:
+                raw["context"] = previous.get("context")
+            if "chart_data" not in raw:
+                raw["chart_data"] = previous.get("chart_data")
         try:
             request = TaskRequest.model_validate(raw).model_dump()
         except ValidationError:
             raise ServiceError("INVALID_INPUT", "任务字段无效") from None
+        if request["prediction"] is None:
+            raise ServiceError("INVALID_INPUT", "请先提供该会话的预测结果")
         request["prediction"] = prediction(request["prediction"])
+        if any(not item or len(item) > 240 for item in request["constraints"]):
+            raise ServiceError("INVALID_INPUT", "每条约束须为 1 至 240 字符")
         request["context"] = context(request["context"], request["prediction"]["subject"])
         request["chart_data"] = chart_data(request["chart_data"], request["prediction"])
+        if cid:
+            request["_owner"] = owner
+            memory_enabled = self.memory.settings(owner)["enabled"]
+            if request["remember"] and not memory_enabled:
+                raise ServiceError("MEMORY_DISABLED", "长期记忆已关闭，请开启后再保存")
+            if memory_enabled and not request["remember"]:
+                explicit = explicit_memory(request["message"], request["prediction"]["subject"])
+                if explicit:
+                    request["remember"] = [explicit]
+            request["fresh_context"] = request["fresh_context"] or ("context" in raw and raw["context"] != previous.get("context"))
+            for item in request["remember"]:
+                if item["kind"] == "prediction":
+                    p = request["prediction"]
+                    item.update(subject=p["subject"], applies_at=p["generated_at"], data_version=p["model_version"],
+                                content=json.dumps(p, ensure_ascii=False)[:800])
         if request["notify"]:
             policy = self.store.settings()["mail"]
             if request["recipient"] not in policy["recipient_allowlist"]:

@@ -2,6 +2,10 @@
 
 ## 0.5.0
 
+- 邮件图表改为纯标准库确定性 PNG（inline/attachment），HTML 展示图例与说明，保持 CID 和既有队列 EML。
+- 新增 `mail-list`：按最新入队顺序列出邮件，支持 limit 与状态筛选，JSON 输出包含信封地址、传输方式及重试信息。
+- 支持可选 `mail.sender_name` From 显示名及 CRLF 校验，显示名不参与幂等 ID，信封地址保持不变。
+
 - 自采数据：新增认证交易日历（`calendar-import`、`calendar-status`）与公司行动因子（`actions-import`）。缺交易所交易日时按窗口跳过而不是压缩相邻日；复权口径只对 `backward_adjusted` 契约生效，`forward_adjusted` 明确拒绝。
 - 自采增量更新（`update-bars`、`update-history`）：把每日文件合并为**新**快照而不覆盖旧快照，同值重复记为无变更，改写历史的重述直接拒绝，超出新鲜度阈值需 `--allow-stale` 才记录为过期更新。
 - 数据回放权利：授权记录新增 `replay` 用途并与既有库就地迁移；撤回后立即停止回放。新增特征漂移报告（`model-drift`、`drift-history`），按训练窗口分位分箱计算 PSI，分箱固定因此可复现。
@@ -12,8 +16,10 @@
 - 预测闭环：`prediction-report` 把预测固化为报告，锁定 model_version、contract_id、snapshot 与预测 ID，切换模型不改写历史报告；无证据不补造引用。
 - 生成接口（`--generate`）：默认确定性模板；只有显式开关 + 环境变量指定 + 允许清单内的提供方才会被调用，只发送结构化排序与引用编号，失败/空结果/未列入清单一律降级为模板。
 - 影子运行与 stable 治理：`shadow-record`、`shadow-evaluate`、`shadow-status` 记录并评分已成熟的预测；`stable-promote` 要求至少十个成熟影子日 + 显式授权 + 备注，`stable-revoke` 可撤销；发布者密钥撤销列表（`key-revoke`、`key-status`）使已撤销密钥不能再安装新包。
+- 邮件闭环补口：新增 `mail-drain` 按到期顺序批量推进重试，单条消息的配置或完整性错误不中断整批，仍有未结清消息时退出码为 2；新增 `mail-resolve` 用"先写审计再改状态"的人工确认把 `uncertain` 收口为 retry 或 submitted，确认未送达后的重发仍可能重复，不宣称 exactly-once。`mail.recipient_allowlist` 非空时成为入队硬闸门，命令行覆盖也受约束；`mail.chart_delivery` 此前只能由控制台注入，现可由配置指定。邮件补 `Date` 头。
+- 演示链路带图：Mock 上下文提供 `chart_data`（observed/forecast/backtest 合成序列），`AnalysisAgent` 在上下文契约之外单独接收并校验图表数据，非法图表数据直接报错不静默降级；`run` 的演示邮件内嵌两张确定性 PNG 图表（历史观测与预测、实际值与历史预测），`examples/context.json` 同步给出静态契约样例。
 - 跨平台用例补强：原子替换在有并发读者时仍完成且不残留暂存文件、中文含空格路径、非契约时区的截止时间映射、天真时间戳拒绝。
-- 回归测试 50 → 103 项；邮件发送与真实 SMTP 闭环按用户要求仍留待后续。
+- 回归测试 50 → 103 项；真实 SMTP 仅完成一次投递验证（QQ 邮箱 465/SSL，服务器返回 `submitted`，未人工确认到达），送达率、退信与配额边界仍未验证。
 
 - 新增《接手与移交指南》：给出接手方从环境复现、代码阅读顺序、模型链路演练到交接判定清单的完整路径，并单独列出不走 Git 的资产（签名私钥、数据授权、SMTP、仓库 Admin）与已知的不可宣称事项。
 - README 重写使用说明：新增目录地图（原始文件放 `data/local/intake/incoming`、清洗产物在 `archive`/`jobs`、快照在 `snapshots`、个人版本在 `registry/personal/<owner_key>`）、四步接入流程（投放 → 清洗 → 发布 → 授权）、两条训练路线的完整命令、每日增量流程，以及“想改哪块改哪个源文件”的映射表。修正此前文档中的 `data/incoming` 错误路径。

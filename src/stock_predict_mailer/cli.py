@@ -42,11 +42,17 @@ def main(argv=None):
     resolve = sub.add_parser("mail-resolve", help="人工确认 uncertain 邮件的真实结果")
     resolve.add_argument("message_id")
     resolve.add_argument("--delivered", action="store_true", help="确认已送达，不再重发")
+    worker = sub.add_parser("knowledge-worker", help="独立资料清洗 Agent；不占分析子 Agent 名额")
+    worker.add_argument("--once", action="store_true", help="处理当前所有待导入资料后退出")
+    worker.add_argument("--poll", type=float, default=2)
     console = sub.add_parser("console", help="启动本机模型、MCP 与 Agent 配置控制台")
     console.add_argument("--port", type=int, default=8767)
     args = parser.parse_args(argv)
     try:
         cfg = load(args.config)
+        if args.command == "knowledge-worker":
+            from .private_knowledge.worker import run
+            return run(cfg["workspace"], once=args.once, poll=args.poll)
         if args.command == "console":
             from .control.server import serve
             serve(cfg["workspace"], args.port)

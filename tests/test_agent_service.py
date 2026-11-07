@@ -156,6 +156,22 @@ class AgentTests(unittest.TestCase):
             with self.assertRaises(ServiceError):
                 load(path)
 
+    def test_mail_config_allowlist_and_chart_delivery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cfg.toml"
+            path.write_text('workspace="work"\n[mail]\nchart_delivery="attachment"\nrecipient_allowlist=["a@example.com"]\n',
+                            encoding="utf-8")
+            cfg = load(path)
+            self.assertEqual(cfg["mail"]["chart_delivery"], "attachment")
+            self.assertEqual(cfg["mail"]["recipient_allowlist"], ["a@example.com"])
+            for broken in ('recipient_allowlist=["a@example.com\\nBcc: x@example.com"]',
+                           'recipient_allowlist="a@example.com"',
+                           'chart_delivery="inline;evil"'):
+                with self.subTest(broken=broken):
+                    path.write_text('workspace="work"\n[mail]\n' + broken + "\n", encoding="utf-8")
+                    with self.assertRaises(ServiceError):
+                        load(path)
+
 
 class MailTests(unittest.TestCase):
     def setUp(self):
@@ -172,6 +188,135 @@ class MailTests(unittest.TestCase):
 
     def enqueue(self):
         return self.mail.enqueue(self.analysis, "recipient@example.com")["id"]
+
+    def test_png_determinism_and_mail_parts(self):
+        import struct
+        import zlib
+        from email import policy
+        from email.parser import BytesParser
+
+        from stock_predict_mailer.agent_service.png import chart_png
+
+        chart = {"title": "测试", "unit": "CNY", "caption": "区间", "series": {
+            "observed": {"source": "历史", "points": [
+                {"at": "2026-01-01T00:00:00Z", "value": 1},
+                {"at": "2026-01-02T00:00:00Z", "value": 2}]},
+            "forecast": {"source": "模型", "points": [
+                {"at": "2026-01-03T00:00:00Z", "value": 3, "lower": 2, "upper": 4}]}}}
+        png = chart_png(chart)
+        self.assertEqual(png, chart_png(chart))
+        self.assertEqual(png[:8], b"\x89PNG\r\n\x1a\n")
+        offset, compressed = 8, b""
+        while offset < len(png):
+            size = struct.unpack(">I", png[offset:offset + 4])[0]
+            kind, data = png[offset + 4:offset + 8], png[offset + 8:offset + 8 + size]
+            self.assertEqual(zlib.crc32(kind + data), struct.unpack(">I", png[offset + 8 + size:offset + 12 + size])[0])
+            if kind == b"IDAT":
+                compressed += data
+            offset += size + 12
+        self.assertEqual(len(zlib.decompress(compressed)), 350 * (720 * 3 + 1))
+        from stock_predict_mailer.agent_service.contracts import instant
+        issued = instant(self.analysis["prediction"]["generated_at"])
+        chart["series"]["observed"]["points"][0]["at"] = (issued - timedelta(days=2)).isoformat()
+        chart["series"]["observed"]["points"][1]["at"] = (issued - timedelta(days=1)).isoformat()
+        forecast = chart["series"]["forecast"]["points"][0]
+        forecast["at"] = (issued + timedelta(days=1)).isoformat()
+        self.analysis["prediction"].pop("value", None)
+        self.analysis["charts"] = [chart]
+        self.analysis["analysis_id"] = identity({k: v for k, v in self.analysis.items() if k != "analysis_id"})
+        png = chart_png(chart)
+        for mode in ("inline", "attachment"):
+            self.settings["chart_delivery"] = mode
+            mid = self.mail.enqueue(self.analysis, mode + "@example.com")["id"]
+            msg = BytesParser(policy=policy.default).parsebytes(
+                (self.root / "agent-outbox" / f"{mid}.eml").read_bytes())
+            part = next(p for p in msg.walk() if p.get_content_type() == "image/png")
+            self.assertEqual(part.get_payload(decode=True), png)
+            self.assertEqual(part.get_content_disposition(), mode)
+            if mode == "inline":
+                self.assertEqual(part["Content-ID"], "<chart-0@stock-predict-mailer.local>")
+
+    def test_listing_filters_limits_and_cli(self):
+        self.assertEqual(self.mail.listing(), [])
+        first = self.enqueue()
+        second = self.mail.enqueue(self.analysis, "second@example.com")["id"]
+        self.mail.update(first, "failed", 2, "Rejected")
+        self.assertEqual([r["id"] for r in self.mail.listing(1)], [second])
+        row = self.mail.listing(status="failed")[0]
+        self.assertEqual(set(row), {"id", "recipient", "sender", "transport", "status", "attempts", "next_attempt", "error"})
+        self.assertEqual(row["attempts"], 2)
+        self.assertEqual(row["sender"], "sender@example.com")
+        self.assertEqual(self.mail.listing(status="submitted"), [])
+        for kwargs in ({"limit": 0}, {"limit": True}, {"limit": 1001}, {"status": "bad"}):
+            with self.assertRaises(ServiceError):
+                self.mail.listing(**kwargs)
+        config = self.root / "list.toml"
+        config.write_text('workspace="."\n', encoding="utf-8")
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(main(["--config", str(config), "mail-list", "--limit", "1", "--status", "failed"]), 0)
+        self.assertEqual(json.loads(output.getvalue())[0]["id"], first)
+
+    def test_sender_name_keeps_identity_and_envelope(self):
+        from email import policy
+        from email.parser import BytesParser
+
+        self.settings["sender_name"] = "研究报告, 每日"
+        mid = self.enqueue()
+        payload = (self.root / "agent-outbox" / f"{mid}.eml").read_bytes()
+        msg = BytesParser(policy=policy.default).parsebytes(payload)
+        self.assertEqual(msg["From"].addresses[0].display_name, "研究报告, 每日")
+        self.assertEqual(msg["From"].addresses[0].addr_spec, self.settings["sender"])
+        self.assertEqual(self.mail.get(mid)["sender"], self.settings["sender"])
+        self.settings["sender_name"] = "Changed"
+        self.assertEqual(self.enqueue(), mid)
+        self.assertEqual((self.root / "agent-outbox" / f"{mid}.eml").read_bytes(), payload)
+        self.assertEqual(mid, identity([self.analysis["analysis_id"], "recipient@example.com", self.settings["sender"], "smtp"]))
+        for name in ("bad\rname", "bad\nname", 123):
+            self.settings["sender_name"] = name
+            with self.assertRaises(ServiceError):
+                self.enqueue()
+        config = self.root / "names.toml"
+        config.write_text('workspace="."\n[mail]\nsender_name="研究报告"\n', encoding="utf-8")
+        self.assertEqual(load(config)["mail"]["sender_name"], "研究报告")
+        for name in ('bad\\rname', 'bad\\nname'):
+            config.write_text('workspace="."\n[mail]\nsender_name="' + name + '"\n', encoding="utf-8")
+            with self.assertRaises(ServiceError):
+                load(config)
+
+    def test_mock_context_carries_charts_into_mail(self):
+        from email import policy
+        from email.parser import BytesParser
+
+        analysis = AnalysisAgent().analyze(MockPredictionAdapter().fetch(), MockContextAdapter().fetch())
+        validate_analysis(analysis)
+        self.assertEqual([c["title"] for c in analysis["charts"]], ["历史观测与预测", "实际值与历史预测"])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cfg.toml"
+            path.write_text('workspace="work"\n[context]\nadapter="mock"\n', encoding="utf-8")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(main(["--config", str(path), "run", "--send"]), 0)
+            mid = json.loads(output.getvalue())["mail"]["id"]
+            msg = BytesParser(policy=policy.default).parsebytes(
+                (Path(tmp) / "work" / "agent-outbox" / f"{mid}.eml").read_bytes())
+            parts = [p for p in msg.walk() if p.get_content_type() == "image/png"]
+            self.assertEqual([p["Content-ID"] for p in parts],
+                             ["<chart-0@stock-predict-mailer.local>", "<chart-1@stock-predict-mailer.local>"])
+            self.assertTrue(all(p.get_payload(decode=True)[:8] == b"\x89PNG\r\n\x1a\n" for p in parts))
+
+    def test_chart_data_rides_outside_the_context_contract(self):
+        raw = MockContextAdapter().fetch()
+        p = MockPredictionAdapter().fetch()
+        series = raw.pop("chart_data")
+        analysis = AnalysisAgent().analyze(p, raw)
+        self.assertNotIn("charts", analysis)
+        analysis = AnalysisAgent().analyze(p, {**raw, "chart_data": series})
+        self.assertEqual(len(analysis["charts"]), 2)
+        broken = {**raw, "chart_data": {"unit": "CNY", "series": {"forecast": {"source": "x", "points": [
+            {"at": p["generated_at"], "value": 1}]}}}}
+        with self.assertRaises(ServiceError):
+            AnalysisAgent().analyze(p, broken)
 
     def test_success_and_duplicate(self):
         mid = self.enqueue()
@@ -240,6 +385,56 @@ class MailTests(unittest.TestCase):
         self.settings["allow_synthetic"] = True
         with patch.dict(os.environ, {}, clear=True), self.assertRaises(ServiceError):
             self.mail.deliver(mid)
+
+    def test_allowlist_blocks_unlisted_recipient(self):
+        self.settings["recipient_allowlist"] = ["allowed@example.com"]
+        with self.assertRaises(ServiceError) as caught:
+            self.mail.enqueue(self.analysis, "other@example.com")
+        self.assertEqual(caught.exception.code, "PERMISSION_DENIED")
+        self.assertEqual(self.mail.enqueue(self.analysis, "allowed@example.com")["status"], "pending")
+
+    def test_drain_delivers_due_only_and_isolates_failures(self):
+        first = self.enqueue()
+        second = self.mail.enqueue(self.analysis, "second@example.com")["id"]
+        with self.mail.db() as con:
+            con.execute("UPDATE mail SET next_attempt='2099-01-01T00:00:00+00:00' WHERE id=?", (second,))
+        summary = self.mail.drain()
+        self.assertEqual(summary["due"], 1)
+        self.assertEqual([item["id"] for item in summary["results"]], [first])
+        self.assertEqual(summary["results"][0]["status"], "submitted")
+        self.assertEqual(FakeSMTP.sent, 1)
+        with self.mail.db() as con:
+            con.execute("UPDATE mail SET next_attempt='2000-01-01T00:00:00+00:00' WHERE id=?", (second,))
+        with patch.dict(os.environ, {}, clear=True):
+            blocked = self.mail.drain()
+        self.assertEqual(blocked["results"][0]["status"], "pending")
+        self.assertEqual(blocked["results"][0]["error"], "MAIL_CONFIG")
+        with self.assertRaises(ServiceError):
+            self.mail.drain(0)
+
+    def test_resolve_is_the_only_way_out_of_uncertain(self):
+        FakeSMTP.failure = TimeoutError("secret")
+        mid = self.enqueue()
+        self.assertEqual(self.mail.deliver(mid)["status"], "uncertain")
+        with self.assertRaises(ServiceError):
+            self.mail.resolve(mid, delivered="yes")
+        self.assertEqual(self.mail.resolve(mid, delivered=False)["status"], "retry")
+        FakeSMTP.failure = None
+        self.assertEqual(self.mail.deliver(mid)["status"], "submitted")
+        self.assertEqual(self.mail.get(mid)["attempts"], 2)
+        with self.assertRaises(ServiceError):
+            self.mail.resolve(mid, delivered=True)
+        with self.mail.db() as con:
+            actions = [row[0] for row in con.execute("SELECT action FROM mail_audit WHERE message_id=?", (mid,))]
+        self.assertEqual(actions, ["confirmed_not_delivered"])
+
+    def test_resolve_can_accept_delivery_without_resending(self):
+        FakeSMTP.failure = TimeoutError("secret")
+        mid = self.enqueue()
+        self.assertEqual(self.mail.deliver(mid)["status"], "uncertain")
+        self.assertEqual(self.mail.resolve(mid, delivered=True)["status"], "submitted")
+        self.assertEqual(self.mail.deliver(mid)["status"], "submitted")
+        self.assertEqual(FakeSMTP.sent, 1)
 
 
 class LocalSMTPHandler(socketserver.StreamRequestHandler):

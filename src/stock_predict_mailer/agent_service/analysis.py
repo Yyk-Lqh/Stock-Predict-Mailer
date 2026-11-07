@@ -5,7 +5,7 @@ import json
 
 from ..core import digest
 from .adapters import http_json
-from .charts import chart_data
+from .charts import build_charts, chart_data
 from .contracts import ServiceError, context, fail, keys, prediction
 
 INFERENCES = {
@@ -31,6 +31,10 @@ class AnalysisAgent:
 
     def analyze(self, raw_prediction, raw_context=None):
         p = prediction(raw_prediction, max_age=self.settings.get("max_age_seconds", 86400))
+        # chart_data rides alongside the context contract; strip it before validation.
+        series = raw_context.get("chart_data") if isinstance(raw_context, dict) else None
+        if series is not None:
+            raw_context = {k: v for k, v in raw_context.items() if k != "chart_data"}
         c = context(raw_context, p["subject"], max_age=self.settings.get("max_context_age_seconds", 86400))
         facts = c["facts"] if c else []
         direction_code = "MODEL_" + p["direction"].upper() if "direction" in p else "INSUFFICIENT"
@@ -76,6 +80,12 @@ class AnalysisAgent:
         result["facts"] = [f for f in facts if f["id"] in selected["evidence_ids"]]
         if facts and not result["facts"]:
             result["limitations"].append("Agent 未选取可用于交叉验证的上下文证据。")
+        if series is not None:
+            # Invalid upstream chart data must fail loudly, never silently drop the figure.
+            figures, chart_notes = build_charts(chart_data(series, p))
+            if figures:
+                result["charts"] = figures
+            result["limitations"] += chart_notes
         result["analysis_id"] = identity(result)
         return result
 

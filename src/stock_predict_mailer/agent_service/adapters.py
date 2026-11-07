@@ -79,10 +79,22 @@ class MockPredictionAdapter:
 
 class MockContextAdapter:
     def fetch(self):
-        now = utcnow().replace(minute=0, second=0, microsecond=0).isoformat()
+        # Stable within the hour, matching the prediction mock, so demos dedupe.
+        now = utcnow().replace(minute=0, second=0, microsecond=0)
+        stamp = now.isoformat()
+        observed = [{"at": (now - timedelta(hours=8 - i)).isoformat(), "value": round(9.9 + 0.07 * i, 4)}
+                    for i in range(8)]
+        forecast = [{"at": (now + timedelta(days=i + 1)).isoformat(), "value": round(10.5 + 0.06 * i, 4),
+                     "lower": round(10.1 + 0.04 * i, 4), "upper": round(10.9 + 0.08 * i, 4)} for i in range(5)]
+        backtest = [{"at": observed[i]["at"], "value": round(observed[i]["value"] - 0.05, 4),
+                     "issued_at": (now - timedelta(days=30)).isoformat()} for i in range(0, 8, 2)]
         return {"schema_version": "1", "context_id": "mock-context", "subject": "DEMO.SZ", "facts": [
             {"id": "f1", "name": "收盘价（合成）", "value": 10.2, "unit": "CNY", "source": "mock",
-             "observed_at": now, "available_at": now}]}
+             "observed_at": stamp, "available_at": stamp}],
+                "chart_data": {"unit": "CNY", "series": {
+                    "observed": {"source": "mock-observations", "points": observed},
+                    "forecast": {"source": "mock-v1", "points": forecast},
+                    "backtest": {"source": "mock-backtest", "points": backtest}}}}
 
 
 def adapter(kind, settings):

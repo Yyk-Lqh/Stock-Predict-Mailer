@@ -47,7 +47,10 @@ class MemoryFlowTests(unittest.TestCase):
         self.f.store.save_settings(settings)
         prediction = {**MockPredictionAdapter().fetch(), "value": 12.25, "value_unit": "CNY"}
         constraints = ["预测周期保持 5 个交易日", "以 CNY 报告，保留 12.25"]
-        with patch.object(self.server.engine.mcp, "call", new=AsyncMock(return_value=MockContextAdapter().fetch())) as tool:
+        # This fixture overrides the predicted value, so the upstream returns facts only:
+        # a chart whose forecast ended at 10.74 would be correctly rejected as inconsistent.
+        context = {k: v for k, v in MockContextAdapter().fetch().items() if k != "chart_data"}
+        with patch.object(self.server.engine.mcp, "call", new=AsyncMock(return_value=context)) as tool:
             self.run_task(cid, prediction=prediction, constraints=constraints, message="请保持预测周期。")
             for _ in range(3):
                 tid, analysis = self.run_task(cid, message="刚才那只股票，按前面的条件继续分析")

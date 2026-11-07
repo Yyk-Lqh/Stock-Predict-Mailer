@@ -34,6 +34,14 @@ def main(argv=None):
     send.add_argument("message_id")
     status = sub.add_parser("mail-status", help="查询邮件状态")
     status.add_argument("message_id")
+    listing = sub.add_parser("mail-list", help="列出邮件队列（最新入队优先）")
+    listing.add_argument("--limit", type=int, default=20)
+    listing.add_argument("--status", choices=("pending", "retry", "failed", "uncertain", "submitted", "simulated"))
+    drain = sub.add_parser("mail-drain", help="投递所有到期邮件；由调度器周期调用")
+    drain.add_argument("--limit", type=int, default=20)
+    resolve = sub.add_parser("mail-resolve", help="人工确认 uncertain 邮件的真实结果")
+    resolve.add_argument("message_id")
+    resolve.add_argument("--delivered", action="store_true", help="确认已送达，不再重发")
     console = sub.add_parser("console", help="启动本机模型、MCP 与 Agent 配置控制台")
     console.add_argument("--port", type=int, default=8767)
     args = parser.parse_args(argv)
@@ -56,6 +64,17 @@ def main(argv=None):
             print(json.dumps({"analysis_id": analysis["analysis_id"], "analysis_status": analysis["status"],
                               "report": str(folder / "report.html"), "mail": result}, ensure_ascii=False, indent=2))
             return 0 if result["status"] in ("pending", "submitted", "simulated") else 2
+        if args.command == "mail-list":
+            print(json.dumps(mail.listing(args.limit, args.status), ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "mail-drain":
+            summary = mail.drain(args.limit)
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
+            return 0 if all(item["status"] in ("submitted", "simulated") for item in summary["results"]) else 2
+        if args.command == "mail-resolve":
+            result = mail.resolve(args.message_id, delivered=args.delivered)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
         result = mail.deliver(args.message_id) if args.command == "send" else mail.public(mail.get(args.message_id))
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if args.command == "mail-status" or result["status"] in ("submitted", "simulated") else 2

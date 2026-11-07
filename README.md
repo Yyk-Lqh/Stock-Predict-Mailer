@@ -1,6 +1,6 @@
 # Stock-Predict-Mailer
 
-预测分析 Agent + 邮件通知服务。接收其他成员提供的模型预测结果和客观上下文，生成区分预测、事实、推断、风险与建议的报告，并可靠地投递邮件。数据采集、处理、训练和模型运行由上游团队负责。
+预测分析 Agent + 邮件通知服务。接收其他成员提供的模型预测结果和客观上下文，生成区分预测、事实、推断、风险与建议的报告，并可靠地投递邮件。行情采集、预测模型训练和模型运行由上游团队负责；用户私有文档与表格由本机独立清洗 Agent 整理并建立可追溯的知识库。
 
 Python 3.11+，本机单用户工具。默认使用动态 Mock、确定性分析和本地邮件文件投递，不需要真实模型、LLM API 或邮箱凭据。
 
@@ -27,6 +27,7 @@ src/stock_predict_mailer/
   cli.py           # 新默认入口
   legacy_cli.py    # 旧研究、训练、上传兼容入口
   control/         # 配置界面/API、凭据库、模型/MCP/A2A、编排与预算
+  private_knowledge/ # 多格式解析、独立清洗、Embedding、私有复核和检索
   core.py          # 复用原子文件写入等基础设施
 config/agent-example.toml
 examples/prediction.json
@@ -54,3 +55,44 @@ uv run python -m unittest discover -s tests -p test_agent_service.py -v
 ```
 
 完整回归需要 research/trees 可选依赖；执行 `uv run python -m unittest discover -s tests -v`。项目继续使用 unittest，不引入新的服务框架。
+
+## 私有知识库与独立清洗 Agent
+
+支持数字 PDF、DOCX、UTF-8 TXT/Markdown/CSV/JSON 与 XLSX。原文件按用户加密保留，更新生成新版本；知识资料与对话记忆分开存储，复用私有访问密钥做权限隔离。检索结合关键词、可选 Embedding 和带来源及有效期的关系表，返回页码、段落或单元格位置。
+
+```powershell
+uv sync --all-extras
+# 两个终端须沿用同一配置和已有的 SPM_MASTER_KEY，避免丢失已有凭据访问能力。
+uv run stock-mailer --config config/local.toml console
+uv run stock-mailer --config config/local.toml knowledge-worker --poll 2
+# 只处理当前队列：
+uv run stock-mailer --config config/local.toml knowledge-worker --once
+```
+
+上传和管理当前通过后端 `/api/knowledge` 接口完成，前端暂未增加知识库页面。上传成功表示已排队，不代表完成入库。
+
+模型分别配置，按需启用：
+
+- **规则清洗**无需任何模型，保留数值、单位、统计周期和来源；提供关键词与结构化关系检索。
+- **Embedding**支持 Ollama `/api/embed` 和 OpenAI 兼容 `/embeddings`，用于语义检索；更换模型需先重建新索引再切换。
+- **语义清洗聊天模型**支持 Ollama 原生聊天与 OpenAI 兼容聊天接口，默认关闭。启用后提取实体、关系、事件和财务指标候选，校验原文引文、日期与数值单位；候选经私有审批后才发布，失败、拒绝或待复核时旧版本继续可用。
+- **股票分析模型**沿用分析配置。任务显式选择后，才将检索资料作为待分析来源发送给主模型；清洗模型不拥有训练发布或邮件权限。
+
+清洗模型和 Embedding 凭据加密保存且不回显；向远程服务发送资料需单独允许。调用预算、逐批检查点、批准/拒绝、重试和重提取接口已提供。
+
+完整配置、API 和验收资料：
+
+- [私有知识库：导入、索引、检索和删除](docs/private-knowledge.md)
+- [语义清洗：模型配置、证据校验与审批](docs/cleaning-agent.md)
+- [清洗模型实施计划与边界](docs/cleaning-model-plan.md)
+
+扫描件 OCR、复杂版式与表格的自动准确解析、简称消歧和真实模型准确率仍需后续验证；当前协议验收使用本地模拟服务与合成资料。单机工作区的片段和全文索引为明文，应保留本机磁盘访问控制，不宣称互联网多租户隔离或磁盘取证级擦除。
+
+交付检查：
+
+```powershell
+uv run ruff check src tests scripts
+uv run python -m compileall -q src scripts
+uv run python -m unittest discover -s tests -q
+python scripts/check_repo_hygiene.py
+```

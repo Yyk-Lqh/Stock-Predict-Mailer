@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = ["tzdata>=2024.1", "cryptography>=43,<50", "mcp>=1.30,<2", "jsonschema>=4.23,<5"]
 
 [project.optional-dependencies]
+knowledge = ["pypdf>=5", "openpyxl>=3.1,<4"]
 research = ["numpy>=1.26,<3", "scikit-learn>=1.4,<2", "duckdb>=1.1,<2", "pyarrow>=15,<24", "openpyxl>=3.1,<4"]
 trees = ["lightgbm>=4,<5"]
 dev = ["ruff==0.17.2"]

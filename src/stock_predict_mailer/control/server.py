@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import hmac
 import json
 import os
@@ -70,9 +72,10 @@ def make_server(root, port=8767, master_key=None):
                 size = int(self.headers.get("Content-Length", "-1"))
             except ValueError:
                 size = -1
-            if not 0 <= size <= 1024 * 1024 or not self.headers.get("Content-Type", "").startswith("application/json"):
-                raise ServiceError("INVALID_INPUT", "需要不超过 1 MiB 的 JSON 请求体")
-            value = decode(self.rfile.read(size))
+            maximum = 15 * 1024 * 1024 if urlsplit(self.path).path == "/api/knowledge/documents" else 1024 * 1024
+            if not 0 <= size <= maximum or not self.headers.get("Content-Type", "").startswith("application/json"):
+                raise ServiceError("INVALID_INPUT", f"需要不超过 {maximum // (1024 * 1024)} MiB 的 JSON 请求体")
+            value = decode(self.rfile.read(size), max_bytes=maximum)
             if not isinstance(value, dict):
                 raise ServiceError("INVALID_INPUT", "JSON 顶层须为对象")
             return value
@@ -120,6 +123,63 @@ def make_server(root, port=8767, master_key=None):
                 if len(parts) < 2 or parts[0] != "api":
                     raise ServiceError("NOT_FOUND", "接口不存在")
                 kind = parts[1]
+                if kind == "knowledge":
+                    owner = engine.memory.owner(self.headers.get("X-Memory-Key", ""))
+                    kb, route = engine.knowledge, parts[2:]
+                    if route == ["documents"] and method == "GET":
+                        self.output(kb.listing(owner))
+                    elif route == ["documents"] and method == "POST":
+                        data = self.body()
+                        try:
+                            raw = base64.b64decode(data["data"], validate=True)
+                        except (KeyError, TypeError, ValueError, binascii.Error):
+                            raise ServiceError("INVALID_INPUT", "需要 base64 文件内容") from None
+                        self.output(kb.upload(owner, data.get("filename"), raw, data.get("metadata"), data.get("logical")), 202)
+                    elif route == ["config"] and method in ("GET", "PUT"):
+                        self.output(kb.config(owner, self.body() if method == "PUT" else None))
+                    elif route == ["cleaner", "config"] and method in ("GET", "PUT"):
+                        self.output(kb.cleaning_config(owner, self.body() if method == "PUT" else None))
+                    elif route == ["cleaner", "test"] and method == "POST":
+                        self.output(kb.test_cleaner(owner))
+                    elif route == ["test"] and method == "POST":
+                        self.output(kb.test(owner))
+                    elif route == ["indexes"] and method == "GET":
+                        self.output(kb.indexes(owner))
+                    elif route == ["rebuild"] and method == "POST":
+                        self.output(kb.rebuild(owner))
+                    elif route in (["search"], ["answer"]) and method == "POST":
+                        data = self.body()
+                        allowed = {"query", "as_of", "start_date", "stock_code", "entity", "limit"}
+                        if set(data) - allowed or "query" not in data:
+                            raise ServiceError("INVALID_INPUT", "检索参数无效")
+                        self.output((kb.answer if route == ["answer"] else kb.search)(owner, **data))
+                    elif len(route) == 2 and route[0] == "citations" and method == "GET":
+                        self.output(kb.citation(owner, route[1]))
+                    elif len(route) >= 2 and route[0] == "documents":
+                        did = route[1]
+                        if len(route) == 2 and method == "GET":
+                            self.output(kb.document(owner, did, detail=True))
+                        elif len(route) == 2 and method == "DELETE":
+                            self.output(kb.delete(owner, did))
+                        elif route[2:] == ["review"] and method == "GET":
+                            self.output(kb.review(owner, did))
+                        elif route[2:] == ["review"] and method == "POST":
+                            body = self.body()
+                            if set(body) != {"decision", "digest", "approved_ids"}:
+                                raise ServiceError("INVALID_INPUT", "需要 decision/digest/approved_ids")
+                            self.output(kb.review(owner, did, **body))
+                        elif route[2:] == ["reextract"] and method == "POST":
+                            self.output(kb.reextract(owner, did), 202)
+                        elif route[2:] == ["retry"] and method == "POST":
+                            self.output(kb.retry(owner, did), 202)
+                        elif route[2:] == ["original"] and method == "GET":
+                            filename, raw = kb.original(owner, did)
+                            self.output({"filename": filename, "data": base64.b64encode(raw).decode()})
+                        else:
+                            raise ServiceError("NOT_FOUND", "资料接口不存在")
+                    else:
+                        raise ServiceError("NOT_FOUND", "知识库接口不存在")
+                    return
                 if kind in ("conversations", "memory"):
                     route = parts[2:]
                     if kind == "memory" and route == ["access"] and method == "POST":

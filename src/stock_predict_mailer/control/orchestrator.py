@@ -16,6 +16,7 @@ from ..agent_service.charts import build_charts, chart_data, chart_svg
 from ..agent_service.contracts import ServiceError, context, prediction, utcnow
 from ..agent_service.mail import MailService
 from ..agent_service.reporting import render, save_report
+from ..private_knowledge.service import Knowledge
 from .a2a import A2AClient
 from .execution import DEFAULT_EFFORT, LABELS, Effort, Progress, envelope
 from .mcp_layer import MCPLayer
@@ -43,6 +44,8 @@ class TaskRequest(Closed):
     report_format: ReportFormat | None = None
     remember: list[MemoryEntry] = Field(default_factory=list, max_length=10)
     fresh_context: bool = False
+    knowledge_query: str = Field(default="", max_length=4000)
+    knowledge_to_model: bool = False
 
 
 def validate_result(raw, role, p, facts):
@@ -80,6 +83,7 @@ class Orchestrator:
     def __init__(self, store):
         self.store, self.models, self.mcp, self.a2a = store, ModelAdapter(store), MCPLayer(store), A2AClient(store)
         self.memory = Memory(store)
+        self.knowledge = Knowledge(store)
         self.active = {}
         self.lock = threading.RLock()
         with self.store.db() as con:
@@ -118,6 +122,8 @@ class Orchestrator:
             request = TaskRequest.model_validate(raw).model_dump()
         except ValidationError:
             raise ServiceError("INVALID_INPUT", "任务字段无效") from None
+        if request["knowledge_query"] and not cid:
+            raise ServiceError("FORBIDDEN", "资料分析任务需要私有会话；独立检索可使用知识库回答接口")
         if request["prediction"] is None:
             raise ServiceError("INVALID_INPUT", "请先提供该会话的预测结果")
         request["prediction"] = prediction(request["prediction"])
@@ -328,6 +334,10 @@ class Orchestrator:
         return facts, series
 
     async def analyze(self, tid, request, settings, budget, progress):
+        knowledge_result = None
+        if request.get("knowledge_query"):
+            knowledge_result = await asyncio.to_thread(self.knowledge.answer, request["_owner"], request["knowledge_query"],
+                                                        as_of=request["prediction"]["generated_at"][:10])
         p, c = request["prediction"], request["context"]
         facts = c["facts"] if c else []
         notes, children, results, conflicts = [], [], [], []
@@ -373,6 +383,8 @@ class Orchestrator:
         data = {"prediction": p, "facts": facts}
         main_data = {**data, "goal": goal, "user_constraints": request.get("constraints", []),
                      "report_format": request.get("report_format")}
+        if knowledge_result and request.get("knowledge_to_model"):
+            main_data["source_material"] = {"trust": "untrusted_source_material", "retrieval": knowledge_result}
         try:
             with progress.step("main", "主 Agent 分析预测、风险与建议"):
                 main = await self.role("main", main_data, settings, budget)
@@ -495,7 +507,7 @@ class Orchestrator:
                 mail = {"status": "uncertain" if exc.code == "MAIL_UNCERTAIN" else "failed", "error": exc.code}
                 progress.emit("mail", step="mail", label=exc.message, status=mail["status"], code=exc.code)
         return {"analysis": analysis, "children": children, "conflicts": conflicts, "usage": budget.snapshot(),
-                "execution": execution, "mail": mail, "report_path": str(folder / "report.html")}
+                "execution": execution, "mail": mail, "report_path": str(folder / "report.html"), "knowledge": knowledge_result}
 
     async def notify(self, analysis, recipient, budget, progress):
         # Always reload authorization immediately before the external effect.

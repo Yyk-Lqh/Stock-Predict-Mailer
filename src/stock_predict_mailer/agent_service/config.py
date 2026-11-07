@@ -16,8 +16,8 @@ def load(path):
             "prediction": {"adapter", "path", "url", "token_env", "timeout_seconds"},
             "context": {"adapter", "path", "url", "token_env", "timeout_seconds"},
             "agent": {"provider", "url", "token_env", "timeout_seconds", "max_age_seconds", "max_context_age_seconds"},
-            "mail": {"transport", "sender", "recipient", "host", "port", "tls", "user_env", "password_env", "allow_synthetic",
-                     "timeout_seconds", "max_attempts", "retry_seconds"},
+            "mail": {"transport", "sender", "sender_name", "recipient", "recipient_allowlist", "chart_delivery", "host", "port", "tls",
+                     "user_env", "password_env", "allow_synthetic", "timeout_seconds", "max_attempts", "retry_seconds"},
         }
         if set(raw) - {"workspace", "timezone", *allowed}:
             raise ValueError()
@@ -36,6 +36,12 @@ def load(path):
                 elif key == "allow_synthetic":
                     if type(value) is not bool:
                         raise ValueError()
+                elif key == "recipient_allowlist":
+                    from ..delivery import address
+                    if not isinstance(value, list) or len(value) > 20:
+                        raise ValueError()
+                    for item in value:
+                        address(item)
                 elif not isinstance(value, str) or not value.strip() or "\n" in value or "\r" in value:
                     raise ValueError()
         for name in ("prediction", "context"):
@@ -52,6 +58,8 @@ def load(path):
         if raw["agent"]["provider"] == "http" and not raw["agent"].get("url"):
             raise ValueError()
         if raw["mail"].setdefault("transport", "file") not in ("file", "smtp"):
+            raise ValueError()
+        if raw["mail"].get("chart_delivery", "inline") not in ("inline", "attachment"):
             raise ValueError()
         if raw["mail"].get("tls", "starttls") not in ("ssl", "starttls"):
             raise ValueError()

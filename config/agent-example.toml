@@ -23,9 +23,13 @@ timeout_seconds = 15
 # token_env = "AGENT_TOKEN"
 
 [mail]
+# sender_name = "研究报告" # 可选 From 显示名；不影响信封地址与幂等 ID
 transport = "file" # file | smtp; file is a local simulated delivery
 sender = "research@example.invalid"
 recipient = "preview@example.invalid"
+# Non-empty list turns into a hard gate: enqueue rejects any other recipient.
+# recipient_allowlist = ["preview@example.invalid"]
+chart_delivery = "inline" # inline | attachment
 host = "smtp.example.invalid"
 port = 587
 tls = "starttls" # starttls | ssl (port 465)

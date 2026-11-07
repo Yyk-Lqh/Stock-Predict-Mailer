@@ -371,8 +371,9 @@ class OrchestrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(svg, report)
             mail = self.f.root / "sent" / (result["mail"]["id"] + ".eml")
             msg = BytesParser(policy=policy.default).parsebytes(mail.read_bytes())
-            image = next(part for part in msg.walk() if part.get_content_type() == "image/svg+xml")
-            self.assertEqual(image.get_payload(decode=True).decode(), svg)
+            image = next(part for part in msg.walk() if part.get_content_type() == "image/png")
+            from stock_predict_mailer.agent_service.png import chart_png
+            self.assertEqual(image.get_payload(decode=True), chart_png(charts[0]))
             self.assertEqual(image.get_content_disposition(), delivery)
         data["series"]["forecast"]["points"][0]["value"] = 11
         with self.assertRaises(ServiceError):
@@ -451,6 +452,20 @@ class OrchestrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result["children"]), 3)
         again = self.result(await self.run_task(notify=True, recipient="preview@example.invalid"))
         self.assertEqual(again["mail"]["id"], result["mail"]["id"])
+
+    async def test_mcp_marker_recovers_as_uncertain_without_resend(self):
+        # Contract: a crash mid-effect must never resend and must surface as uncertain.
+        m = self.f.mcp()
+        self.f.settings["mail"].update(transport="mcp", recipient_allowlist=["preview@example.invalid"], allow_synthetic=True,
+                                       mcp_server_id=m["id"], mcp_tool="send_email")
+        self.f.store.save_settings(self.f.settings)
+        result = self.result(await self.run_task(notify=True, recipient="preview@example.invalid"))
+        self.assertEqual(result["mail"]["status"], "simulated")
+        with self.f.store.db() as con:
+            con.execute("UPDATE mcp_mail SET status='sending' WHERE id=?", (result["mail"]["id"],))
+        again = self.result(await self.run_task(notify=True, recipient="preview@example.invalid"))
+        self.assertEqual(again["mail"]["id"], result["mail"]["id"])
+        self.assertEqual(again["mail"]["status"], "uncertain")
 
     async def test_file_mail_idempotent(self):
         self.f.settings["mail"].update(recipient_allowlist=["preview@example.invalid"], allow_synthetic=True)

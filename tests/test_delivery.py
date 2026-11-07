@@ -40,6 +40,21 @@ class DeliveryTests(unittest.TestCase):
                 con.execute("UPDATE outbox SET status='sending' WHERE id=?", (queued["id"],))
             self.assertEqual(deliver(cfg, queued["id"]), "uncertain")
 
+    def test_outbox_integrity_principal_scope_and_preview_guard(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cfg = Config(Path(folder))
+            built = demo_run(cfg, "2026-10-24T20:00:00+08:00")
+            queued = enqueue(cfg, built["report_id"], "test@example.com", "sender@example.com")
+            self.assertIn(queued["id"], [row["id"] for row in outbox(cfg)])
+            self.assertEqual(outbox(Config(Path(folder), principal="other")), [])
+            payload = Path(folder) / "outbox" / f"{queued['id']}.eml"
+            payload.write_bytes(b"tampered")
+            with self.assertRaises(ValueError):
+                deliver(cfg, queued["id"], allow_synthetic=True, allow_stale=True)
+            env = {"SMTP_HOST": "smtp.example.com", "SMTP_USER": "u", "SMTP_PASSWORD": "p"}
+            with patch.dict(os.environ, env), self.assertRaises(ValueError):
+                deliver(cfg, built["outbox_id"], allow_synthetic=True, allow_stale=True)
+
     def test_pipeline_idempotent_preview_and_smtp_uncertainty(self):
         with tempfile.TemporaryDirectory() as folder:
             cfg = Config(Path(folder))

@@ -54,9 +54,9 @@ def utcnow():
     return datetime.now(timezone.utc)
 
 
-def decode(raw):
-    if len(raw) > 1024 * 1024:
-        fail("输入超过 1 MiB")
+def decode(raw, *, max_bytes=1024 * 1024):
+    if len(raw) > max_bytes:
+        fail("输入超过允许大小")
     def unique(pairs):
         result = {}
         for key, value in pairs:

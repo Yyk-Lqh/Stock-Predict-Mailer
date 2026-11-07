@@ -11,12 +11,13 @@ from contextlib import contextmanager
 from datetime import timedelta
 from email import policy
 from email.message import EmailMessage
+from email.utils import formataddr, formatdate
 
 from ..core import Config, atomic_write, digest
 from ..delivery import address, process_lock
 from .analysis import identity, validate_analysis
-from .charts import chart_svg
 from .contracts import ServiceError, instant, utcnow
+from .png import chart_png
 from .reporting import render
 
 
@@ -37,6 +38,8 @@ class MailService:
                 id TEXT PRIMARY KEY, recipient TEXT NOT NULL, sender TEXT NOT NULL, transport TEXT NOT NULL,
                 status TEXT NOT NULL, attempts INTEGER NOT NULL, next_attempt TEXT NOT NULL,
                 error TEXT, payload_hash TEXT NOT NULL, analysis TEXT NOT NULL)""")
+            con.execute("""CREATE TABLE IF NOT EXISTS mail_audit (
+                id TEXT PRIMARY KEY, message_id TEXT NOT NULL, action TEXT NOT NULL, at TEXT NOT NULL)""")
             yield con
             con.commit()
         except Exception:
@@ -58,12 +61,32 @@ class MailService:
     def public(row):
         return {k: row[k] for k in ("id", "status", "attempts", "next_attempt", "error")}
 
+    def listing(self, limit=20, status=None):
+        statuses = ("pending", "retry", "failed", "uncertain", "submitted", "simulated")
+        if type(limit) is not int or not 1 <= limit <= 1000 or (status is not None and status not in statuses):
+            raise ServiceError("INVALID_INPUT", "limit 须为 1 至 1000，status 须为已知邮件状态")
+        query = "SELECT id,recipient,sender,transport,status,attempts,next_attempt,error FROM mail"
+        params = []
+        if status is not None:
+            query += " WHERE status=?"
+            params.append(status)
+        query += " ORDER BY rowid DESC LIMIT ?"
+        params.append(limit)
+        with self.db() as con:
+            return [dict(row) for row in con.execute(query, params)]
+
     def enqueue(self, analysis, recipient):
         validate_analysis(analysis, self.analysis_settings)
         try:
             recipient, sender = address(recipient), address(self.settings["sender"])
         except ValueError:
             raise ServiceError("INVALID_INPUT", "收发件人必须为单一邮箱地址") from None
+        sender_name = self.settings.get("sender_name", "")
+        if not isinstance(sender_name, str) or "\r" in sender_name or "\n" in sender_name:
+            raise ServiceError("INVALID_INPUT", "发件显示名无效")
+        allowlist = self.settings.get("recipient_allowlist") or []
+        if allowlist and recipient not in allowlist:
+            raise ServiceError("PERMISSION_DENIED", "收件人不在 mail.recipient_allowlist 授权名单内")
         transport = self.settings.get("transport", "file")
         chart_delivery = self.settings.get("chart_delivery", "inline")
         message_id = identity([analysis["analysis_id"], recipient, sender, transport])
@@ -73,18 +96,19 @@ class MailService:
                 if existing:
                     return self.public(dict(existing))
                 msg = EmailMessage(policy=policy.SMTP)
-                msg["From"], msg["To"], msg["Message-ID"] = sender, recipient, f"<{message_id}@stock-predict-mailer.local>"
+                msg["From"], msg["To"], msg["Message-ID"] = formataddr((sender_name, sender)), recipient, f"<{message_id}@stock-predict-mailer.local>"
+                msg["Date"] = formatdate(localtime=False)
                 msg["Subject"] = "预测分析报告" + (" [MOCK]" if analysis["prediction"]["synthetic"] else "")
                 text, html = render(analysis, self.timezone, charts="cid" if chart_delivery == "inline" else "attachment")
                 msg.set_content(text)
                 msg.add_alternative(html, subtype="html")
                 for idx, chart in enumerate(analysis.get("charts", [])):
-                    svg = chart_svg(chart).encode()
+                    png = chart_png(chart)
                     if chart_delivery == "inline":
-                        msg.get_payload()[-1].add_related(svg, maintype="image", subtype="svg+xml",
+                        msg.get_payload()[-1].add_related(png, maintype="image", subtype="png",
                                                          cid=f"<chart-{idx}@stock-predict-mailer.local>", disposition="inline")
                     else:
-                        msg.add_attachment(svg, maintype="image", subtype="svg+xml", filename=f"analysis-chart-{idx + 1}.svg")
+                        msg.add_attachment(png, maintype="image", subtype="png", filename=f"analysis-chart-{idx + 1}.png")
                 payload = msg.as_bytes()
                 atomic_write(self.workspace / "agent-outbox" / f"{message_id}.eml", payload)
                 con.execute("INSERT INTO mail VALUES (?,?,?,?,'pending',0,?,NULL,?,?)",
@@ -174,3 +198,44 @@ class MailService:
         with self.db() as con:
             con.execute("UPDATE mail SET status=?,attempts=?,error=?,next_attempt=? WHERE id=?",
                         (status, attempts, error, next_attempt, message_id))
+
+    def drain(self, limit=20):
+        """Deliver messages whose backoff has elapsed; the scheduler calls this repeatedly."""
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ServiceError("INVALID_INPUT", "单次投递数量须为 1 到 100 的整数")
+        moment = utcnow()
+        with self.db() as con:
+            rows = con.execute("""SELECT id, next_attempt FROM mail
+                WHERE status IN ('pending','retry') ORDER BY next_attempt LIMIT ?""",
+                               (limit * 4,)).fetchall()
+        due = [row["id"] for row in rows if instant(row["next_attempt"]) <= moment][:limit]
+        results = []
+        for message_id in due:
+            try:
+                results.append(self.deliver(message_id))
+            except ServiceError as exc:
+                # One message's configuration or integrity problem must not stop the batch.
+                try:
+                    results.append({**self.public(self.get(message_id)), "error": exc.code})
+                except ServiceError:
+                    continue
+        return {"due": len(due), "results": results}
+
+    def resolve(self, message_id, delivered=False):
+        """Record a human verdict on an ambiguous send; the only way out of `uncertain`."""
+        if not isinstance(delivered, bool):
+            raise ServiceError("INVALID_INPUT", "确认结果须为布尔值")
+        with process_lock(self.cfg):
+            row = self.get(message_id)
+            if row["status"] != "uncertain":
+                raise ServiceError("INVALID_INPUT", "只有 uncertain 状态的邮件等待人工确认")
+            action = "confirmed_delivered" if delivered else "confirmed_not_delivered"
+            # Never resend on the strength of a guess: the audit row precedes the state change.
+            status = "submitted" if delivered else "retry"
+            moment = utcnow().isoformat()
+            with self.db() as con:
+                con.execute("INSERT INTO mail_audit VALUES (?,?,?,?)",
+                            (identity([message_id, action, moment]), message_id, action, moment))
+                con.execute("UPDATE mail SET status=?,error=?,next_attempt=? WHERE id=?",
+                            (status, None if delivered else row["error"], moment, message_id))
+            return self.public(self.get(message_id))

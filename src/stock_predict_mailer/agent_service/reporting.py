@@ -35,7 +35,15 @@ def render(analysis, timezone="Asia/Shanghai", *, charts="inline"):
     html += "".join(f"<p>{escape(line)}</p>" for line in lines)
     for idx, chart in enumerate(figures):
         visual = chart_svg(chart) if charts == "inline" else f'<img src="cid:chart-{idx}@stock-predict-mailer.local" alt="{escape(chart["title"])}">' if charts == "cid" else ""
-        html += f"<figure><h2>{escape(chart['title'])}</h2>{visual}<figcaption>{escape(chart['caption'])}</figcaption></figure>"
+        legend = {"observed": ("历史观测", "#17634d"), "forecast": ("模型预测", "#2356a3"),
+                  "backtest": ("历史预测", "#a64b29")}
+        labels = "".join(f'<p style="color:{legend[k][1]}">{legend[k][0]} · {escape(v["source"])}</p>'
+                         for k, v in chart["series"].items())
+        points = [p for series in chart["series"].values() for p in series["points"]]
+        labels += f'<p>单位：{escape(chart["unit"])}；{escape(min(p["at"] for p in points))} — {escape(max(p["at"] for p in points))}</p>'
+        if any("lower" in p for p in points):
+            labels += "<p>浅蓝竖线：上游预测区间</p>"
+        html += f"<figure><h2>{escape(chart['title'])}</h2>{visual}<figcaption>{escape(chart['caption'])}{labels}</figcaption></figure>"
     return text, html + "</body></html>"
 
 

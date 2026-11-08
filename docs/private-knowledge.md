@@ -114,3 +114,9 @@ OpenAI 兼容服务（base_url 包含服务实际使用的 /v1 前缀；不是�
 ## 可选语义清洗模型
 
 独立清洗聊天模型及证据复核已增加，默认关闭。启用后模型处理的文档先进入 review，经私有审批后才发布；与 Embedding 配置独立。配置、接口和限制见 [语义清洗 Agent](cleaning-agent.md)。
+
+
+## 2026-11-08 正确性与历史语义修正
+重复JSON键（包括嵌套）与重复/空DOCX表头、DOCX列数不一致拒绝为 REVIEW_REQUIRED；原件仍保留待修正。正文裸六位金额不推断证券代码，仅带市场后缀或明确证券字段/显式metadata可识别。
+as_of按 logical 选择截止日已可用、已发布版本（available_date、uploaded、id顺序），不是还原当时系统是否已经录入的双时态快照。仅对当前仍存在活动授权版本的logical回放；删除当前活动版本不复活旧版。历史向量不保证有当前索引覆盖，仍可词法检索。
+DELETE先将版本标为 deleting 并停止检索，原件unlink成功后清理数据库。Windows占用失败返回 DELETE_PENDING/retryable=true，记录与原件定位保留，可再次DELETE；不声称物理擦除。

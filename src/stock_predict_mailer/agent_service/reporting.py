@@ -25,6 +25,12 @@ def render(analysis, timezone="Asia/Shanghai", *, charts="inline"):
         lines += ["本轮用户约束", *analysis["user_constraints"]]
     for title, key in (("不确定性与限制", "limitations"), ("风险提示", "risks"), ("建议（不作收益保证）", "recommendations")):
         lines += [title] + analysis[key]
+    evidence = analysis.get("knowledge_evidence")
+    if evidence:
+        lines += ["私有资料证据（来源声明，未独立核实）", "资料截止：" + evidence["as_of"]]
+        for item in evidence["results"]:
+            lines += [f"[{item['citation_id']}] {item['filename']}；位置：{item['location']}；版本校验：{item['source_hash']}；日期：{item['metadata']}",
+                      item["text"], "；".join(item["warnings"]) or "来源内容需核实"]
     figures = analysis.get("charts", [])
     if analysis.get("report_format") == "brief":
         headline = ["简版摘要", f"{p['subject']} · {p['horizon']['value']} {p['horizon']['unit']}",

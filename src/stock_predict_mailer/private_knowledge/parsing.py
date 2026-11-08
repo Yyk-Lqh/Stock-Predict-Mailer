@@ -38,7 +38,14 @@ def parse(filename, raw):
                 raise ServiceError("REVIEW_REQUIRED", "CSV 行列数不一致")
             add("；".join(f"{key}: {value}" for key, value in row.items()), {"row": reader.line_num}, row)
     elif suffix == ".json":
-        value = json.loads(raw.decode("utf-8-sig"), parse_float=str, parse_int=str)
+        def unique(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ServiceError("REVIEW_REQUIRED", "JSON 含重复键，请对照原件修正")
+                result[key] = value
+            return result
+        value = json.loads(raw.decode("utf-8-sig"), parse_float=str, parse_int=str, object_pairs_hook=unique)
         rows = value if isinstance(value, list) else [value]
         for index, row in enumerate(rows):
             add(json.dumps(row, ensure_ascii=False), {"json_pointer": f"/{index}" if isinstance(value, list) else ""},
@@ -60,7 +67,11 @@ def parse(filename, raw):
                                      for cell in row.findall("w:tc", ns)]
                             if headers is None:
                                 headers = cells
+                                if any(not h.strip() for h in headers) or len(set(headers)) != len(headers):
+                                    raise ServiceError("REVIEW_REQUIRED", f"Word 表格 {index} 首行字段为空或重复，请对照原件修正")
                                 continue
+                            if len(cells) != len(headers):
+                                raise ServiceError("REVIEW_REQUIRED", f"Word 表格 {index} 行 {row_number} 列数不一致")
                             fields = {headers[i] if i < len(headers) else f"列{i + 1}": v for i, v in enumerate(cells)}
                             add("；".join(f"{k}: {v}" for k, v in fields.items()), {"table_block": index, "row": row_number}, fields)
                     else:

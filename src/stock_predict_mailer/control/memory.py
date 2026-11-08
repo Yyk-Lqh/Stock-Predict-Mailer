@@ -231,18 +231,69 @@ class Memory:
         with self.store.db() as con:
             return [self.open(row[0]) for row in con.execute("SELECT body FROM memory_vectors WHERE owner=? ORDER BY rowid DESC LIMIT 100", (owner,))]
 
+    def page(self, owner, collection, before=2**63 - 1, limit=100):
+        if type(before) is not int or not 0 <= before <= 2**63 - 1 or type(limit) is not int or not 1 <= limit <= 100:
+            raise ServiceError("INVALID_INPUT", "分页参数无效")
+        table = {"memory": "memory_vectors", "conversations": "conversations", "pending": "memory_pending"}[collection]
+        columns = {"memory": "rowid,body", "conversations": "rowid,id,state,updated",
+                   "pending": "rowid,id,conversation,turn,body"}[collection]
+        with self.store.db() as con:
+            rows = con.execute(f"SELECT {columns} FROM {table} WHERE owner=? AND rowid<? ORDER BY rowid DESC LIMIT ?", (owner, before, limit + 1)).fetchall()
+        items = []
+        for row in rows[:limit]:
+            if collection == "memory":
+                items.append(self.open(row[1]))
+            elif collection == "pending":
+                items.append({**self.open(row[4]), "id": row[1], "source_conversation": row[2], "source_message": row[3]})
+            else:
+                items.append({"id": row[1], "updated": row[3], "subject": self.open(row[2]).get("request", {}).get("prediction", {}).get("subject")})
+        return {"items": items, "next_before": rows[limit - 1][0] if len(rows) > limit else None}
+
     def pending(self, owner):
         with self.store.db() as con:
             rows = con.execute("SELECT id,conversation,turn,body FROM memory_pending WHERE owner=? ORDER BY rowid LIMIT 100", (owner,)).fetchall()
         return [{"id": pid, "source_conversation": cid, "source_message": seq, **self.open(body)} for pid, cid, seq, body in rows]
 
-    def conversation(self, owner, cid):
+    def conversation(self, owner, cid, before=2**63 - 1, limit=20):
+        if type(before) is not int or not 0 <= before <= 2**63 - 1 or type(limit) is not int or not 1 <= limit <= 100:
+            raise ServiceError("INVALID_INPUT", "历史分页参数无效")
         state = self.state(owner, cid)
         with self.store.db() as con:
-            rows = con.execute("SELECT seq,body FROM conversation_turns WHERE conversation=? ORDER BY seq DESC LIMIT 20", (cid,)).fetchall()
+            rows = con.execute("SELECT seq,body FROM conversation_turns WHERE conversation=? AND seq<? ORDER BY seq DESC LIMIT ?", (cid, before, limit + 1)).fetchall()
+        more = len(rows) > limit
+        rows = rows[:limit]
         return {"id": cid, "task": state.get("task"), "summary": state.get("summary", []),
+                "next_before": rows[-1][0] if more else None,
                 "completed_step": state.get("checkpoint", {}).get("completed_step"),
                 "messages": [{"seq": seq, **self.open(body)} for seq, body in reversed(rows)]}
+
+    def export_conversation(self, owner, cid):
+        self.state(owner, cid)
+        result = self.conversation(owner, cid, limit=100)
+        messages = result["messages"]
+        while result["next_before"] is not None:
+            result = self.conversation(owner, cid, result["next_before"], 100)
+            messages = result["messages"] + messages
+        return {"id": cid, "messages": messages}
+
+    def revoke(self, owner):
+        with self.store.db() as con:
+            tasks = con.execute("SELECT t.body FROM tasks t JOIN memory_tasks m ON m.task=t.id WHERE m.owner=?", (owner,)).fetchall()
+            if any(json.loads(r[0])["status"]["state"] in ("submitted", "working") for r in tasks):
+                raise ServiceError("BUSY", "请先取消或等待所有私人任务完成", True)
+            con.execute("UPDATE memory_owners SET token_hash=? WHERE id=?", (uuid.uuid4().hex, owner))
+        return {"status": "revoked"}
+
+    def delete_conversation(self, owner, cid):
+        state = self.state(owner, cid)
+        if state.get("task") and self.store.task(state["task"])["status"]["state"] in ("submitted", "working"):
+            raise ServiceError("BUSY", "请先取消会话任务", True)
+        with self.store.db() as con:
+            con.execute("DELETE FROM memory_pending WHERE owner=? AND conversation=?", (owner, cid))
+            con.execute("DELETE FROM conversation_turns WHERE conversation=?", (cid,))
+            con.execute("DELETE FROM conversations WHERE owner=? AND id=?", (owner, cid))
+        # Keep task ownership bindings: deleting history must not expose private reports.
+        return {"status": "deleted"}
 
     def update(self, owner, mid, raw):
         try:

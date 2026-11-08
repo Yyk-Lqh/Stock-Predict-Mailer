@@ -53,6 +53,26 @@ class ConfigurationTests(unittest.TestCase):
         self.f = Fixture()
         self.addCleanup(self.f.close)
 
+    def test_model_test_uses_default_execution_effort(self):
+        from unittest.mock import AsyncMock
+        adapter = ModelAdapter(self.f.store)
+        async def generate(pid, role, data, settings, budget):
+            self.assertEqual(settings.get('reasoning_effort'), 'extreme')
+            self.assertIn('max_steps', budget.limits)
+            return {'conclusion_codes': ['MODEL_UP'], 'evidence_ids': ['prediction:' + data['prediction']['prediction_id']],
+                    'uncertainty_codes': [], 'delegate_roles': []}
+        with patch.object(adapter, 'generate', new=AsyncMock(side_effect=generate)):
+            asyncio.run(adapter.test(self.f.model['id'], self.f.settings))
+
+    def test_knowledge_reference_requires_explicit_allowlist(self):
+        from stock_predict_mailer.control.orchestrator import validate_result
+        p = MockPredictionAdapter().fetch()
+        raw = {'conclusion_codes': ['VERIFY'], 'evidence_ids': ['a' * 32 + ':0'],
+               'uncertainty_codes': [], 'delegate_roles': []}
+        with self.assertRaises(ServiceError):
+            validate_result(raw, 'main', p, [])
+        self.assertEqual(validate_result(raw, 'main', p, [], [raw['evidence_ids'][0]])['evidence_ids'], raw['evidence_ids'])
+
     def test_encrypted_secrets_never_read_back(self):
         s, m = self.f.store, self.f.model
         self.assertNotIn("mock-only-sensitive-marker", json.dumps(s.list("models")))

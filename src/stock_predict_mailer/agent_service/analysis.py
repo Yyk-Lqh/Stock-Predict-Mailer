@@ -93,7 +93,24 @@ class AnalysisAgent:
 def validate_analysis(value, settings=None):
     settings = settings or {}
     keys(value, ("schema_version", "analysis_id", "generated_at", "status", "mode", "prediction", "facts", "inferences",
-                 "recommendations", "limitations", "risks"), ("charts", "report_format", "user_constraints"))
+                 "recommendations", "limitations", "risks"), ("charts", "report_format", "user_constraints", "knowledge_evidence"))
+    if "knowledge_evidence" in value:
+        evidence = value["knowledge_evidence"]
+        keys(evidence, ("as_of", "results", "used_ids"))
+        if not isinstance(evidence["as_of"], str) or not isinstance(evidence["results"], list) or len(json.dumps(evidence, ensure_ascii=False).encode()) > 6000:
+            fail("知识证据包无效")
+        ids = []
+        for item in evidence["results"]:
+            keys(item, ("citation_id", "document_id", "source_hash", "filename", "location", "text", "metadata", "warnings", "trust"))
+            if item["trust"] != "untrusted_source_material" or not all(isinstance(item[k], str) for k in ("citation_id", "document_id", "source_hash", "filename", "text")):
+                fail("知识证据来源无效")
+            if not isinstance(item["location"], dict) or not isinstance(item["metadata"], dict) or not isinstance(item["warnings"], list):
+                fail("知识证据定位无效")
+            if item["metadata"].get("available_date", "9999") > evidence["as_of"]:
+                fail("知识证据超出截止日期")
+            ids.append(item["citation_id"])
+        if not isinstance(evidence["used_ids"], list) or any(eid not in ids for eid in evidence["used_ids"]):
+            fail("知识引用无效")
     unsigned = {k: v for k, v in value.items() if k != "analysis_id"}
     if identity(unsigned) != value["analysis_id"] or value["schema_version"] != "1" or value["status"] not in ("ok", "degraded"):
         fail("分析摘要、版本或状态无效")

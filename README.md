@@ -96,3 +96,17 @@ uv run python -m compileall -q src scripts
 uv run python -m unittest discover -s tests -q
 python scripts/check_repo_hygiene.py
 ```
+
+
+## 后端修复与前端联调（2026-11-08）
+
+当前后端已补齐按任务授权的 HTML 报告、analysis JSON、邮件状态与 file/SMTP 不确定状态的人工确认接口，以及任务列表、会话历史/长期记忆/待写记忆分页、会话导出与删除、私有访问密钥撤销。前端仍需自行实现页面，下载使用 `/api/tasks/{id}/report`，不能直接访问服务器本地 `report_path`。
+
+知识资料进入分析前保留来源与版本校验，主模型仅能引用预算证据包内的 citation_id；同一快照进入报告 JSON、HTML 和邮件。重复 JSON 键、歧义 Word 表头会拒绝，裸六位金额不再推断为证券代码；历史查询支持已发布版本回放，Windows 原件删除失败保留可重试记录。
+
+- [后端接口与分页、认证、事件恢复契约](docs/control-api.md)
+- [前端联调交接](docs/frontend-handoff.md)
+- [原始审查发现与逐项修复证据](docs/backend-audit-2026-11-08.md)
+- [修复计划与实施记录](docs/backend-repair-plan-2026-11-08.md)
+
+本地验收为231项 stdlib unittest 通过，并通过实际本地 HTTP、Mock 模型和 file transport 模拟 EML 链路；不代表真实模型质量、第三方服务或邮箱收件已验证。MailCore 三队列合并保留为[独立迭代](docs/mail-core-plan.md)，上游配置测试接口、OCR 与复杂版式能力尚未实现。默认入口消费严格 v1 预测结果，不加载上游权重，知识资料不自动进入训练快照。

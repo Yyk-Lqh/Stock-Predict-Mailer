@@ -156,7 +156,10 @@ class ModelAdapter:
 
     async def test(self, pid, settings):
         from ..agent_service.adapters import MockPredictionAdapter
+        from .execution import DEFAULT_EFFORT, envelope
         from .orchestrator import validate_result
+        level = settings.get("default_reasoning_effort", DEFAULT_EFFORT)
+        settings = {**settings, "reasoning_effort": level, "limits": envelope(level, settings["limits"])}
         budget = Budget(settings["limits"])
         p = MockPredictionAdapter().fetch()
         result = await self.generate(pid, "main", {"prediction": p, "facts": []}, settings, budget)

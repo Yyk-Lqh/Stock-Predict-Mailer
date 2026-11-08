@@ -59,6 +59,47 @@ class KnowledgeTests(unittest.TestCase):
         self.addCleanup(self.f.close)
         self.kb, self.owner = self.f.kb, self.f.owner
 
+    def test_duplicate_json_keys_rejected_at_any_depth(self):
+        for raw in (b'{"revenue":12,"revenue":13}', b'{"x":{"a":1,"a":2}}'):
+            with self.assertRaises(ServiceError) as caught:
+                parse('a.json', raw)
+            self.assertEqual(caught.exception.code, 'REVIEW_REQUIRED')
+
+    def test_duplicate_docx_headers_rejected(self):
+        raw = io.BytesIO()
+        xml = '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl>'
+        for cells in (('收入', '收入'), ('12', '13')):
+            xml += '<w:tr>' + ''.join('<w:tc><w:p><w:r><w:t>' + v + '</w:t></w:r></w:p></w:tc>' for v in cells) + '</w:tr>'
+        xml += '</w:tbl></w:body></w:document>'
+        with zipfile.ZipFile(raw, 'w') as archive:
+            archive.writestr('word/document.xml', xml)
+        with self.assertRaises(ServiceError):
+            parse('a.docx', raw.getvalue())
+
+    def test_amount_is_not_stock_identifier(self):
+        self.f.ready('amount.csv', '公司,营业收入(元)\n甲公司,600000\n'.encode())
+        self.assertEqual(self.kb.search(self.owner, '甲公司', stock_code='600000.SH')['results'], [])
+        self.f.ready('stock.csv', '公司,股票代码\n乙公司,600000\n'.encode())
+        self.assertTrue(self.kb.search(self.owner, '乙公司', stock_code='600000.SH')['results'])
+
+    def test_locked_original_keeps_retryable_record(self):
+        did = self.f.ready('locked.txt', b'locked original')
+        with patch.object(Path, 'unlink', side_effect=PermissionError('locked')):
+            with self.assertRaises((ServiceError, PermissionError)):
+                self.kb.delete(self.owner, did)
+        self.assertEqual(self.kb.document(self.owner, did)['id'], did)
+        self.assertEqual(self.kb.delete(self.owner, did)['status'], 'deleted')
+
+    def test_as_of_replays_published_version(self):
+        old = self.f.ready('history.txt', b'company revenue 12', META)
+        logical = self.kb.document(self.owner, old)['logical']
+        new = self.f.ready('history.txt', b'company revenue 13',
+                           {'document_date': '2026-11-01', 'available_date': '2026-11-01'}, logical)
+        found = self.kb.search(self.owner, 'revenue', as_of='2026-10-15')['results']
+        self.assertEqual([r['document_id'] for r in found], [old])
+        self.kb.delete(self.owner, new)
+        self.assertEqual(self.kb.search(self.owner, 'revenue', as_of='2026-10-15')['results'], [])
+
     def test_text_dedup_provenance_and_encrypted_original(self):
         raw = '# 收入\n营业收入 12 亿元\n营业收入 12 亿元\n'.encode()
         did = self.f.ready('研究.md', raw)
@@ -390,6 +431,38 @@ class HTTPTests(unittest.TestCase):
 
 
 class AnalysisTests(unittest.IsolatedAsyncioTestCase):
+    async def test_large_retrieval_is_budgeted_without_truncating_sources(self):
+        f = Fixture()
+        self.addCleanup(f.close)
+        for i in range(8):
+            f.ready(f'large-{i}.txt', ('风险' + str(i) + '甲' * 1490).encode())
+        model = f.store.put('models', {'name': 'Mock'})
+        settings = f.store.settings()
+        settings['default_model_id'] = model['id']
+        f.store.save_settings(settings)
+        engine = Orchestrator(f.store)
+        cid = engine.memory.new(f.owner)['id']
+        request = engine.prepare({'prediction': MockPredictionAdapter().fetch(), 'conversation_id': cid,
+                                  'knowledge_query': '风险', 'knowledge_to_model': True, 'complexity': 'simple'}, f.owner)
+        original = engine.models.generate
+        calls = []
+        async def capture(pid, role, data, settings, budget):
+            calls.append(data)
+            self.assertLess(len(json.dumps(data, ensure_ascii=False).encode()), 8000)
+            return await original(pid, role, data, settings, budget)
+        with patch.object(engine.models, 'generate', side_effect=capture):
+            task = await engine.execute('large-knowledge-test', request)
+        self.assertEqual(task['status']['state'], 'completed')
+        output = task['artifacts'][0]['parts'][0]['data']
+        self.assertGreater(len(json.dumps(output['knowledge'], ensure_ascii=False).encode()), 16000)
+        self.assertTrue(any('KNOWLEDGE_BUDGET' in note for note in output['analysis']['limitations']))
+        self.assertFalse(any('INPUT_TOO_LARGE' in note or 'CONTEXT_LIMIT' in note for note in output['analysis']['limitations']))
+        self.assertTrue(calls)
+        originals = {r['citation_id']: r['text'] for r in output['knowledge']['results']}
+        for data in calls:
+            for item in data.get('source_material', {}).get('results', []):
+                self.assertEqual(item['text'], originals[item['citation_id']])
+
     async def test_opt_in_knowledge_context_and_private_task(self):
         f = Fixture()
         self.addCleanup(f.close)
@@ -406,12 +479,25 @@ class AnalysisTests(unittest.IsolatedAsyncioTestCase):
         original = engine.models.generate
         async def capture(pid, role, data, settings, budget):
             calls.append(data)
-            return await original(pid, role, data, settings, budget)
+            raw = await original(pid, role, data, settings, budget)
+            if data.get('source_material', {}).get('results'):
+                raw['evidence_ids'].append(data['source_material']['results'][0]['citation_id'])
+            return raw
         with patch.object(engine.models, 'generate', side_effect=capture):
             result = await engine.execute('knowledge-test', request)
         self.assertEqual(result['status']['state'], 'completed')
         output = result['artifacts'][0]['parts'][0]['data']
         self.assertTrue(output['knowledge']['results'])
         self.assertEqual(calls[0]['source_material']['trust'], 'untrusted_source_material')
+        from stock_predict_mailer.agent_service.reporting import render
+        evidence = output['analysis']['knowledge_evidence']
+        self.assertTrue(evidence['results'])
+        self.assertTrue(evidence['used_ids'])
+        for cid in (e['citation_id'] for e in evidence['results']):
+            text, html = render(output['analysis'])
+            self.assertIn(cid, text)
+            self.assertIn(cid, html)
+        self.assertLessEqual(len(json.dumps(calls[0]['source_material']['results'], ensure_ascii=False).encode()), 4000)
+
         with self.assertRaises(ServiceError):
             engine.prepare({'prediction': MockPredictionAdapter().fetch(), 'knowledge_query': '甲公司'}, f.owner)

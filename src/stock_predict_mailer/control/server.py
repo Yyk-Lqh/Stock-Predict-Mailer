@@ -14,6 +14,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from ..agent_service.contracts import ServiceError, decode
+from ..agent_service.mail import MailService
+from ..agent_service.reporting import render
 from .a2a import A2AService, card
 from .orchestrator import Orchestrator
 from .store import Store
@@ -186,12 +188,38 @@ def make_server(root, port=8767, master_key=None):
                         self.output(engine.memory.create_owner(), 201)
                         return
                     owner = engine.memory.owner(self.headers.get("X-Memory-Key", ""))
+                    query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                    paged_pending = kind == "memory" and route == ["pending"]
+                    if (not route or paged_pending) and method == "GET" and query:
+                        if set(query) - {"before", "limit"} or any(len(values) != 1 for values in query.values()):
+                            raise ServiceError("INVALID_INPUT", "分页仅接受单个 before 和 limit")
+                        try:
+                            before = int(query.get("before", [str(2**63 - 1)])[0])
+                            limit = int(query.get("limit", ["100"])[0])
+                        except ValueError:
+                            raise ServiceError("INVALID_INPUT", "分页参数无效") from None
+                        self.output(engine.memory.page(owner, "pending" if paged_pending else kind, before, limit))
+                        return
+                    if kind == "memory" and route == ["access"] and method == "DELETE":
+                        self.output(engine.memory.revoke(owner))
+                        return
+                    if kind == "conversations" and len(route) == 2 and route[1] == "export" and method == "GET":
+                        self.output(engine.memory.export_conversation(owner, route[0]))
+                        return
                     if kind == "conversations" and not route and method == "POST":
                         self.output(engine.memory.new(owner), 201)
                     elif kind == "conversations" and not route and method == "GET":
                         self.output(engine.memory.conversations(owner))
                     elif kind == "conversations" and len(route) == 1 and method == "GET":
-                        self.output(engine.memory.conversation(owner, route[0]))
+                        query = parse_qs(urlsplit(self.path).query)
+                        try:
+                            before = int(query.get("before", [str(2**63 - 1)])[0])
+                            limit = int(query.get("limit", ["20"])[0])
+                        except ValueError:
+                            raise ServiceError("INVALID_INPUT", "历史分页参数无效") from None
+                        self.output(engine.memory.conversation(owner, route[0], before, limit))
+                    elif kind == "conversations" and len(route) == 1 and method == "DELETE":
+                        self.output(engine.memory.delete_conversation(owner, route[0]))
                     elif kind == "memory" and route == ["settings"] and method in ("GET", "PUT"):
                         self.output(engine.memory.settings(owner, self.body() if method == "PUT" else None))
                     elif kind == "memory" and route == ["pending"] and method == "GET":
@@ -228,6 +256,56 @@ def make_server(root, port=8767, master_key=None):
                         payload = self.body()
                         owner = engine.memory.owner(self.headers.get("X-Memory-Key", "")) if payload.get("conversation_id") is not None else None
                         self.output(engine.submit(payload, owner), 202)
+                    elif method == "GET" and len(parts) == 2:
+                        query = parse_qs(urlsplit(self.path).query)
+                        try:
+                            after = int(query.get("after", ["0"])[0])
+                            limit = int(query.get("limit", ["50"])[0])
+                            if not 0 <= after <= 2**63 - 1 or not 1 <= limit <= 100:
+                                raise ValueError()
+                        except ValueError:
+                            raise ServiceError("INVALID_INPUT", "任务分页参数无效") from None
+                        owner = engine.memory.owner(self.headers['X-Memory-Key']) if self.headers.get('X-Memory-Key') else None
+                        with store.db() as con:
+                            rows = con.execute("SELECT t.rowid,t.body FROM tasks t LEFT JOIN memory_tasks m ON m.task=t.id WHERE t.rowid>? AND (m.owner IS NULL OR m.owner=?) ORDER BY t.rowid LIMIT ?", (after, owner, limit + 1)).fetchall()
+                        self.output({"items": [json.loads(r[1]) for r in rows[:limit]],
+                                     "next_after": rows[limit - 1][0] if len(rows) > limit else None})
+                    elif method == "GET" and len(parts) == 4 and parts[3] in ("report", "analysis", "mail"):
+                        task = store.task(parts[2])
+                        if task["status"]["state"] != "completed" or not task["artifacts"]:
+                            raise ServiceError("NOT_READY", "任务尚无正式报告")
+                        result = task["artifacts"][0]["parts"][0]["data"]
+                        if parts[3] == "report":
+                            self.output(render(result["analysis"])[1].encode(), content_type="text/html; charset=utf-8")
+                        elif parts[3] == "analysis":
+                            self.output(result["analysis"])
+                        else:
+                            mail = result.get("mail") or {"status": "not_requested"}
+                            if mail.get("id"):
+                                service = MailService(store.root, store.settings()["mail"])
+                                try:
+                                    mail = service.public(service.get(mail["id"]))
+                                except ServiceError as exc:
+                                    if exc.code != "INVALID_INPUT":
+                                        raise
+                                    with store.db() as con:
+                                        exists = con.execute("SELECT 1 FROM sqlite_master WHERE name='mcp_mail'").fetchone()
+                                        marker = con.execute("SELECT status FROM mcp_mail WHERE id=?", (mail["id"],)).fetchone() if exists else None
+                                    if marker:
+                                        mail = {"id": mail["id"], "status": "uncertain" if marker[0] == "sending" else marker[0]}
+                            self.output(mail)
+                    elif method == "POST" and len(parts) == 5 and parts[3:] == ["mail", "resolve"]:
+                        task = store.task(parts[2])
+                        if task["status"]["state"] != "completed":
+                            raise ServiceError("NOT_READY", "任务尚未完成")
+                        mail = task["artifacts"][0]["parts"][0]["data"].get("mail") or {}
+                        if not mail.get("id"):
+                            raise ServiceError("NOT_FOUND", "任务无可管理邮件")
+                        body = self.body()
+                        if set(body) != {"delivered"} or type(body["delivered"]) is not bool:
+                            raise ServiceError("INVALID_INPUT", "需要 delivered 布尔字段")
+                        service = MailService(store.root, store.settings()["mail"])
+                        self.output(service.resolve(mail["id"], body["delivered"]))
                     elif method == "GET" and len(parts) == 3:
                         self.output(store.task(parts[2]))
                     elif method == "GET" and len(parts) == 4 and parts[3] == "events":

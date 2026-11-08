@@ -37,6 +37,85 @@ class MemoryFlowTests(unittest.TestCase):
             time.sleep(.01)
         return tid, task["artifacts"][0]["parts"][0]["data"]["analysis"]
 
+    def test_pending_pages_are_private_stable_and_non_consuming(self):
+        key = self.access()
+        cid = self.conversation()
+        memory = self.server.engine.memory
+        owner = memory.owner(key)
+        other = memory.create_owner()
+        with self.server.engine.store.db() as con:
+            for i in range(205):
+                con.execute('INSERT INTO memory_pending VALUES (?,?,?,?,?)',
+                            (f'pending-{i}', owner, cid, i, memory.seal({'content': f'记忆{i}'})))
+            con.execute('INSERT INTO memory_pending VALUES (?,?,?,?,?)',
+                        ('private-other', other['owner'], cid, 999, memory.seal({'content': 'other secret'})))
+        legacy = self.client.get('/api/memory/pending').json()
+        self.assertIsInstance(legacy, list)
+        self.assertEqual(len(legacy), 100)
+        self.assertEqual(legacy[0]['id'], 'pending-0')
+        response = self.client.get('/api/memory/pending?limit=100')
+        self.assertEqual(response.status_code, 200)
+        page = response.json()
+        self.assertIsInstance(page, dict)
+        self.assertEqual(len(page['items']), 100)
+        seen = page['items'][:]
+        with self.server.engine.store.db() as con:
+            con.execute('DELETE FROM memory_pending WHERE id=?', ('pending-104',))
+            con.execute('INSERT INTO memory_pending VALUES (?,?,?,?,?)',
+                        ('new-pending', owner, cid, 1000, memory.seal({'content': 'new'})))
+        while page['next_before'] is not None:
+            page = self.client.get('/api/memory/pending', params={'before': page['next_before'], 'limit': 100}).json()
+            seen.extend(page['items'])
+        ids = [item['id'] for item in seen]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertEqual(set(ids), {f'pending-{i}' for i in range(205)} - {'pending-104'})
+        self.assertTrue(all(item['source_conversation'] == cid for item in seen))
+        self.assertEqual(self.client.get('/api/memory/pending?before=0').json()['items'], [])
+        with self.server.engine.store.db() as con:
+            self.assertEqual(con.execute('SELECT count(*) FROM memory_pending WHERE owner=?', (owner,)).fetchone()[0], 205)
+        self.client.headers['X-Memory-Key'] = other['key']
+        self.assertEqual([i['id'] for i in self.client.get('/api/memory/pending?limit=100').json()['items']], ['private-other'])
+        del self.client.headers['X-Memory-Key']
+        self.assertEqual(self.client.get('/api/memory/pending?limit=100').status_code, 403)
+
+    def test_pending_rejects_invalid_pagination(self):
+        self.access()
+        for query in ('before=-1', 'before=9223372036854775808', 'before=no', 'limit=0', 'limit=101',
+                      'limit=', 'before=', 'limit=1&limit=2', 'befor=1'):
+            with self.subTest(query=query):
+                response = self.client.get('/api/memory/pending?' + query)
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json()['error']['code'], 'INVALID_INPUT')
+
+    def test_history_pagination_delete_preserves_task_privacy(self):
+        self.access()
+        cid = self.conversation()
+        memory = self.server.engine.memory
+        with self.server.engine.store.db() as con:
+            for i in range(25):
+                con.execute('INSERT INTO conversation_turns(conversation,body) VALUES (?,?)', (cid, memory.seal({'message': str(i)})))
+        first = self.client.get('/api/conversations/' + cid).json()
+        second = self.client.get('/api/conversations/' + cid, params={'before': first['next_before']}).json()
+        self.assertEqual(len(first['messages']), 20)
+        self.assertEqual(len(second['messages']), 5)
+        self.assertFalse({m['seq'] for m in first['messages']} & {m['seq'] for m in second['messages']})
+        self.assertEqual(len(self.client.get('/api/conversations/' + cid + '/export').json()['messages']), 25)
+        self.assertEqual(self.client.delete('/api/conversations/' + cid).status_code, 200)
+        self.assertEqual(self.client.get('/api/conversations/' + cid).status_code, 404)
+        owner = memory.owner(self.client.headers['X-Memory-Key'])
+        with self.server.engine.store.db() as con:
+            for i in range(101):
+                con.execute('INSERT INTO memory_vectors VALUES (?,?,?,?,?,?,?)',
+                            (str(i), owner, str(i), 'preference', None, memory.seal({'id': str(i)}), memory.seal({})))
+        page = self.client.get('/api/memory?limit=100').json()
+        tail = self.client.get('/api/memory', params={'before': page['next_before'], 'limit': 100}).json()
+        self.assertEqual(len(page['items']), 100)
+        self.assertEqual(len(tail['items']), 1)
+        self.assertEqual(self.client.delete('/api/memory/access').json()['status'], 'revoked')
+        self.assertEqual(self.client.get('/api/memory').status_code, 403)
+
+
+
     def test_compacts_and_resumes_validated_steps_with_exact_conditions(self):
         self.access()
         cid = self.conversation()

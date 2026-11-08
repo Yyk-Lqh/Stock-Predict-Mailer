@@ -48,7 +48,7 @@ class TaskRequest(Closed):
     knowledge_to_model: bool = False
 
 
-def validate_result(raw, role, p, facts):
+def validate_result(raw, role, p, facts, knowledge_ids=()):
     fields = {"conclusion_codes", "evidence_ids", "uncertainty_codes", "delegate_roles"}
     allowed = set(INFERENCES) | set(RECOMMENDATIONS) | set(RISK_TEXT)
     if not isinstance(raw, dict) or set(raw) != fields:
@@ -56,7 +56,7 @@ def validate_result(raw, role, p, facts):
     for k in fields:
         if not isinstance(raw[k], list) or len(raw[k]) > 20 or any(not isinstance(v, str) for v in raw[k]):
             raise ServiceError("INVALID_AGENT_RESULT", "Agent 返回必须为有限字符串数组")
-    references = {"prediction:" + p["prediction_id"], *(f["id"] for f in facts)}
+    references = {"prediction:" + p["prediction_id"], *(f["id"] for f in facts), *knowledge_ids}
     if not raw["conclusion_codes"] or set(raw["conclusion_codes"]) - allowed or set(raw["evidence_ids"]) - references:
         raise ServiceError("INVALID_AGENT_RESULT", "Agent 结论或依据不在允许范围内")
     if not raw["evidence_ids"] or set(raw["uncertainty_codes"]) - set(UNCERTAINTY):
@@ -238,7 +238,8 @@ class Orchestrator:
                 raise ServiceError("MODEL_REQUIRED", "请先配置默认模型或此角色模型")
             raw = await self.models.generate(mid, role, data, settings, budget)
         budget.check()
-        return validate_result(raw, role, data["prediction"], data.get("facts", []))
+        return validate_result(raw, role, data["prediction"], data.get("facts", []),
+                               [r["citation_id"] for r in data.get("source_material", {}).get("results", [])] if role == "main" else [])
 
     async def peer(self, role, data, inline=None):
         if role not in ("prediction", "risk", "advice"):
@@ -383,8 +384,20 @@ class Orchestrator:
         data = {"prediction": p, "facts": facts}
         main_data = {**data, "goal": goal, "user_constraints": request.get("constraints", []),
                      "report_format": request.get("report_format")}
-        if knowledge_result and request.get("knowledge_to_model"):
-            main_data["source_material"] = {"trust": "untrusted_source_material", "retrieval": knowledge_result}
+        evidence = []
+        if knowledge_result:
+            # Keep whole excerpts: never silently truncate financial statements.
+            for item in knowledge_result["results"]:
+                current = self.knowledge.citation(owner, item["citation_id"])
+                if current["document"]["status"] != "ready" or current["document"]["hash"] != item["source_hash"] or current["document"]["metadata"] != {k: v for k, v in item["metadata"].items() if k in current["document"]["metadata"]}:
+                    continue
+                entry = {k: item[k] for k in ("citation_id", "document_id", "source_hash", "filename", "location", "text", "metadata", "warnings", "trust")}
+                if len(json.dumps(evidence + [entry], ensure_ascii=False).encode()) <= min(4000, max(0, 8000 - len(json.dumps(main_data, ensure_ascii=False).encode()))):
+                    evidence.append(entry)
+        if knowledge_result and len(evidence) < len(knowledge_result["results"]):
+            notes.append("KNOWLEDGE_BUDGET：部分资料未进入模型证据包；请在知识检索中查看完整来源。")
+        if evidence and request.get("knowledge_to_model"):
+            main_data["source_material"] = {"trust": "untrusted_source_material", "as_of": knowledge_result["as_of"], "results": evidence}
         try:
             with progress.step("main", "主 Agent 分析预测、风险与建议"):
                 main = await self.role("main", main_data, settings, budget)
@@ -487,6 +500,10 @@ class Orchestrator:
             preference = next((item["report_format"] for item in budget.recalled if item.get("report_format")), None)
             analysis["report_format"] = request.get("report_format") or preference or "standard"
             analysis["user_constraints"] = request.get("constraints", [])
+        if evidence:
+            analysis["knowledge_evidence"] = {"as_of": knowledge_result["as_of"], "results": evidence,
+                                              "used_ids": sorted({eid for result in results for eid in result["evidence_ids"]
+                                                                  if eid in {e["citation_id"] for e in evidence}})}
         analysis["status"] = "degraded" if notes else "ok"
         analysis["mode"] = "orchestrated_bounded"
         analysis["analysis_id"] = identity({k: v for k, v in analysis.items() if k != "analysis_id"})

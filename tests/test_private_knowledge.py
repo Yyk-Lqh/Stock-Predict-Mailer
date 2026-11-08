@@ -431,6 +431,38 @@ class HTTPTests(unittest.TestCase):
 
 
 class AnalysisTests(unittest.IsolatedAsyncioTestCase):
+    async def test_large_retrieval_is_budgeted_without_truncating_sources(self):
+        f = Fixture()
+        self.addCleanup(f.close)
+        for i in range(8):
+            f.ready(f'large-{i}.txt', ('风险' + str(i) + '甲' * 1490).encode())
+        model = f.store.put('models', {'name': 'Mock'})
+        settings = f.store.settings()
+        settings['default_model_id'] = model['id']
+        f.store.save_settings(settings)
+        engine = Orchestrator(f.store)
+        cid = engine.memory.new(f.owner)['id']
+        request = engine.prepare({'prediction': MockPredictionAdapter().fetch(), 'conversation_id': cid,
+                                  'knowledge_query': '风险', 'knowledge_to_model': True, 'complexity': 'simple'}, f.owner)
+        original = engine.models.generate
+        calls = []
+        async def capture(pid, role, data, settings, budget):
+            calls.append(data)
+            self.assertLess(len(json.dumps(data, ensure_ascii=False).encode()), 8000)
+            return await original(pid, role, data, settings, budget)
+        with patch.object(engine.models, 'generate', side_effect=capture):
+            task = await engine.execute('large-knowledge-test', request)
+        self.assertEqual(task['status']['state'], 'completed')
+        output = task['artifacts'][0]['parts'][0]['data']
+        self.assertGreater(len(json.dumps(output['knowledge'], ensure_ascii=False).encode()), 16000)
+        self.assertTrue(any('KNOWLEDGE_BUDGET' in note for note in output['analysis']['limitations']))
+        self.assertFalse(any('INPUT_TOO_LARGE' in note or 'CONTEXT_LIMIT' in note for note in output['analysis']['limitations']))
+        self.assertTrue(calls)
+        originals = {r['citation_id']: r['text'] for r in output['knowledge']['results']}
+        for data in calls:
+            for item in data.get('source_material', {}).get('results', []):
+                self.assertEqual(item['text'], originals[item['citation_id']])
+
     async def test_opt_in_knowledge_context_and_private_task(self):
         f = Fixture()
         self.addCleanup(f.close)
@@ -447,12 +479,25 @@ class AnalysisTests(unittest.IsolatedAsyncioTestCase):
         original = engine.models.generate
         async def capture(pid, role, data, settings, budget):
             calls.append(data)
-            return await original(pid, role, data, settings, budget)
+            raw = await original(pid, role, data, settings, budget)
+            if data.get('source_material', {}).get('results'):
+                raw['evidence_ids'].append(data['source_material']['results'][0]['citation_id'])
+            return raw
         with patch.object(engine.models, 'generate', side_effect=capture):
             result = await engine.execute('knowledge-test', request)
         self.assertEqual(result['status']['state'], 'completed')
         output = result['artifacts'][0]['parts'][0]['data']
         self.assertTrue(output['knowledge']['results'])
         self.assertEqual(calls[0]['source_material']['trust'], 'untrusted_source_material')
+        from stock_predict_mailer.agent_service.reporting import render
+        evidence = output['analysis']['knowledge_evidence']
+        self.assertTrue(evidence['results'])
+        self.assertTrue(evidence['used_ids'])
+        for cid in (e['citation_id'] for e in evidence['results']):
+            text, html = render(output['analysis'])
+            self.assertIn(cid, text)
+            self.assertIn(cid, html)
+        self.assertLessEqual(len(json.dumps(calls[0]['source_material']['results'], ensure_ascii=False).encode()), 4000)
+
         with self.assertRaises(ServiceError):
             engine.prepare({'prediction': MockPredictionAdapter().fetch(), 'knowledge_query': '甲公司'}, f.owner)

@@ -64,6 +64,14 @@ class ConfigurationTests(unittest.TestCase):
         with patch.object(adapter, 'generate', new=AsyncMock(side_effect=generate)):
             asyncio.run(adapter.test(self.f.model['id'], self.f.settings))
 
+    def test_knowledge_reference_requires_explicit_allowlist(self):
+        from stock_predict_mailer.control.orchestrator import validate_result
+        p = MockPredictionAdapter().fetch()
+        raw = {'conclusion_codes': ['VERIFY'], 'evidence_ids': ['a' * 32 + ':0'],
+               'uncertainty_codes': [], 'delegate_roles': []}
+        with self.assertRaises(ServiceError):
+            validate_result(raw, 'main', p, [])
+        self.assertEqual(validate_result(raw, 'main', p, [], [raw['evidence_ids'][0]])['evidence_ids'], raw['evidence_ids'])
 
     def test_encrypted_secrets_never_read_back(self):
         s, m = self.f.store, self.f.model

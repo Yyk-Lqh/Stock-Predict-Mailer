@@ -59,6 +59,47 @@ class KnowledgeTests(unittest.TestCase):
         self.addCleanup(self.f.close)
         self.kb, self.owner = self.f.kb, self.f.owner
 
+    def test_duplicate_json_keys_rejected_at_any_depth(self):
+        for raw in (b'{"revenue":12,"revenue":13}', b'{"x":{"a":1,"a":2}}'):
+            with self.assertRaises(ServiceError) as caught:
+                parse('a.json', raw)
+            self.assertEqual(caught.exception.code, 'REVIEW_REQUIRED')
+
+    def test_duplicate_docx_headers_rejected(self):
+        raw = io.BytesIO()
+        xml = '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl>'
+        for cells in (('收入', '收入'), ('12', '13')):
+            xml += '<w:tr>' + ''.join('<w:tc><w:p><w:r><w:t>' + v + '</w:t></w:r></w:p></w:tc>' for v in cells) + '</w:tr>'
+        xml += '</w:tbl></w:body></w:document>'
+        with zipfile.ZipFile(raw, 'w') as archive:
+            archive.writestr('word/document.xml', xml)
+        with self.assertRaises(ServiceError):
+            parse('a.docx', raw.getvalue())
+
+    def test_amount_is_not_stock_identifier(self):
+        self.f.ready('amount.csv', '公司,营业收入(元)\n甲公司,600000\n'.encode())
+        self.assertEqual(self.kb.search(self.owner, '甲公司', stock_code='600000.SH')['results'], [])
+        self.f.ready('stock.csv', '公司,股票代码\n乙公司,600000\n'.encode())
+        self.assertTrue(self.kb.search(self.owner, '乙公司', stock_code='600000.SH')['results'])
+
+    def test_locked_original_keeps_retryable_record(self):
+        did = self.f.ready('locked.txt', b'locked original')
+        with patch.object(Path, 'unlink', side_effect=PermissionError('locked')):
+            with self.assertRaises((ServiceError, PermissionError)):
+                self.kb.delete(self.owner, did)
+        self.assertEqual(self.kb.document(self.owner, did)['id'], did)
+        self.assertEqual(self.kb.delete(self.owner, did)['status'], 'deleted')
+
+    def test_as_of_replays_published_version(self):
+        old = self.f.ready('history.txt', b'company revenue 12', META)
+        logical = self.kb.document(self.owner, old)['logical']
+        new = self.f.ready('history.txt', b'company revenue 13',
+                           {'document_date': '2026-11-01', 'available_date': '2026-11-01'}, logical)
+        found = self.kb.search(self.owner, 'revenue', as_of='2026-10-15')['results']
+        self.assertEqual([r['document_id'] for r in found], [old])
+        self.kb.delete(self.owner, new)
+        self.assertEqual(self.kb.search(self.owner, 'revenue', as_of='2026-10-15')['results'], [])
+
     def test_text_dedup_provenance_and_encrypted_original(self):
         raw = '# 收入\n营业收入 12 亿元\n营业收入 12 亿元\n'.encode()
         did = self.f.ready('研究.md', raw)

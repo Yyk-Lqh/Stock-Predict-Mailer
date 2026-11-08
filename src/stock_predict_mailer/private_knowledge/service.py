@@ -39,9 +39,10 @@ def day(value):
         raise ServiceError("INVALID_INPUT", "日期须为 YYYY-MM-DD") from None
 
 
-def stock_codes(text):
+def stock_codes(text, *, explicit=False):
     codes = set()
-    for code, exchange in re.findall(r"(?<!\d)(\d{6})(?:[. ]?(SH|SZ|BJ))?(?!\d)", text.upper()):
+    pattern = r"(?<![A-Z0-9])(\d{6})(?:[. ]?(SH|SZ|BJ))?(?![A-Z0-9])" if explicit else r"(?<![A-Z0-9])(\d{6})[. ]?(SH|SZ|BJ)(?![A-Z0-9])"
+    for code, exchange in re.findall(pattern, text.upper()):
         exchange = exchange or ("SH" if code.startswith("6") else "BJ" if code.startswith(("4", "8", "9")) else "SZ")
         codes.add(f"{code}.{exchange}")
     return sorted(codes)
@@ -231,9 +232,9 @@ class Knowledge:
         for key in ("companies", "industries", "topics", "stock_codes"):
             if not isinstance(value[key], list) or len(value[key]) > 40 or any(not isinstance(v, str) or not 1 <= len(v) <= 100 for v in value[key]):
                 raise ServiceError("INVALID_INPUT", "元数据标签无效")
-        if any(not stock_codes(code) for code in value["stock_codes"]):
+        if any(not stock_codes(code, explicit=True) for code in value["stock_codes"]):
             raise ServiceError("INVALID_INPUT", "股票代码标签无法规范")
-        value["stock_codes"] = stock_codes(" ".join(value["stock_codes"]))
+        value["stock_codes"] = stock_codes(" ".join(value["stock_codes"]), explicit=True)
         return value
 
     def upload(self, owner, filename, raw, metadata=None, logical=None):
@@ -386,7 +387,10 @@ class Knowledge:
                     raise ServiceError("INDEX_CHANGED", "索引已切换，请重试当前步骤", True)
                 con.execute("UPDATE documents SET active=0 WHERE owner=? AND logical=?", (owner, row["logical"]))
                 for ordinal, chunk in enumerate(draft["chunks"]):
-                    chunk["stock_codes"] = stock_codes(chunk["text"])
+                    chunk["stock_codes"] = sorted(set(stock_codes(chunk["text"]) + [
+                        code for key, value in chunk["fields"].items()
+                        if key.strip().casefold() in ("股票代码", "证券代码", "stock_code", "ticker")
+                        for code in stock_codes(str(value), explicit=True)]))
                     chunk["entities"] = {k: chunk["fields"][k] for k in ("company", "industry", "subject", "object", "event", "person") if k in chunk["fields"]}
                     cid = con.execute("INSERT INTO chunks(doc,owner,ordinal,body) VALUES (?,?,?,?)",
                                       (did, owner, ordinal, packed(chunk))).lastrowid
@@ -501,6 +505,14 @@ class Knowledge:
     def delete(self, owner, did):
         self.ensure(owner)
         with self.db() as con:
+            self._row(con, owner, did)
+            con.execute("UPDATE documents SET active=0,status='deleting' WHERE owner=? AND id=?", (owner, did))
+            con.execute("UPDATE owners SET revision=revision+1 WHERE owner=?", (owner,))
+        try:
+            (self.root / owner / (did + ".bin")).unlink(missing_ok=True)
+        except OSError:
+            raise ServiceError("DELETE_PENDING", "原件暂时无法删除，请重试删除", True) from None
+        with self.db() as con:
             con.execute("BEGIN IMMEDIATE")
             self._row(con, owner, did)
             ids = [r[0] for r in con.execute("SELECT id FROM chunks WHERE owner=? AND doc=?", (owner, did))]
@@ -512,7 +524,6 @@ class Knowledge:
             con.execute("DELETE FROM chunks WHERE owner=? AND doc=?", (owner, did))
             con.execute("DELETE FROM documents WHERE owner=? AND id=?", (owner, did))
             con.execute("UPDATE owners SET revision=revision+1 WHERE owner=?", (owner,))
-        (self.root / owner / (did + ".bin")).unlink(missing_ok=True)
         # Deletion does not reactivate older versions.
         return {"status": "deleted", "id": did}
 
@@ -522,14 +533,25 @@ class Knowledge:
             raise ServiceError("INVALID_INPUT", "查询须非空且 limit 为 1–20")
         as_of = day(as_of or utcnow().date().isoformat())
         start_date = day(start_date) if start_date else None
-        if stock_code is not None and (not isinstance(stock_code, str) or not stock_codes(stock_code)):
+        if stock_code is not None and (not isinstance(stock_code, str) or not stock_codes(stock_code, explicit=True)):
             raise ServiceError("INVALID_INPUT", "股票代码无效")
         if entity is not None and (not isinstance(entity, str) or len(entity) > 200):
             raise ServiceError("INVALID_INPUT", "实体参数无效")
         with self.db() as con:
             con.execute("BEGIN")
-            rows = con.execute("SELECT c.id,c.doc,c.ordinal,c.body,d.filename,d.metadata,d.hash FROM chunks c JOIN documents d ON d.id=c.doc WHERE c.owner=? AND d.owner=? AND d.active=1", (owner, owner)).fetchall()
-            relations = [dict(r) for r in con.execute("SELECT r.* FROM relations r JOIN documents d ON r.doc=d.id WHERE r.owner=? AND d.owner=? AND d.active=1", (owner, owner))]
+            versions = con.execute("SELECT id,logical,metadata,uploaded FROM documents WHERE owner=? AND status='ready' AND logical IN (SELECT logical FROM documents WHERE owner=? AND active=1)", (owner, owner)).fetchall()
+            selected = {}
+            for version in versions:
+                meta = json.loads(version["metadata"])
+                if meta["available_date"] > as_of or (meta["document_date"] and meta["document_date"] > as_of):
+                    continue
+                key = (meta["available_date"], version["uploaded"], version["id"])
+                if version["logical"] not in selected or key > selected[version["logical"]][0]:
+                    selected[version["logical"]] = (key, version["id"])
+            selected_ids = {v[1] for v in selected.values()}
+            rows = con.execute("SELECT c.id,c.doc,c.ordinal,c.body,d.filename,d.metadata,d.hash FROM chunks c JOIN documents d ON d.id=c.doc WHERE c.owner=? AND d.owner=?", (owner, owner)).fetchall()
+            rows = [r for r in rows if r["doc"] in selected_ids]
+            relations = [dict(r) for r in con.execute("SELECT r.* FROM relations r JOIN documents d ON r.doc=d.id WHERE r.owner=? AND d.owner=?", (owner, owner)) if r["doc"] in selected_ids]
             active = con.execute("SELECT * FROM generations WHERE owner=? AND status='active'", (owner,)).fetchone()
             vecs = {r[0]: json.loads(r[1]) for r in con.execute("SELECT chunk,vector FROM vectors WHERE generation=?", (active["id"],))} if active else {}
             eligible = []
@@ -542,7 +564,7 @@ class Knowledge:
                 chunk = json.loads(row["body"])
                 if chunk.get("data_date") and (chunk["data_date"] > as_of or (start_date and chunk["data_date"] < start_date)):
                     continue
-                if stock_code and not set(stock_codes(stock_code)) & set(meta["stock_codes"] + chunk.get("stock_codes", [])):
+                if stock_code and not set(stock_codes(stock_code, explicit=True)) & set(meta["stock_codes"] + chunk.get("stock_codes", [])):
                     continue
                 eligible.append({**dict(row), **chunk, "metadata": meta})
             query_terms = terms(query)[:80]

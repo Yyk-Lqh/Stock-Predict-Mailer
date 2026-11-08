@@ -307,3 +307,10 @@ function createMockTask() {
 先读本文，再阅读 [运行手册](control-console.md) 完成一次 Mock 操作；联调时查 [配置/MCP/A2A接口](control-api.md) 和 [预测/事实/分析契约](interfaces.md)。配置样例位于 [control-model.json](../examples/control-model.json)、[control-mcp.json](../examples/control-mcp.json)，已有实现状态见 [开发计划](control-plane-plan.md) 与 [验收记录](control-validation.md)。
 
 仍需团队后续提供：真实预测和事实样例、拟接入MCP工具的具体参数结构、真实服务的模型能力/价格声明，以及用于真实到达验收的测试邮箱与授权。页面开发可以先用现有Mock独立推进，无需等待这些真实服务。
+
+
+## 2026-11-08 后端联调更新
+
+任务列表、按任务授权的HTML报告/analysis JSON、当前邮件状态与file/smtp人工确认、会话历史与长期记忆分页、会话删除现可联调。准确响应和游标见 [control-api修复补充](control-api.md#2026-11-08-修复后的接口补充)，本节覆盖前文对应“无接口”说明。不要使用本地report_path下载。会话消息完整导出和owner访问密钥撤销已提供；统一邮件队列与上游配置测试接口仍未实现。真实服务和收件验证仍阻塞完整验收。
+
+续轮补充：待写记忆使用 `/api/memory/pending?limit=100` 与 next_before 继续翻页，无参数仍是旧数组；读取不消费队列。详见control-api续轮契约。

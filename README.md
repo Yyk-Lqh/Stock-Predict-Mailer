@@ -15,6 +15,8 @@ uv run stock-predict-mailer --config config/agent-example.toml run --send
 
 模型/MCP/A2A 配置控制台已提供。设置服务端 `STOCK_PREDICT_MAILER_MASTER_KEY` 后运行 `uv run stock-predict-mailer console --port 8767`，打开本机页面管理模型、加密凭据、工具授权、角色温度和分析任务。启动及完整 Mock 验收见 [控制台手册](docs/control-console.md)，后端接口见 [配置与协议 API](docs/control-api.md)。默认 CLI `run` 继续独立可用。
 
+控制台现采用会话式工作台：左侧会话导航、中间分析与追问、右侧报告与证据，并提供知识资料上传、清洗审阅、检索及索引配置。使用与前端构建说明见 [会话式工作台](docs/console-workbench.md)。
+
 目录结构：
 
 ```text

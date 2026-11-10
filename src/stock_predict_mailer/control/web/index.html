@@ -8,17 +8,22 @@
 </head>
 <body>
 
-<header class="topbar">
+<header class="topbar" id="sidebar">
   <a class="wordmark" href="#"><span class="wordmark-name">Stock-Predict-Mailer</span><i>预测分析控制台</i></a>
   <nav class="nav" aria-label="主导航">
-    <button type="button" data-view="overview" class="active">概览</button>
-    <button type="button" data-view="analysis">分析</button>
-    <button type="button" data-view="records">记录</button>
+    <button type="button" id="new-analysis" class="new-analysis">＋ 新建分析</button>
+    <button type="button" data-view="analysis" class="active">分析工作台</button>
+    <button type="button" data-view="knowledge">知识库</button>
+    <button type="button" data-view="records">任务记录</button>
+    <button type="button" data-view="overview">使用引导</button>
     <button type="button" data-view="settings">设置</button>
-    <button type="button" data-view="memory">记忆</button>
+    <button type="button" data-view="memory">记忆与访问</button>
   </nav>
-  <span class="meta">本机工作区 · 不支持公网访问</span>
+  <div class="sidebar-history"><div class="section-head"><span class="eyebrow">分析会话</span><button id="sessions-refresh" type="button" class="btn tiny" aria-label="刷新会话">刷新</button></div><div id="sidebar-sessions"></div><button id="sessions-more" type="button" class="btn tiny" hidden>更早的会话</button></div>
+  <span class="meta">本机工作区 <span id="workspace-health">正在连接</span></span>
 </header>
+
+<div class="workspace-bar"><button id="sidebar-toggle" type="button" class="btn quiet" aria-controls="sidebar" aria-expanded="false">☰ <span>导航</span></button><span id="workspace-title">新建分析</span><span class="workspace-label">预测分析工作台</span><div class="theme-switch" role="group" aria-label="界面主题"><button type="button" data-theme-choice="light" aria-pressed="false">白天</button><button type="button" data-theme-choice="dark" aria-pressed="true">晚上</button></div></div>
 
 <main class="wrap">
   <div id="notice" role="status" aria-live="polite" hidden></div>
@@ -82,9 +87,14 @@
     <div id="tasks" class="panel">
       <div class="page-head">
         <p class="eyebrow">分析</p>
-        <h1>填一份预测，读一份报告。</h1>
-        <p class="lede">必填项只有标的、方向、周期和有效期。事实可以不填，但填了就必须写来源。</p>
+        <h1 id="analysis-title">开始一次分析</h1>
+        <p class="lede">提供上游预测，核对依据，再继续追问。</p>
       </div>
+
+      <div id="workbench-intro" class="workbench-intro"><span class="eyebrow">从一份可核对的报告开始</span><p>填写预测，或使用示例走完一次分析。报告、执行过程和后续问题会留在同一会话里。</p><button id="workbench-sample" class="btn" type="button">使用示例跑通</button></div>
+      <section id="conversation-thread" class="conversation-thread" aria-label="会话历史"><div class="section-head"><h2>分析会话</h2><button id="turns-more" class="btn tiny" type="button" hidden>读取更早的轮次</button></div><div id="conversation-turns"></div></section>
+      <div id="workbench-runtime" class="workbench-runtime"></div>
+      <div class="inspector-launch"><button id="report-open" type="button" class="btn" disabled>查看报告与证据</button><span id="result-summary" class="hint">提交后可查看执行进度与报告</span></div>
 
       <form id="task-form" novalidate>
         <div id="draft-note" class="draft-note" hidden>
@@ -521,7 +531,7 @@
       <div class="page-head">
         <p class="eyebrow">记忆</p>
         <h1>接着上一轮说下去。</h1>
-        <p class="lede">用一个只有你知道的访问密钥恢复自己的会话与长期记忆。密钥只存在当前标签页，关掉即失效。</p>
+        <p class="lede">用访问密钥恢复自己的会话、长期记忆与知识资料。页面仅在当前标签页保留密钥，关闭后需要重新输入原密钥。</p>
       </div>
 
       <div class="card">
@@ -545,6 +555,11 @@
     </div>
   </section>
 </main>
+
+<aside id="report-inspector" class="report-inspector" aria-label="报告与证据" hidden>
+  <div class="inspector-head"><div><span class="eyebrow">分析产物</span><h2>报告与证据</h2></div><button id="report-expand" type="button" class="btn tiny" aria-pressed="false">展开</button><button id="report-close" type="button" class="btn tiny" aria-label="关闭报告面板">关闭</button></div>
+  <div id="inspector-actions" class="actions"></div><div id="inspector-content"></div>
+</aside>
 
 <script src="/app.js" defer></script>
 <script src="/memory.js" defer></script>

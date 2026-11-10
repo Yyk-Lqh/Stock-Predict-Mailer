@@ -1,6 +1,7 @@
 /* Stock-Predict-Mailer · 预测分析控制台 */
 const $ = id => document.getElementById(id);
 let csrf = '', profiles = [], servers = [], endpoints = [], settings = null, currentTask = null;
+let taskControlsDirty = false;
 let memoryKey = sessionStorage.getItem('spm_memory_key') || '';
 const roles = {main: '主 Agent', prediction: '预测分析', risk: '风险分析', advice: '建议生成'};
 const TASK_STATE = {submitted: '已提交', working: '运行中', completed: '已完成', failed: '失败', canceled: '已取消'};
@@ -220,6 +221,7 @@ function showView(name) {
   window.scrollTo({top: 0});
   if (name === 'overview') renderSteps();
   if (name === 'records' && !recordLoaded) loadRecords();
+  window.Workbench?.view(name);
 }
 function showPanel(id) {
   document.querySelectorAll('.view:not([hidden]) .panel').forEach(el => { el.hidden = el.id !== id; });
@@ -244,6 +246,7 @@ async function refresh() {
   renderVitals();
   renderSteps();
   loadOverviewTask();
+  if ($('workspace-health')) $('workspace-health').textContent = settings.default_model_id ? '分析模型已配置' : '尚未选择分析模型';
 }
 
 /* ---------- models ---------- */
@@ -880,8 +883,8 @@ function sample() {
     }
   };
   const factsSample = [
-    {id: 'F-01', name: '收盘价', value: 10.58, unit: 'CNY', source: 'Mock 行情快照', observed_at: at(-1), available_at: at(-1)},
-    {id: 'F-02', name: '成交量', value: 32000, unit: '手', source: 'Mock 行情快照', observed_at: at(-1), available_at: at(-1)}
+    {id: 'F-01', name: '示例价格', value: 10.58, unit: 'CNY', source: 'Mock 行情快照', observed_at: generated.toISOString(), available_at: generated.toISOString()},
+    {id: 'F-02', name: '示例成交量', value: 32000, unit: '手', source: 'Mock 行情快照', observed_at: generated.toISOString(), available_at: generated.toISOString()}
   ];
   return {
     prediction,
@@ -962,7 +965,7 @@ function syncForm(quiet = false) {
   if (!quiet) notice('已按 JSON 回填表单。');
 }
 document.querySelectorAll('#task-form input, #task-form select').forEach(el => {
-  if (el.closest('#conversation-fields') || el.id === 'task-data') return;
+  if (!el.id.startsWith('p-') && el.name !== 'p-dir') return;
   el.addEventListener('change', syncJSON);
   el.addEventListener('input', event => {
     if (event.target.type === 'number' || event.target.type === 'text' || event.target.type === 'email') syncJSON();
@@ -974,12 +977,14 @@ $('load-mock').onclick = () => { applySample(); notice('已填入示例预测与
 
 /* ---------- draft：没提交的输入不该因为刷新或切页丢掉 ---------- */
 const DRAFT_KEY = 'stock_predict_mailer.console.draft.v1';
+const draftKey = () => DRAFT_KEY + ($('conversation-id').value ? '.' + $('conversation-id').value : '');
 const DRAFT_KEY_LEGACY = 'spm.console.draft.v1';  // 旧版本写入的键，只读一次后迁走
 let draftTimer = null;
 function draftRead() {
   try {
-    const fresh = localStorage.getItem(DRAFT_KEY);
+    const fresh = localStorage.getItem(draftKey());
     if (fresh) return JSON.parse(fresh);
+    if ($('conversation-id').value) return null;
     const legacy = localStorage.getItem(DRAFT_KEY_LEGACY);
     if (!legacy) return null;
     localStorage.setItem(DRAFT_KEY, legacy);
@@ -989,8 +994,8 @@ function draftRead() {
 }
 function draftWrite(value) {
   try {
-    if (value) localStorage.setItem(DRAFT_KEY, JSON.stringify(value));
-    else localStorage.removeItem(DRAFT_KEY);
+    if (value) localStorage.setItem(draftKey(), JSON.stringify(value));
+    else localStorage.removeItem(draftKey());
   } catch (error) { /* 隐私模式写不进去：静默降级，不影响提交 */ }
 }
 function draftSnapshot() {
@@ -1001,6 +1006,10 @@ function draftSnapshot() {
     complexity: $('task-complexity').value,
     goal: $('task-goal').value,
     effort: $('task-effort').value,
+    message: $('conversation-message').value,
+    constraints: $('conversation-constraints').value,
+    format: $('conversation-format').value,
+    controls_dirty: taskControlsDirty,
     saved_at: new Date().toISOString()
   };
 }
@@ -1018,19 +1027,23 @@ function draftRestore() {
   if (!stored || !stored.data) return false;
   let payload;
   try { payload = JSON.parse(stored.data); } catch (error) { draftWrite(null); return false; }
-  if (!payload || !payload.prediction) { draftWrite(null); return false; }
+  if (!payload || (!payload.prediction && !$('conversation-id').value)) { draftWrite(null); return false; }
   $('task-data').value = stored.data;
-  syncForm(true);
+  if (payload.prediction) syncForm(true);
+  $('conversation-message').value = stored.message || '';
+  $('conversation-constraints').value = stored.constraints || '';
+  $('conversation-format').value = stored.format || '';
+  taskControlsDirty = Boolean(stored.controls_dirty);
   $('task-notify').checked = Boolean(stored.notify);
   $('task-recipient').value = stored.recipient || '';
   if (stored.complexity) $('task-complexity').value = stored.complexity;
   if (stored.goal) $('task-goal').value = stored.goal;
   if (stored.effort) $('task-effort').value = stored.effort;
   // 草稿放久了有效期会过期，直接提交必然被校验拒绝，所以顺延到两天后
-  const until = new Date(payload.prediction.valid_until || 0);
+  const until = new Date(payload.prediction?.valid_until || NaN);
   const expired = !isNaN(until.getTime()) && until <= new Date();
-  if (expired) { resetTiming(); syncJSON(); }
-  draftBanner(`已恢复 ${stored.saved_at ? fmt(stored.saved_at) : '上次'} 的输入${expired ? '；原有效期已过，已顺延到两天后' : ''}。`);
+  if (expired) draftBanner('草稿中的预测已过期，请更新预测与有效期后提交。');
+  draftBanner(`已恢复 ${stored.saved_at ? fmt(stored.saved_at) : '上次'} 的输入${expired ? '；预测已过期，请核对并更新有效期' : ''}。`);
   return true;
 }
 function draftClear() {
@@ -1239,9 +1252,11 @@ function renderReport(task) {
       const a = document.createElement('a');
       a.className = 'ref';
       a.textContent = ref.replace(/^fact:/, '');
-      a.href = 'javascript:void 0';
-      a.onclick = () => {
-        const target = host.querySelector(`.fact-list li[data-id="${ref.replace(/^fact:/, '')}"]`);
+      a.href = '#';
+      a.onclick = event => {
+        event.preventDefault();
+        const target = ref.startsWith('prediction:') ? pred
+          : [...host.querySelectorAll('.fact-list li')].find(item => item.dataset.id === ref.replace(/^fact:/, ''));
         if (target) {
           target.scrollIntoView({block: 'center'});
           target.style.textDecoration = 'underline';
@@ -1347,6 +1362,8 @@ function showTask(task) {
   const finished = ['completed', 'failed', 'canceled'].includes(task.status.state);
   $('task-cancel').hidden = finished;
   renderRunviz(task.status.state);
+  window.Workbench?.task(task);
+  window.PonyOffice?.sync(task, null);
   return finished;
 }
 
@@ -1361,6 +1378,7 @@ const runviz = {started: 0, lastAt: 0, watching: false, events: 0, order: [], st
 const PULSE_SLOTS = 60;
 
 function runvizReset(watching = false) {
+  window.PonyOffice?.reset(currentTask, !watching);
   runviz.started = 0;
   runviz.lastAt = 0;
   runviz.watching = watching;
@@ -1529,10 +1547,12 @@ async function poll(id) {
     const progress = await api(`tasks/${id}/events?after=${eventCursor}`);
     if (currentTask !== id) return;
     for (const event of progress.events) {
+      if (event.seq <= eventCursor) continue;
       showEvent(event);
       eventCursor = event.seq;
     }
     runvizSample();
+    window.PonyOffice?.sync(task, progress.events);
     if (!showTask(task) || progress.events.length === 100) setTimeout(() => poll(id), 700);
     else {
       overviewTask = task;
@@ -1540,6 +1560,10 @@ async function poll(id) {
       if (memoryKey) refreshMemory().catch(error => notice(error.message, true));
     }
   } catch (error) {
+    if (currentTask === id) {
+      window.PonyOffice?.disconnected();
+      setTimeout(() => { if (currentTask === id) poll(id); }, 2500);
+    }
     notice(error.message, true);
   }
 }
@@ -1548,10 +1572,11 @@ $('task-form').onsubmit = async event => {
   const button = event.currentTarget.querySelector('[type=submit]');
   button.disabled = true;
   try {
+    await window.Workbench?.prepare();
     const input = JSON.parse($('task-data').value);
     const conversationId = $('conversation-id').value;
     const controls = {complexity: $('task-complexity').value, goal: $('task-goal').value, reasoning_effort: $('task-effort').value || null};
-    const request = conversationId && !input.prediction ? {...input} : {...input, ...controls};
+    const request = conversationId && !input.prediction && !taskControlsDirty ? {...input} : {...input, ...controls};
     if (conversationId) {
       request.conversation_id = conversationId;
       request.message = $('conversation-message').value;
@@ -1563,8 +1588,11 @@ $('task-form').onsubmit = async event => {
       if ($('remember-text').value.trim()) remember.push({kind: 'user_statement', tags: ['用户明确要求'], content: $('remember-text').value});
       if (remember.length) request.remember = remember;
     }
+    if (window.KnowledgeUI) Object.assign(request, window.KnowledgeUI.selection());
     const task = await api('tasks', 'POST', {...request, notify: $('task-notify').checked, recipient: $('task-recipient').value || null});
+    if (conversationId !== $('conversation-id').value) { notice('任务已提交，可从对应会话查看。'); return; }
     currentTask = task.id;
+    window.Workbench?.submitted(task);
     recordLoaded = false;
     // 已提交的输入留作下次的起点，但不再提示「未提交」
     clearTimeout(draftTimer);
@@ -1614,6 +1642,7 @@ function taskBrief(task) {
     horizon: meta.horizon || p.horizon || null,
     notify: meta.notify ?? Boolean(data?.mail),
     recipient: meta.recipient || '',
+    conversation_id: meta.conversation_id || '',
     mail: data?.mail || null
   };
 }
@@ -1750,6 +1779,7 @@ function openRecord(task) {
   showView('analysis');
   runvizReset();
   showTask(task);
+  window.Workbench?.record(task);
   poll(task.id);
   setTimeout(() => $('task-status').scrollIntoView({block: 'start', behavior: 'smooth'}), 100);
 }
@@ -1774,12 +1804,13 @@ $('start-analysis').onclick = () => {
   }
 };
 async function ensureMockModel() {
-  if (!profiles.length) {
-    await api('models', 'POST', {name: 'Mock 分析模型', provider: 'mock'});
+  let model = profiles.find(item => item.provider === 'mock' && item.enabled);
+  if (!model) {
+    model = await api('models', 'POST', {name: 'Mock 分析模型', provider: 'mock'});
     await refresh();
   }
-  if (!settings.default_model_id && profiles.length) {
-    await api('settings', 'PUT', {...settings, default_model_id: profiles[0].id});
+  if (settings.default_model_id !== model.id) {
+    await api('settings', 'PUT', {...settings, default_model_id: model.id});
     await refresh();
   }
 }
@@ -1790,7 +1821,7 @@ $('try-sample').onclick = async () => {
     await ensureMockModel();
     applySample();
     showView('analysis');
-    notice('已准备好示例预测、两条事实和 Mock 模型，点「提交分析」即可。');
+    notice('已将默认分析模型设为 Mock，并准备好示例预测与事实。点「提交分析」即可。');
   } catch (error) {
     notice(error.message, true);
   } finally {
@@ -1801,6 +1832,7 @@ $('try-sample').onclick = async () => {
 /* ---------- boot ---------- */
 (async () => {
   try {
+    const initial = location.hash.replace('#', '');
     csrf = (await api('session')).csrf_token;
     await refresh();
     resetTiming();
@@ -1808,8 +1840,8 @@ $('try-sample').onclick = async () => {
     syncJSON();
     draftRestore();
     renderSteps();
-    const initial = location.hash.replace('#', '');
-    const view = ['overview', 'analysis', 'records', 'settings', 'memory'].includes(initial) ? initial : 'overview';
+    await window.Workbench?.init();
+    const view = ['overview', 'analysis', 'records', 'settings', 'memory', 'knowledge'].includes(initial) ? initial : 'analysis';
     showView(view);
     const panel = {models: 'models', mcp: 'mcp', collab: 'settings'}[initial];
     if (panel) {

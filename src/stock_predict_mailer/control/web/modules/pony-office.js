@@ -55,7 +55,7 @@ window.PonyOffice = (() => {
   }
   const portal = document.createElement('div'); portal.className = 'sidebar-office-door';
   portal.innerHTML = '<span class="sidebar-door-art" aria-hidden="true"><i></i></span><span>协作通道<small>子 Agent 由此进出</small></span>';
-  document.querySelector('.topbar .meta').before(portal);
+  office.querySelector('.office-heading').append(portal);
   const progress = document.createElement('section'); progress.id = 'office-progress'; progress.className = 'office-progress';
   progress.innerHTML = '<h3>工作进度</h3><p id="office-task-state" role="status">等待分析任务</p><p id="office-connection" class="error-text" hidden>连接中断，正在恢复；暂不显示新的工作进展。</p><div id="office-roles"></div>';
   $('inspector-content').prepend(progress);

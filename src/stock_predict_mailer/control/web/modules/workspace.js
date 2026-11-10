@@ -237,6 +237,7 @@ window.Workbench = (() => {
     rememberPosition();
   }
   function view(name) {
+    $('session-menu').open = false;
     window.PonyOffice?.view(name);
     document.body.dataset.view = name;
     document.body.classList.remove('sidebar-open');
@@ -368,6 +369,8 @@ window.Workbench = (() => {
   $('conversation-id').onchange = safe(() => $('conversation-id').value ? select($('conversation-id').value, {save: false}) : newAnalysis());
   for (const id of ['task-complexity', 'task-goal', 'task-effort']) $(id).addEventListener('change', () => { taskControlsDirty = true; });
   document.addEventListener('keydown', event => { if (event.key === 'Escape') { inspector(false); document.body.classList.add('report-dismissed'); document.body.classList.remove('sidebar-open'); $('sidebar-toggle').setAttribute('aria-expanded', 'false'); } });
+  document.addEventListener('click', event => { if (!$('session-menu').contains(event.target)) $('session-menu').open = false; });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') $('session-menu').open = false; });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveDraft(); });
   return {init, view, task, prepare, submitted: value => { submitted(value).catch(error => notice(error.message, true)); }, record, sessions, identityChanged, inspector};
 })();

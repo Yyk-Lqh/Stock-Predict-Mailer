@@ -358,6 +358,7 @@ window.Workbench = (() => {
     rememberPosition();
   }
   function view(name) {
+    $('session-menu').open = false;
     window.PonyOffice?.view(name);
     document.body.dataset.view = name;
     document.body.classList.remove('sidebar-open');
@@ -489,6 +490,8 @@ window.Workbench = (() => {
   $('conversation-id').onchange = safe(() => $('conversation-id').value ? select($('conversation-id').value, {save: false}) : newAnalysis());
   for (const id of ['task-complexity', 'task-goal', 'task-effort']) $(id).addEventListener('change', () => { taskControlsDirty = true; });
   document.addEventListener('keydown', event => { if (event.key === 'Escape') { inspector(false); document.body.classList.add('report-dismissed'); document.body.classList.remove('sidebar-open'); $('sidebar-toggle').setAttribute('aria-expanded', 'false'); } });
+  document.addEventListener('click', event => { if (!$('session-menu').contains(event.target)) $('session-menu').open = false; });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') $('session-menu').open = false; });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveDraft(); });
   return {init, view, task, prepare, submitted: value => { submitted(value).catch(error => notice(error.message, true)); }, record, sessions, identityChanged, inspector};
 })();
@@ -933,7 +936,7 @@ window.PonyOffice = (() => {
   }
   const portal = document.createElement('div'); portal.className = 'sidebar-office-door';
   portal.innerHTML = '<span class="sidebar-door-art" aria-hidden="true"><i></i></span><span>协作通道<small>子 Agent 由此进出</small></span>';
-  document.querySelector('.topbar .meta').before(portal);
+  office.querySelector('.office-heading').append(portal);
   const progress = document.createElement('section'); progress.id = 'office-progress'; progress.className = 'office-progress';
   progress.innerHTML = '<h3>工作进度</h3><p id="office-task-state" role="status">等待分析任务</p><p id="office-connection" class="error-text" hidden>连接中断，正在恢复；暂不显示新的工作进展。</p><div id="office-roles"></div>';
   $('inspector-content').prepend(progress);

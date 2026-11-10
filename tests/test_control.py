@@ -582,6 +582,12 @@ class ConsoleAPITests(unittest.TestCase):
         second = {**first, "subject": "600000.SH", "prediction_id": "test-second"}
         oldest = self.client.post("/api/tasks", json={"prediction": first}).json()
         newest = self.client.post("/api/tasks", json={"prediction": second}).json()
+        # 等两个任务收尾再断言：否则 tearDown 删临时目录时后台线程还占着 sqlite（Windows 会 PermissionError）。
+        for tid in (oldest["id"], newest["id"]):
+            for _ in range(150):
+                if self.client.get(f"/api/tasks/{tid}").json()["status"]["state"] in ("completed", "failed"):
+                    break
+                time.sleep(.02)
         self.assertEqual(oldest["metadata"]["request"]["subject"], first["subject"])
         self.assertEqual(newest["metadata"]["request"]["horizon"], second["horizon"])
 

@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -57,7 +56,10 @@ ENDPOINTS: list[dict] = []
 TASKS: dict[str, dict] = {}
 FRESH = False  # ?fresh=1 期间为 True：假装这台机器还没配过任何东西
 HOLD = False   # ?hold=1 期间为 True：任务永远停在「运行中」，用来看运行图的动画
-NOW = lambda: datetime.now(timezone.utc)
+
+
+def NOW() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _analysis(request: dict, degraded: bool) -> dict:

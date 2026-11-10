@@ -1,5 +1,7 @@
 # 控制台界面说明（2026-11 改版）
 
+> 2026-11-10：当前界面已继续重构为会话式工作台，布局、知识库入口与复验说明以 [会话式工作台](console-workbench.md) 为准。以下保留前一版页面与交互记录。
+
 本文描述 `src/stock_predict_mailer/control/web/` 当前界面。字段与接口契约见 [control-api.md](control-api.md)，
 业务边界见 [frontend-handoff.md](frontend-handoff.md)。改版只动前端三个文件，未改任何后端行为。
 

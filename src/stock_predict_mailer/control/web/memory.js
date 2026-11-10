@@ -132,8 +132,10 @@ window.Workbench = (() => {
     $('report-inspector').hidden = !open;
     document.body.classList.toggle('inspector-visible', open);
     $('report-open').setAttribute('aria-expanded', String(open));
+    window.AnalysisInput?.layout();
   }
   function clearTask() {
+    window.AnalysisInput?.reset();
     window.PonyOffice?.reset();
     currentTask = null;
     displayed = null;
@@ -306,6 +308,7 @@ window.Workbench = (() => {
     heading(`${turns.at(-1)?.prediction?.subject || '预测'} · 分析会话`);
   }
   function task(value) {
+    window.AnalysisInput?.observe(value);
     if (displayed?.id !== value.id) {
       $('mail-live').replaceChildren();
       $('knowledge-report-evidence')?.remove();
@@ -358,6 +361,8 @@ window.Workbench = (() => {
     rememberPosition();
   }
   function view(name) {
+    if (name !== 'analysis') document.body.classList.remove('analysis-composer-visible');
+    else document.body.classList.add('analysis-composer-visible');
     $('session-menu').open = false;
     window.PonyOffice?.view(name);
     document.body.dataset.view = name;

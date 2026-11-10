@@ -33,13 +33,13 @@ OpenAI 兼容 /embeddings 与 Ollama /api/embed 通过统一适配器调用；Ol
 
 ```powershell
 uv sync --all-extras
-# console 与 worker 使用相同 workspace 和进程环境中的 SPM_MASTER_KEY。
+# console 与 worker 使用相同 workspace 和进程环境中的 STOCK_PREDICT_MAILER_MASTER_KEY。
 # 主密钥沿用现有控制台设置；不要生成新密钥覆盖已有工作区的密钥。
-uv run stock-mailer --config config/local.toml console
+uv run stock-predict-mailer --config config/local.toml console
 # 另开终端运行；持续轮询仅处理上传任务，与动态分析子 Agent 预算无关。
-uv run stock-mailer --config config/local.toml knowledge-worker --poll 2
+uv run stock-predict-mailer --config config/local.toml knowledge-worker --poll 2
 # 或一次处理当前队列，完成后退出：
-uv run stock-mailer --config config/local.toml knowledge-worker --once
+uv run stock-predict-mailer --config config/local.toml knowledge-worker --once
 ```
 
 只需知识库依赖时可用 `uv sync --extra knowledge --extra dev`；研究功能还需对应 research/trees extra。上传不会自动启动 worker。独立进程持有自己的 OS 锁，避免双 worker 恢复对方的运行任务；进程中断后再次启动将 processing 标为失败，需显式 retry。`--once` 有失败任务返回 2，否则返回 0；`--poll` 为 .1–60 秒。每次解析完成保存 parsed 检查点，清洗完成保存 chunked 检查点，重试从其后继续。向量/索引发布事务失败回滚，不暴露半成品。

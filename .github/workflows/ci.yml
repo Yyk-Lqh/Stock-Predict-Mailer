@@ -67,5 +67,7 @@ jobs:
           python-version: "3.12"
       - name: Reject data, keys, models and oversized files
         run: python scripts/check_repo_hygiene.py
+      - name: Reject stray spellings of the project name
+        run: python scripts/check_naming.py
       - name: Reject whitespace errors
         run: git diff --check $(git hash-object -t tree /dev/null) HEAD

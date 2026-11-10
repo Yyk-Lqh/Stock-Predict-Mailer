@@ -1,0 +1,224 @@
+/* ===== 基础层 · 深空底 ===== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: var(--paper);
+  background-image:
+    radial-gradient(1100px 620px at 82% -12%, rgba(22, 211, 230, 0.1), transparent 62%),
+    radial-gradient(760px 520px at 6% 104%, rgba(22, 211, 230, 0.045), transparent 60%),
+    radial-gradient(900px 700px at 50% 40%, rgba(46, 82, 120, 0.1), transparent 70%);
+  background-attachment: fixed;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14.5px;
+  line-height: 1.7;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 极淡像素网格：只在主内容区上缘可见，向下渐隐，避免纯黑沉闷 */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size: var(--grid-size) var(--grid-size);
+  -webkit-mask-image: radial-gradient(130% 92% at 62% 0%, #000 34%, transparent 84%);
+  mask-image: radial-gradient(130% 92% at 62% 0%, #000 34%, transparent 84%);
+}
+
+/* 低饱和浮动数据粒子 */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(1.4px 1.4px at 18% 22%, rgba(22, 211, 230, 0.34), transparent 100%),
+    radial-gradient(1.2px 1.2px at 44% 68%, rgba(22, 211, 230, 0.22), transparent 100%),
+    radial-gradient(1.6px 1.6px at 71% 34%, rgba(255, 255, 255, 0.16), transparent 100%),
+    radial-gradient(1.2px 1.2px at 86% 72%, rgba(22, 211, 230, 0.2), transparent 100%),
+    radial-gradient(1.1px 1.1px at 33% 88%, rgba(255, 255, 255, 0.12), transparent 100%),
+    radial-gradient(1.5px 1.5px at 58% 12%, rgba(22, 211, 230, 0.26), transparent 100%);
+  opacity: 0.85;
+  animation: dust-drift 26s ease-in-out infinite alternate;
+}
+
+@keyframes dust-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-14px, 18px, 0);
+  }
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+}
+
+p {
+  margin: 0;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding-left: 1.15em;
+}
+
+li + li {
+  margin-top: 5px;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(22, 211, 230, 0.24);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(22, 211, 230, 0.12);
+}
+
+::selection {
+  background: rgba(22, 211, 230, 0.26);
+  color: #fff;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  letter-spacing: -0.1px;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.serif {
+  font-family: var(--serif);
+}
+
+.muted {
+  color: var(--ink-secondary);
+}
+
+.hint {
+  color: var(--ink-tertiary);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.kicker {
+  font-size: 10.5px;
+  letter-spacing: 2.6px;
+  text-transform: uppercase;
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.kicker::before {
+  content: "";
+  width: 16px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--accent), transparent);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* 滚动条统一成暗色 */
+* {
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(22, 211, 230, 0.34);
+}
+
+/* 原生控件跟随暗色 */
+:root {
+  color-scheme: dark;
+}
+
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.72) sepia(1) saturate(4) hue-rotate(140deg);
+  opacity: 0.65;
+  cursor: pointer;
+}
+
+input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::after {
+    animation: none;
+  }
+}

@@ -6,15 +6,18 @@ import time
 import uuid
 
 from ..agent_service.contracts import ServiceError
+from ..naming import PROJECT_NAME
 from .models import request_json
+
+SESSION_COOKIE = "stock_predict_mailer_session"
 
 
 def card(base_url, role="main"):
-    return {"protocolVersion": "0.3.0", "name": "Stock analysis " + role,
+    return {"protocolVersion": "0.3.0", "name": f"{PROJECT_NAME} · {role}",
             "description": "Evidence-bounded prediction analysis", "url": base_url + "/a2a/" + role,
             "version": "1.0.0", "preferredTransport": "JSONRPC",
             "capabilities": {"streaming": False, "pushNotifications": False},
-            "securitySchemes": {"session": {"type": "apiKey", "in": "cookie", "name": "spm_session"},
+            "securitySchemes": {"session": {"type": "apiKey", "in": "cookie", "name": SESSION_COOKIE},
                                 "bearer": {"type": "http", "scheme": "bearer"}},
             "security": [{"session": []}, {"bearer": []}], "defaultInputModes": ["application/json"], "defaultOutputModes": ["application/json"],
             "skills": [{"id": role, "name": role, "description": "Structured bounded analysis", "tags": ["prediction", role]}]}

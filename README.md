@@ -4,14 +4,16 @@
 
 Python 3.11+，本机单用户工具。默认使用动态 Mock、确定性分析和本地邮件文件投递，不需要真实模型、LLM API 或邮箱凭据。
 
+项目名统一为 **Stock-Predict-Mailer**：发行名 `stock-predict-mailer`，导入名 `stock_predict_mailer`，环境变量前缀 `STOCK_PREDICT_MAILER_`。三种形式的分工与检查脚本见 [命名约定](CONTRIBUTING.md#5-命名约定)，唯一来源是 `src/stock_predict_mailer/naming.py`。
+
 ```powershell
 uv sync
-uv run stock-mailer --config config/agent-example.toml run --send
+uv run stock-predict-mailer --config config/agent-example.toml run --send
 ```
 
 命令输出报告路径、分析状态及邮件 ID。默认 `simulated` 表示邮件写入 `data/agent-local/sent/`；真实 SMTP 返回 `submitted` 表示邮件服务器已接受。重复运行相同输入不会重复投递。使用 `run` 可仅生成报告并入队；`send <mail.id>` 可执行发送或到期重试；`mail-drain` 批量推进所有到期消息，供计划任务周期调用；`mail-resolve <mail.id> [--delivered]` 对 `uncertain` 邮件做留痕的人工确认。
 
-模型/MCP/A2A 配置控制台已提供。设置服务端 `SPM_MASTER_KEY` 后运行 `uv run stock-mailer console --port 8767`，打开本机页面管理模型、加密凭据、工具授权、角色温度和分析任务。启动及完整 Mock 验收见 [控制台手册](docs/control-console.md)，后端接口见 [配置与协议 API](docs/control-api.md)。默认 CLI `run` 继续独立可用。
+模型/MCP/A2A 配置控制台已提供。设置服务端 `STOCK_PREDICT_MAILER_MASTER_KEY` 后运行 `uv run stock-predict-mailer console --port 8767`，打开本机页面管理模型、加密凭据、工具授权、角色温度和分析任务。启动及完整 Mock 验收见 [控制台手册](docs/control-console.md)，后端接口见 [配置与协议 API](docs/control-api.md)。默认 CLI `run` 继续独立可用。
 
 目录结构：
 
@@ -25,6 +27,7 @@ src/stock_predict_mailer/
     mail.py        # 独立 SQLite outbox、SMTP、重试和去重
     config.py      # TOML 配置，凭据仅引用环境变量
   cli.py           # 新默认入口
+  naming.py        # 项目名的唯一来源（专有名/发行名/导入名/环境变量前缀）
   legacy_cli.py    # 旧研究、训练、上传兼容入口
   control/         # 配置界面/API、凭据库、模型/MCP/A2A、编排与预算
   private_knowledge/ # 多格式解析、独立清洗、Embedding、私有复核和检索
@@ -46,7 +49,7 @@ docs/
 
 Agent 不补造缺失置信度或事实；数据过期或接口不合规会报错；HTTP Agent 失败会明确标记降级。默认分析不调用 LLM；可选 HTTP Agent 只能选择已提供证据及预定义推断/建议，详见契约。股票分析不保证收益。
 
-历史数据、模型、签名材料及旧模块全部保留。训练等依赖移到 `research` 可选组；需要旧功能时安装 `uv sync --extra research --extra trees --extra dev`，再使用 `stock-mailer legacy ...`。旧文档见 [归档说明](docs/legacy-readme.md)。
+历史数据、模型、签名材料及旧模块全部保留。训练等依赖移到 `research` 可选组；需要旧功能时安装 `uv sync --extra research --extra trees --extra dev`，再使用 `stock-predict-mailer legacy ...`。旧文档见 [归档说明](docs/legacy-readme.md)。
 
 新链路测试：
 
@@ -62,11 +65,11 @@ uv run python -m unittest discover -s tests -p test_agent_service.py -v
 
 ```powershell
 uv sync --all-extras
-# 两个终端须沿用同一配置和已有的 SPM_MASTER_KEY，避免丢失已有凭据访问能力。
-uv run stock-mailer --config config/local.toml console
-uv run stock-mailer --config config/local.toml knowledge-worker --poll 2
+# 两个终端须沿用同一配置和已有的 STOCK_PREDICT_MAILER_MASTER_KEY，避免丢失已有凭据访问能力。
+uv run stock-predict-mailer --config config/local.toml console
+uv run stock-predict-mailer --config config/local.toml knowledge-worker --poll 2
 # 只处理当前队列：
-uv run stock-mailer --config config/local.toml knowledge-worker --once
+uv run stock-predict-mailer --config config/local.toml knowledge-worker --once
 ```
 
 上传和管理当前通过后端 `/api/knowledge` 接口完成，前端暂未增加知识库页面。上传成功表示已排队，不代表完成入库。

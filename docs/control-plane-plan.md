@@ -2,7 +2,7 @@
 
 ## 架构与默认决策
 
-继续使用 Python，新增仅监听 127.0.0.1 的原生 HTML/JS 控制台和 JSON API，不将旧上传页面改成管理入口。配置存在独立 SQLite；凭据以 Fernet 加密，主密钥仅从 SPM_MASTER_KEY 环境读取，缺失时拒绝启动，不生成与数据库放在一起的明文密钥。GET 永不返回密钥，更新时空值表示保留，显式清除用独立操作。控制台具有 Host/Origin 验证、会话 Cookie 与 CSRF 保护。
+继续使用 Python，新增仅监听 127.0.0.1 的原生 HTML/JS 控制台和 JSON API，不将旧上传页面改成管理入口。配置存在独立 SQLite；凭据以 Fernet 加密，主密钥仅从 STOCK_PREDICT_MAILER_MASTER_KEY 环境读取，缺失时拒绝启动，不生成与数据库放在一起的明文密钥。GET 永不返回密钥，更新时空值表示保留，显式清除用独立操作。控制台具有 Host/Origin 验证、会话 Cookie 与 CSRF 保护。
 
 模型服务使用兼容 OpenAI Chat Completions 适配器，提供 Mock 和真实请求；配置明确声明模型支持的温度范围与生成参数，不从服务商名称猜测能力。连接测试实际执行小请求，不把列模型成功当作推理成功。默认温度 0.2，可按主/预测/风险/建议 Agent 覆盖；不支持时不发送 temperature，错误覆盖拒绝。参数兼容性以服务能力声明及实际测试共同判断。
 

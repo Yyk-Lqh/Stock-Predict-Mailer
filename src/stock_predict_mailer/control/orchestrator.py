@@ -69,14 +69,29 @@ def validate_result(raw, role, p, facts, knowledge_ids=()):
             "uncertainty": raw["uncertainty_codes"], "delegate_roles": list(dict.fromkeys(raw["delegate_roles"]))}
 
 
-def a2a_task(tid, state, *, context_id=None, result=None, error=None):
+def a2a_task(tid, state, *, context_id=None, result=None, error=None, brief=None):
     value = {"kind": "task", "id": tid, "contextId": context_id or tid,
              "status": {"state": state, "timestamp": utcnow().isoformat()}, "artifacts": []}
     if result is not None:
         value["artifacts"] = [{"artifactId": tid + "-result", "name": "analysis", "parts": [{"kind": "data", "data": result}]}]
+    metadata = {}
+    # 任务清单只读元数据：让列表在不解析产物的前提下显示标的与方向。
+    if brief:
+        metadata["request"] = brief
     if error:
-        value["metadata"] = {"error": error}
+        metadata["error"] = error
+    if metadata:
+        value["metadata"] = metadata
     return value
+
+
+def task_brief(request):
+    p = request.get("prediction") or {}
+    return {"subject": p.get("subject"), "direction": p.get("direction"),
+            "horizon": p.get("horizon"), "confidence": p.get("confidence"),
+            "synthetic": p.get("synthetic"), "notify": bool(request.get("notify")),
+            "recipient": request.get("recipient"), "goal": request.get("goal"),
+            "conversation_id": request.get("conversation_id")}
 
 
 class Orchestrator:
@@ -160,13 +175,14 @@ class Orchestrator:
             if len(self.active) >= 4:
                 raise ServiceError("BUSY", "最多同时运行 4 个主任务，请稍后再试", True)
             request = self.prepare(raw, owner)
+            brief = task_brief(request)
             if cid := request["conversation_id"]:
                 previous = self.memory.state(owner, cid)
                 if previous.get("task") in self.active:
                     raise ServiceError("BUSY", "会话任务正在收尾", True)
-                self.memory.begin(owner, cid, tid, request, a2a_task(tid, "submitted"))
+                self.memory.begin(owner, cid, tid, request, a2a_task(tid, "submitted", brief=brief))
             else:
-                self.store.task(tid, a2a_task(tid, "submitted"))
+                self.store.task(tid, a2a_task(tid, "submitted", brief=brief))
             self.active[tid] = {"event": event}
         def worker():
             try:
@@ -193,6 +209,7 @@ class Orchestrator:
 
     async def execute(self, tid, request, event=None):
         settings = self.store.settings()
+        brief = task_brief(request)
         level = request.get("reasoning_effort") or settings.get("default_reasoning_effort", DEFAULT_EFFORT)
         limits = envelope(level, settings["limits"])
         settings = {**settings, "reasoning_effort": level, "limits": limits}
@@ -204,22 +221,22 @@ class Orchestrator:
             budget.memory_context = lambda size: self.memory.context(owner, cid, request, size, progress)
         if tid in self.active:
             self.active[tid].update(loop=asyncio.get_running_loop(), task=asyncio.current_task())
-        self.store.task(tid, a2a_task(tid, "working"))
+        self.store.task(tid, a2a_task(tid, "working", brief=brief))
         try:
             async with asyncio.timeout(settings["limits"]["timeout_seconds"]):
                 output = await self.analyze(tid, request, settings, budget, progress)
                 budget.check()
-                self.store.task(tid, a2a_task(tid, "completed", result=output))
+                self.store.task(tid, a2a_task(tid, "completed", result=output, brief=brief))
         except (ServiceError, TimeoutError) as exc:
             error = exc.as_dict()["error"] if isinstance(exc, ServiceError) else {"code": "TASK_TIMEOUT", "message": "任务超时", "retryable": True}
             if isinstance(exc, ServiceError) and exc.code == "CANCELLED":
-                self.store.task(tid, a2a_task(tid, "canceled"))
+                self.store.task(tid, a2a_task(tid, "canceled", brief=brief))
             else:
-                self.store.task(tid, a2a_task(tid, "failed", error=error))
+                self.store.task(tid, a2a_task(tid, "failed", error=error, brief=brief))
         except asyncio.CancelledError:
-            self.store.task(tid, a2a_task(tid, "canceled"))
+            self.store.task(tid, a2a_task(tid, "canceled", brief=brief))
         except Exception:
-            self.store.task(tid, a2a_task(tid, "failed", error={"code": "INTERNAL_ERROR", "message": "任务执行失败", "retryable": False}))
+            self.store.task(tid, a2a_task(tid, "failed", error={"code": "INTERNAL_ERROR", "message": "任务执行失败", "retryable": False}, brief=brief))
         return self.store.task(tid)
 
     async def role(self, role, data, settings, budget, *, local_only=False):

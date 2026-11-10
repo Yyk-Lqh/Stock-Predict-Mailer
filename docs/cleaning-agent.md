@@ -14,8 +14,8 @@
 持续或一次运行方式与之前相同：
 
 ```powershell
-uv run stock-mailer --config config/local.toml knowledge-worker --poll 2
-uv run stock-mailer --config config/local.toml knowledge-worker --once
+uv run stock-predict-mailer --config config/local.toml knowledge-worker --poll 2
+uv run stock-predict-mailer --config config/local.toml knowledge-worker --once
 ```
 
 `--once` 如果本批存在 failed 返回 2；待复核的 review 不是已入库，需读取文档状态后完成审批。worker 重启将 processing 标为失败，须显式 retry。批准后的发布失败会保留审批与提取结果，重试不会重新调用清洗模型。

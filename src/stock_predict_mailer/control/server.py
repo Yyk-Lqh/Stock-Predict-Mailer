@@ -6,7 +6,6 @@ import base64
 import binascii
 import hmac
 import json
-import os
 import secrets
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,7 +15,8 @@ from urllib.parse import parse_qs, urlsplit
 from ..agent_service.contracts import ServiceError, decode
 from ..agent_service.mail import MailService
 from ..agent_service.reporting import render
-from .a2a import A2AService, card
+from ..naming import env
+from .a2a import SESSION_COOKIE, A2AService, card
 from .orchestrator import Orchestrator
 from .store import Store
 
@@ -43,7 +43,7 @@ def make_server(root, port=8767, master_key=None):
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
             if cookie:
-                self.send_header("Set-Cookie", f"spm_session={session}; HttpOnly; SameSite=Strict; Path=/")
+                self.send_header("Set-Cookie", f"{SESSION_COOKIE}={session}; HttpOnly; SameSite=Strict; Path=/")
             self.end_headers()
             self.wfile.write(raw)
 
@@ -56,12 +56,12 @@ def make_server(root, port=8767, master_key=None):
             if origin and origin not in {"http://" + a for a in allowed}:
                 raise ServiceError("FORBIDDEN", "不允许的 Origin")
             if a2a:
-                token = os.environ.get("SPM_A2A_TOKEN", "")
+                token = env("A2A_TOKEN")
                 if token and hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + token):
                     return
             try:
                 cookies = SimpleCookie(self.headers.get("Cookie", ""))
-                valid = cookies.get("spm_session") and hmac.compare_digest(cookies["spm_session"].value, session)
+                valid = cookies.get(SESSION_COOKIE) and hmac.compare_digest(cookies[SESSION_COOKIE].value, session)
             except Exception:
                 valid = False
             if not valid:
@@ -257,19 +257,31 @@ def make_server(root, port=8767, master_key=None):
                         owner = engine.memory.owner(self.headers.get("X-Memory-Key", "")) if payload.get("conversation_id") is not None else None
                         self.output(engine.submit(payload, owner), 202)
                     elif method == "GET" and len(parts) == 2:
-                        query = parse_qs(urlsplit(self.path).query)
+                        query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                        order = query.get("order", ["asc"])[0]
+                        if order not in ("asc", "desc") or any(len(values) != 1 for values in query.values()):
+                            raise ServiceError("INVALID_INPUT", "任务分页参数无效")
                         try:
-                            after = int(query.get("after", ["0"])[0])
                             limit = int(query.get("limit", ["50"])[0])
-                            if not 0 <= after <= 2**63 - 1 or not 1 <= limit <= 100:
+                            cursor = int(query.get("before" if order == "desc" else "after",
+                                                     [str(2**63 - 1) if order == "desc" else "0"])[0])
+                            if not 0 <= cursor <= 2**63 - 1 or not 1 <= limit <= 100:
                                 raise ValueError()
                         except ValueError:
                             raise ServiceError("INVALID_INPUT", "任务分页参数无效") from None
                         owner = engine.memory.owner(self.headers['X-Memory-Key']) if self.headers.get('X-Memory-Key') else None
                         with store.db() as con:
-                            rows = con.execute("SELECT t.rowid,t.body FROM tasks t LEFT JOIN memory_tasks m ON m.task=t.id WHERE t.rowid>? AND (m.owner IS NULL OR m.owner=?) ORDER BY t.rowid LIMIT ?", (after, owner, limit + 1)).fetchall()
-                        self.output({"items": [json.loads(r[1]) for r in rows[:limit]],
-                                     "next_after": rows[limit - 1][0] if len(rows) > limit else None})
+                            if order == "desc":
+                                rows = con.execute("SELECT t.rowid,t.body FROM tasks t LEFT JOIN memory_tasks m ON m.task=t.id "
+                                                   "WHERE t.rowid<? AND (m.owner IS NULL OR m.owner=?) ORDER BY t.rowid DESC LIMIT ?",
+                                                   (cursor, owner, limit + 1)).fetchall()
+                            else:
+                                rows = con.execute("SELECT t.rowid,t.body FROM tasks t LEFT JOIN memory_tasks m ON m.task=t.id "
+                                                   "WHERE t.rowid>? AND (m.owner IS NULL OR m.owner=?) ORDER BY t.rowid LIMIT ?",
+                                                   (cursor, owner, limit + 1)).fetchall()
+                        body = {"items": [json.loads(r[1]) for r in rows[:limit]]}
+                        body["next_before" if order == "desc" else "next_after"] = rows[limit - 1][0] if len(rows) > limit else None
+                        self.output(body)
                     elif method == "GET" and len(parts) == 4 and parts[3] in ("report", "analysis", "mail"):
                         task = store.task(parts[2])
                         if task["status"]["state"] != "completed" or not task["artifacts"]:

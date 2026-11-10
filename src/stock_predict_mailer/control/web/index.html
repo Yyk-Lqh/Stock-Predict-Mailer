@@ -1,33 +1,552 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signal Desk · 预测分析控制台</title><link rel="stylesheet" href="/style.css"></head>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stock-Predict-Mailer · 预测分析控制台</title>
+<link rel="stylesheet" href="/style.css">
+</head>
 <body>
-<aside><a class="brand" href="/">SIGNAL<span>DESK / 预测分析</span></a><div class="local">● 本机工作区</div><nav aria-label="主导航"><button data-tab="models" class="active">模型服务<span>Models</span></button><button data-tab="mcp">外部能力<span>MCP servers</span></button><button data-tab="settings">协作与授权<span>Agents & limits</span></button><button data-tab="tasks">分析任务<span>Analysis</span></button><button data-tab="memory">会话记忆<span>Memory</span></button></nav><div class="side-note">先连接服务，再给 Agent 授权。<br>每一次结论，都应有据可查。</div></aside>
-<main><header><span id="eyebrow">WORKSPACE / CONFIGURATION</span><span class="version">本机配置控制台 · v1</span></header><div id="notice" role="status" aria-live="polite" hidden></div>
-<section id="models" class="panel"><div class="intro"><p class="kicker">模型接入</p><h1>为每一种分析，<br>选择合适的模型。</h1><p>兼容 OpenAI API 的服务可直接接入。密钥加密保存在服务端，查询与界面均不回显。</p></div><div class="columns"><div><h2>已配置模型</h2><div id="model-list" class="record-list"></div></div><form id="model-form"><div class="form-heading"><h2 id="model-heading">添加模型</h2><button type="button" id="model-new" class="quiet">新建</button></div><input id="model-id" type="hidden"><div class="pair"><label>配置名称<input id="model-name" required placeholder="日常预测分析"></label><label>服务类型<select id="model-provider"><option value="mock">Mock · 离线测试</option><option value="openai_compatible">OpenAI 兼容 API</option></select></label></div><label>API 基础地址<input id="model-url" type="url" value="https://api.openai.com/v1" required><small>包含 /v1，不含 /chat/completions；本机服务可使用 HTTP。</small></label><div class="pair"><label>模型名称<input id="model-model" value="mock-analysis" required></label><label>API Key<input id="model-key" type="password" autocomplete="new-password" placeholder="填写新密钥；留空保留已有值"></label></div><div class="pair"><label>超时（秒）<input id="model-timeout" type="number" value="20" min="1" max="120"></label><label>重试次数<input id="model-retries" type="number" value="1" min="0" max="3"></label></div><label class="check"><input id="model-temperature" type="checkbox" checked> 此模型支持温度设置</label><div class="pair"><label>温度最小值<input id="model-temp-min" type="number" value="0" min="0" max="2" step="0.1"></label><label>温度最大值<input id="model-temp-max" type="number" value="2" min="0" max="2" step="0.1"></label></div><label>支持的参数（逗号分隔）<input id="model-supported" value="max_tokens,response_format"><small>temperature 由上方开关管理；能力范围请以服务商说明和连接测试为准。</small></label><label>原生推理强度映射（JSON）<textarea id="model-effort-map" rows="2">{}</textarea><small>仅填写服务明确支持的档位映射，如 {"high":"medium"}。</small></label><label>生成参数（JSON）<textarea id="model-params" rows="3">{"max_tokens":512}</textarea></label><div class="pair"><label>输入单价（USD / 百万 token）<input id="model-price-in" type="number" min="0" step="0.01" placeholder="真实服务必填"></label><label>输出单价（USD / 百万 token）<input id="model-price-out" type="number" min="0" step="0.01" placeholder="真实服务必填"></label></div><p class="hint">连接测试会执行一次小额推理，并纳入单次测试的调用与费用预算。Mock 不产生模型费用。</p><button type="submit" class="primary">保存模型配置</button></form></div></section>
-<section id="mcp" class="panel" hidden><div class="intro"><p class="kicker">外部能力</p><h1>连接工具，<br>让权限保持清楚。</h1><p>MCP 连接支持 Streamable HTTP 与本地 stdio。发现服务不代表授权调用，工具默认拒绝执行。</p></div><div class="columns"><div><h2>已连接服务</h2><div id="mcp-list" class="record-list"></div><h2>工具与资源发现</h2><div id="discovery" class="discovery"><p class="muted">保存服务后点击“测试与发现”。</p></div></div><form id="mcp-form"><div class="form-heading"><h2>服务配置</h2><button type="button" id="mcp-new" class="quiet">新建</button></div><input id="mcp-id" type="hidden"><label>服务名称<input id="mcp-name" required placeholder="股票数据服务"></label><label>连接方式<select id="mcp-transport"><option value="streamable_http">Streamable HTTP</option><option value="stdio">本地 stdio 进程</option></select></label><div id="mcp-http"><label>服务地址<input id="mcp-url" value="http://127.0.0.1:8766/mcp"></label><label>Bearer token<input id="mcp-token" type="password" autocomplete="new-password" placeholder="留空保留已有值"></label></div><div id="mcp-stdio" hidden><label>启动程序<input id="mcp-command" placeholder="完整程序路径，例如 python.exe"></label><label>启动参数（JSON 数组）<textarea id="mcp-args" rows="2">[]</textarea></label><label>进程环境变量（加密保存）<textarea id="mcp-env" rows="2" placeholder='{"SERVICE_TOKEN":"…"}'></textarea></label><small>仅运行你信任的程序；不使用 shell。凭据使用环境变量，不放入参数。</small></div><label>超时（秒）<input id="mcp-timeout" type="number" min="1" max="120" value="15"></label><label>允许工具（逗号分隔）<input id="mcp-tools" placeholder="get_context,send_email"></label><label>每个工具的权限类型（JSON）<textarea id="mcp-effects" rows="3" placeholder='{"get_context":"read","send_email":"email"}'>{}</textarea><small>read：用户信任的只读工具；email：需额外满足收件人授权；deny：禁止。</small></label><label>允许资源 URI（每行一个）<textarea id="mcp-resources" rows="2"></textarea></label><button type="submit" class="primary">保存 MCP 服务</button></form></div></section>
-<section id="settings" class="panel" hidden><div class="intro"><p class="kicker">协作与授权</p><h1>给协作设边界，<br>给判断留依据。</h1><p>A2A 传递任务与结果；编排层管理运行、超时和回收。简单任务由主 Agent 完成。</p></div><form id="settings-form"><div class="settings-block"><h2>默认模型与温度</h2><div class="pair"><label>默认模型<select id="default-model"></select></label><label>默认推理强度<select id="default-effort"><option value="light">轻度</option><option value="medium">中</option><option value="high">高</option><option value="extreme">极高</option><option value="ultra">Ultra</option></select></label><label>全局温度<input id="global-temperature" type="number" min="0" max="2" step="0.1" value="0.2"></label></div><p class="hint">温度影响生成的随机性，不代表预测准确率或置信度，也不能替代上游预测模型。数据分析推荐较低温度；不支持的模型不会收到此参数。</p><button type="button" id="reset-temperature" class="quiet">恢复全局与角色默认温度</button></div><div class="settings-block"><h2>主 Agent 与角色覆盖</h2><div id="role-settings"></div><p class="hint">温度留空时继承模型参数或全局默认。子 Agent 本阶段只接收预测与事实，不开放工具执行；数据工具由主 Agent 预先取回并校验。</p></div><div class="settings-block"><h2>A2A 外部 Agent</h2><div id="endpoint-list"></div><div class="pair"><label>服务名称<input id="endpoint-name" placeholder="风险服务"></label><label>A2A JSON-RPC 地址<input id="endpoint-url" placeholder="https://agent.example.com/a2a/risk"></label></div><div class="pair"><label>认证 token<input id="endpoint-token" type="password" autocomplete="new-password"></label><label>单次费用预留上限（USD）<input id="endpoint-cost" type="number" min="0" step="0.01" value="0.01"></label></div><input id="endpoint-id" type="hidden"><button type="button" id="endpoint-save" class="quiet">保存外部 Agent</button></div><div class="settings-block"><h2>运行边界</h2><div class="triple"><label>最大子 Agent 数<input id="limit-max_subagents" type="number" min="0" max="3"></label><label>最大委派深度<input id="limit-max_depth" type="number" min="0" max="3"></label><label>最大调用次数<input id="limit-max_calls" type="number" min="1" max="50"></label><label>任务总超时（秒）<input id="limit-timeout_seconds" type="number" min="1" max="600"></label><label>子 Agent 超时（秒）<input id="limit-child_timeout_seconds" type="number" min="1" max="120"></label><label>费用预算（USD）<input id="limit-budget_usd" type="number" min="0" max="100" step="0.01"></label></div></div><div class="settings-block"><h2>邮件预授权</h2><label>邮件图表<select id="chart-delivery"><option value="inline">内嵌图表</option><option value="attachment">SVG 附件（文件 / SMTP）</option></select></label><label>投递方式<select id="mail-transport"><option value="file">本地文件 · 模拟投递</option><option value="smtp">SMTP · 使用服务端凭据环境变量</option><option value="mcp">MCP · 已授权邮件工具</option></select></label><div class="pair"><label>发件地址<input id="mail-sender" type="email"></label><label>SMTP 主机<input id="mail-host"></label><label>SMTP 端口<input id="mail-port" type="number" value="587"></label><label>TLS 模式<select id="mail-tls"><option value="starttls">STARTTLS</option><option value="ssl">SSL</option></select></label></div><label>允许收件地址（每行一个）<textarea id="mail-allowlist" rows="3" placeholder="preview@example.invalid"></textarea></label><label class="check"><input id="mail-synthetic" type="checkbox"> 允许投递合成测试报告</label><div class="pair"><label>邮件 MCP 服务<select id="mail-mcp-server"></select></label><label>邮件工具名称<input id="mail-mcp-tool" placeholder="send_email"></label></div><p class="hint">只有清单内的收件人可收到通知。SMTP 凭据从 SMTP_USER / SMTP_PASSWORD 注入，模型无法读取或修改。</p></div><button type="submit" class="primary">保存协作与授权</button></form></section>
-<section id="tasks" class="panel" hidden><div class="intro"><p class="kicker">分析任务</p><h1>从预测出发，<br>看到依据与不确定性。</h1><p>使用 Mock 输入独立验证模型、工具、协作与邮件链路，之后替换为真实上游结果。</p></div><div class="columns"><form id="task-form"><div class="form-heading"><h2>预测与上下文</h2><button type="button" id="load-mock" class="quiet">载入 Mock 输入</button></div><label>接入数据（JSON）<textarea id="task-data" rows="17" spellcheck="false"></textarea></label><div class="pair"><label>推理强度<select id="task-effort"><option value="">使用默认档位</option><option value="light">轻度</option><option value="medium">中</option><option value="high">高</option><option value="extreme">极高</option><option value="ultra">Ultra</option></select></label><label>分析目标<select id="task-goal"><option value="overview">综合解读</option><option value="risk">风险分析</option><option value="comparison">历史预测对比</option></select></label></div><fieldset id="conversation-fields" class="execution-panel" hidden>
-<legend>会话与跟进</legend>
-<label>会话<select id="conversation-id"><option value="">独立任务</option></select></label>
-<div id="conversation-actions"></div><p id="conversation-summary" role="status"></p>
-<label>本轮问题<textarea id="conversation-message" rows="2" maxlength="4000" placeholder="刚才那只股票，按前面的条件继续分析"></textarea></label>
-<label>明确约束（每行一项）<textarea id="conversation-constraints" rows="2"></textarea></label>
-<label>本轮报告格式<select id="conversation-format"><option value="">沿用会话或偏好</option><option value="brief">简版</option><option value="standard">标准版</option></select></label>
-<label>记住报告格式<select id="remember-format"><option value="">本轮不保存格式偏好</option><option value="brief">偏好简版</option><option value="standard">偏好标准版</option></select></label>
-<label>记住其他事项<textarea id="remember-text" rows="2" maxlength="800" placeholder="例如持续关注 DEMO.SZ"></textarea></label>
-</fieldset><label>任务复杂度<select id="task-complexity"><option value="auto">自动判断</option><option value="simple">简单 · 不委派</option><option value="complex">复杂 · 允许按需委派</option></select></label><label class="check"><input id="task-notify" type="checkbox"> 完成后在授权范围内发送邮件</label><label>收件地址<input id="task-recipient" type="email" placeholder="preview@example.invalid"></label><button type="submit" class="primary">提交分析任务</button><button type="button" id="task-cancel" class="quiet" hidden>取消运行</button></form><div><h2>执行与分析结果</h2><div id="task-progress" class="execution-panel" hidden><h3>执行计划</h3><p id="effective-effort"></p><ol id="execution-plan"></ol><h3>执行时间线</h3><ol id="execution-events" aria-live="polite"></ol><div id="analysis-preview"></div><div id="chart-preview"></div></div><div id="task-summary" class="task-output"><p class="muted">提交后可查看主 Agent、子 Agent、预算与邮件状态。</p></div><details><summary>结构化任务结果</summary><pre id="task-output">尚无任务</pre></details></div></div></section>
-<footer>预测结果来自上游模型。Agent 提供解读与风险提示，不作收益保证。</footer><section id="memory" class="panel" hidden>
-<div class="intro"><p class="kicker">对话与长期记忆</p><h1>延续分析条件</h1><p>使用访问密钥恢复自己的会话和长期记忆。</p></div>
-<div class="execution-panel"><label>记忆访问密钥<input id="memory-key" type="password" autocomplete="new-password"></label><div id="memory-access-actions"></div></div>
-<div id="memory-details" hidden>
-  <div class="execution-panel"><h3>记忆策略</h3>
-    <label class="check"><input id="memory-enabled" type="checkbox">启用跨会话写入和召回</label>
-    <div class="pair"><label>压缩阈值（估算字节）<input id="memory-threshold" type="number" min="1024" max="15000"></label>
-    <label>保留近期轮数<input id="memory-recent" type="number" min="1" max="6"></label></div>
-    <div id="memory-settings-actions"></div><p id="memory-pending" role="status"></p>
-  </div>
-  <div id="memory-entries"></div>
-</div>
-</section>
-</main><script src="/app.js" defer></script><script src="/memory.js" defer></script></body></html>
+
+<header class="topbar">
+  <a class="wordmark" href="#"><span class="wordmark-name">Stock-Predict-Mailer</span><i>预测分析控制台</i></a>
+  <nav class="nav" aria-label="主导航">
+    <button type="button" data-view="overview" class="active">概览</button>
+    <button type="button" data-view="analysis">分析</button>
+    <button type="button" data-view="records">记录</button>
+    <button type="button" data-view="settings">设置</button>
+    <button type="button" data-view="memory">记忆</button>
+  </nav>
+  <span class="meta">本机工作区 · 不支持公网访问</span>
+</header>
+
+<main class="wrap">
+  <div id="notice" role="status" aria-live="polite" hidden></div>
+
+  <section class="view" data-view-pane="overview">
+    <div class="hero">
+      <p class="eyebrow">本机分析工具</p>
+      <h1>把上游的预测，变成一份能核对、能发出的报告。</h1>
+      <p class="lede">
+        数据与模型团队把预测结果和客观事实交给这里，它逐项校验后写出分层报告：哪些是上游给的事实、哪些是 Agent 的推断、哪里缺信息、哪里有风险。
+        报告可以按你预先授权的地址发出去。它不训练模型、不采集行情，也不保证收益。
+      </p>
+      <div class="hero-actions">
+        <button type="button" class="btn primary" id="start-analysis">开始一次分析</button>
+        <button type="button" class="btn" id="try-sample">用示例预测试一遍</button>
+      </div>
+    </div>
+
+    <div class="mt-32">
+      <div class="steps-head">
+        <p class="eyebrow">三步走完一轮</p>
+        <span class="steps-count" id="steps-count">正在读取进度</span>
+      </div>
+      <ol class="steps" id="steps"></ol>
+    </div>
+
+    <div class="split mt-32">
+      <div>
+        <p class="eyebrow">它做什么</p>
+        <ul class="check-list yes">
+          <li><span><b>先校验再分析。</b>对象、周期、有效期、事实来源不合规，直接拒绝，不会拿错数据编一份报告出来。</span></li>
+          <li><span><b>分层写清楚。</b>事实带来源与观测时间，推断标注引用了哪几条事实，限制和风险单独成段。</span></li>
+          <li><span><b>投递留痕。</b>谁授权、发到哪、结果是模拟还是已提交，都记在报告里。</span></li>
+        </ul>
+      </div>
+      <div>
+        <p class="eyebrow">它不做什么</p>
+        <ul class="check-list no">
+          <li><span><b>不训练、不加载上游模型权重。</b>预测值来自上游，这里只做解读。</span></li>
+          <li><span><b>不采集行情、不承诺收益。</b>没有 K 线，也没有买卖点。</span></li>
+          <li><span><b>不替你扩大权限。</b>没授权的收件人一律拒绝，状态不确定的邮件也不会自动重发。</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="mt-44">
+      <div class="steps-head">
+        <p class="eyebrow">当前环境</p>
+        <span class="hint" id="vitals-hint">配置现状，随时可改</span>
+      </div>
+      <div class="vitals" id="vitals"></div>
+    </div>
+
+    <footer>
+      预测结果来自上游模型，本系统只提供解读与风险提示，不作收益保证。
+      默认使用 Mock 模型与本地文件投递，可完全离线跑通；真实模型与真实邮箱需在「设置」中另行配置。
+    </footer>
+  </section>
+
+  <section class="view" data-view-pane="analysis" hidden>
+    <div id="tasks" class="panel">
+      <div class="page-head">
+        <p class="eyebrow">分析</p>
+        <h1>填一份预测，读一份报告。</h1>
+        <p class="lede">必填项只有标的、方向、周期和有效期。事实可以不填，但填了就必须写来源。</p>
+      </div>
+
+      <form id="task-form" novalidate>
+        <div id="draft-note" class="draft-note" hidden>
+          <span id="draft-text"></span>
+          <button type="button" id="draft-clear" class="btn tiny">清空，从头填</button>
+        </div>
+        <div class="card">
+          <div class="section-head">
+            <h2>预测</h2>
+            <span class="hint">来自上游模型，本系统不复核数值</span>
+            <button type="button" id="load-mock" class="btn quiet">填入示例</button>
+          </div>
+
+          <div class="grid-3">
+            <label class="field"><span>标的代码</span><input id="p-subject" value="DEMO.SZ" autocomplete="off" required></label>
+            <label class="field"><span>模型版本</span><input id="p-model-version" value="mock-v1" autocomplete="off" required></label>
+            <label class="field"><span>预测方向</span>
+              <span class="seg" id="p-direction">
+                <label><input type="radio" name="p-dir" value="up" checked><span>上涨</span></label>
+                <label><input type="radio" name="p-dir" value="down"><span>下跌</span></label>
+                <label><input type="radio" name="p-dir" value="flat"><span>持平</span></label>
+              </span>
+            </label>
+          </div>
+
+          <div class="grid-4 mt-14">
+            <label class="field"><span>周期长度</span><input id="p-horizon-value" type="number" min="1" max="365" value="5"></label>
+            <label class="field"><span>周期单位</span>
+              <select id="p-horizon-unit">
+                <option value="trading_days">交易日</option>
+                <option value="calendar_days">自然日</option>
+                <option value="hours">小时</option>
+              </select>
+            </label>
+            <label class="field"><span>置信度 <em>可留空</em></span><input id="p-confidence" type="number" min="0" max="1" step="0.01" placeholder="上游未提供"></label>
+            <label class="field"><span>有效期至</span><input id="p-valid-until" type="datetime-local"></label>
+          </div>
+
+          <p class="hint mt-10">
+            置信度留空表示上游没有给出，报告里会如实写「未提供」，不折算成胜率。
+            有效期早于现在会被上一级校验直接拒绝。
+          </p>
+          <div class="mt-12">
+            <label class="check"><input id="p-synthetic" type="checkbox"> 这份预测来自 Mock 或合成数据（synthetic）</label>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="section-head">
+            <h2>客观事实 <span class="muted" id="fact-count">0 条</span></h2>
+            <span class="hint">每条都要写来源，来源是上游声明，不是系统核实</span>
+            <button type="button" id="fact-add" class="btn quiet">添加一条</button>
+          </div>
+          <div class="facts" id="facts"></div>
+          <p class="hint mt-10">不填也能分析，但报告会明确写出「缺少客观事实」这一限制。</p>
+        </div>
+
+        <div class="card">
+          <div class="section-head">
+            <h2>运行与通知</h2>
+            <span class="hint">这一组决定怎么跑，不改预测内容</span>
+          </div>
+
+          <div class="grid-3">
+            <label class="field"><span>任务复杂度</span>
+              <select id="task-complexity">
+                <option value="auto">自动判断</option>
+                <option value="simple">简单 · 不拆分支</option>
+                <option value="complex">复杂 · 允许拆分支</option>
+              </select>
+            </label>
+            <label class="field"><span>分析目标</span>
+              <select id="task-goal">
+                <option value="overview">综合解读</option>
+                <option value="risk">风险分析</option>
+                <option value="comparison">历史预测对比</option>
+              </select>
+            </label>
+            <label class="field"><span>推理强度</span>
+              <select id="task-effort">
+                <option value="">使用默认档位</option>
+                <option value="light">轻度</option>
+                <option value="medium">中</option>
+                <option value="high">高</option>
+                <option value="extreme">极高</option>
+                <option value="ultra">Ultra</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="mt-16">
+            <label class="check"><input type="checkbox" id="task-notify"> 完成后按已授权范围发送邮件</label>
+          </div>
+          <div class="grid-2 mt-10">
+            <label class="field"><span>收件地址 <em>需在授权清单内</em></span><input id="task-recipient" type="email" placeholder="preview@example.invalid"></label>
+          </div>
+
+          <fieldset id="conversation-fields" class="stack plain-fieldset" hidden>
+            <legend class="eyebrow">会话与跟进</legend>
+            <label class="field"><span>会话</span><select id="conversation-id"><option value="">独立任务</option></select></label>
+            <div id="conversation-actions" class="actions"></div>
+            <p id="conversation-summary" class="hint" role="status"></p>
+            <label class="field"><span>本轮问题</span><textarea id="conversation-message" rows="2" maxlength="4000" placeholder="刚才那只股票，按前面的条件继续分析"></textarea></label>
+            <label class="field"><span>明确约束 <em>每行一项</em></span><textarea id="conversation-constraints" rows="2"></textarea></label>
+            <div class="grid-2">
+              <label class="field"><span>本轮报告格式</span>
+                <select id="conversation-format"><option value="">沿用会话或偏好</option><option value="brief">简版</option><option value="standard">标准版</option></select>
+              </label>
+              <label class="field"><span>记住报告格式</span>
+                <select id="remember-format"><option value="">本轮不保存</option><option value="brief">偏好简版</option><option value="standard">偏好标准版</option></select>
+              </label>
+            </div>
+            <label class="field"><span>记住其他事项</span><textarea id="remember-text" rows="2" maxlength="800" placeholder="例如持续关注 DEMO.SZ"></textarea></label>
+          </fieldset>
+
+          <details class="advanced">
+            <summary>高级：直接编辑原始 JSON</summary>
+            <p class="hint">表单与 JSON 双向同步；此处的字段会覆盖上方表单，提交前以 JSON 为准。</p>
+            <textarea id="task-data" class="mono" rows="12" spellcheck="false"></textarea>
+            <div class="actions">
+              <button type="button" class="btn tiny" id="json-to-form">按 JSON 回填表单</button>
+              <button type="button" class="btn tiny" id="form-to-json">用表单覆盖 JSON</button>
+            </div>
+          </details>
+
+          <div class="submit-bar">
+            <button type="submit" class="btn primary">提交分析</button>
+            <button type="button" class="btn danger" id="task-cancel" hidden>取消运行</button>
+            <span class="hint grow">提交后每秒读取一次任务状态，结束时停止。</span>
+          </div>
+        </div>
+      </form>
+
+      <div class="statusline" id="task-status" hidden></div>
+      <div id="report" class="report"></div>
+
+      <div class="mt-26" id="task-progress" hidden>
+        <div class="runviz" id="runviz" aria-label="运行进度">
+          <div class="runviz-head">
+            <span class="runviz-state"><i class="pulse-dot"></i><span id="runviz-label">等待开始</span></span>
+            <div class="runviz-stats">
+              <span>已运行 <b id="runviz-elapsed">—</b></span>
+              <span>事件 <b id="runviz-events">0</b></span>
+              <span>阶段 <b id="runviz-steps">0 / 0</b></span>
+            </div>
+          </div>
+          <div class="rail" id="runviz-rail" role="img" aria-label="各阶段执行状态"></div>
+          <div class="rail-labels" id="runviz-labels"></div>
+          <div class="runviz-foot">
+            <span class="hint">事件节律 · 最近 30 秒</span>
+            <svg class="pulse" id="runviz-pulse" viewBox="0 0 120 26" preserveAspectRatio="none" aria-hidden="true">
+              <g id="runviz-bars"></g>
+            </svg>
+          </div>
+        </div>
+
+        <div class="section-head">
+          <h2>执行过程</h2>
+          <span class="hint" id="effective-effort"></span>
+        </div>
+        <ol id="execution-plan" class="plan"></ol>
+        <ol id="execution-events" class="timeline"></ol>
+        <div id="analysis-preview"></div>
+        <div id="chart-preview"></div>
+      </div>
+
+      <details class="advanced mt-26">
+        <summary>原始任务结果（JSON）</summary>
+        <pre id="task-output">尚无任务</pre>
+      </details>
+    </div>
+  </section>
+
+  <section class="view" data-view-pane="records" hidden>
+    <div class="page-head">
+      <p class="eyebrow">记录</p>
+      <h1>跑过的任务，都留在这里。</h1>
+      <p class="lede">按提交时间倒序。点任意一行，就把那份报告调回分析页；运行中的任务会继续刷新。</p>
+    </div>
+
+    <div class="section-head">
+      <h2>任务</h2>
+      <span class="hint" id="record-count">尚未读取</span>
+      <button type="button" id="record-refresh" class="btn quiet">刷新</button>
+    </div>
+
+    <div class="filter-bar">
+      <div class="chips" id="record-chips">
+        <button type="button" data-filter="all" class="chip active">全部</button>
+        <button type="button" data-filter="active" class="chip">进行中</button>
+        <button type="button" data-filter="completed" class="chip">已完成</button>
+        <button type="button" data-filter="failed" class="chip">失败</button>
+      </div>
+      <input id="record-query" type="search" autocomplete="off" placeholder="按标的或错误码筛选">
+    </div>
+
+    <div id="record-list" class="task-list"></div>
+    <div class="actions mt-16" id="record-more-wrap" hidden>
+      <button type="button" id="record-more" class="btn tiny">载入更早的记录</button>
+    </div>
+  </section>
+
+  <section class="view" data-view-pane="settings" hidden>
+    <div class="page-head">
+      <p class="eyebrow">设置</p>
+      <h1>接什么服务，给多少权限。</h1>
+      <p class="lede">这些配置只在需要时改。默认的 Mock 模型与本地文件投递可以完全离线跑通一次完整流程。</p>
+    </div>
+
+    <div class="subnav" role="tablist">
+      <button type="button" data-panel="models" class="active">模型服务</button>
+      <button type="button" data-panel="mcp">外部工具</button>
+      <button type="button" data-panel="settings">协作与邮件</button>
+    </div>
+
+    <section id="models" class="panel">
+      <div class="section-head">
+        <h2>已配置模型</h2>
+        <span class="hint">密钥加密保存，查询与界面都不回显</span>
+        <button type="button" id="model-new" class="btn quiet">新建</button>
+      </div>
+      <div id="model-list" class="record-list"></div>
+
+      <form class="mt-26" id="model-form">
+        <div class="section-head"><h2 id="model-heading">添加模型</h2></div>
+        <input id="model-id" type="hidden">
+        <div class="grid-2">
+          <label class="field"><span>配置名称</span><input id="model-name" required placeholder="日常预测分析"></label>
+          <label class="field"><span>服务类型</span>
+            <select id="model-provider">
+              <option value="mock">Mock · 离线测试</option>
+              <option value="openai_compatible">OpenAI 兼容 API</option>
+            </select>
+          </label>
+        </div>
+        <div class="grid-2 mt-14">
+          <label class="field"><span>API 基础地址</span><input id="model-url" type="url" value="https://api.openai.com/v1" required>
+            <span class="hint hint-block">包含 /v1，不含 /chat/completions。</span></label>
+          <label class="field"><span>模型名称</span><input id="model-model" value="mock-analysis" required></label>
+        </div>
+        <div class="grid-3 mt-14">
+          <label class="field"><span>API Key</span><input id="model-key" type="password" autocomplete="new-password" placeholder="留空保留已有值"></label>
+          <label class="field"><span>超时（秒）</span><input id="model-timeout" type="number" value="20" min="1" max="120"></label>
+          <label class="field"><span>重试次数</span><input id="model-retries" type="number" value="1" min="0" max="3"></label>
+        </div>
+        <div class="mt-16">
+          <label class="check"><input id="model-temperature" type="checkbox" checked> 此模型支持温度设置</label>
+        </div>
+        <div class="grid-2 mt-10">
+          <label class="field"><span>温度最小值</span><input id="model-temp-min" type="number" value="0" min="0" max="2" step="0.1"></label>
+          <label class="field"><span>温度最大值</span><input id="model-temp-max" type="number" value="2" min="0" max="2" step="0.1"></label>
+        </div>
+        <div class="grid-2 mt-14">
+          <label class="field"><span>支持的参数（逗号分隔）</span><input id="model-supported" value="max_tokens,response_format">
+            <span class="hint hint-block">temperature 由上方的开关管理。</span></label>
+          <label class="field"><span>输入 / 输出单价（USD / 百万 token）</span>
+            <span class="grid-2">
+              <input id="model-price-in" type="number" min="0" step="0.01" placeholder="输入">
+              <input id="model-price-out" type="number" min="0" step="0.01" placeholder="输出">
+            </span>
+            <span class="hint hint-block">真实服务必填，Mock 可留空。</span></label>
+        </div>
+        <div class="grid-2 mt-14">
+          <label class="field"><span>原生推理强度映射（JSON）</span><textarea id="model-effort-map" class="mono" rows="2">{}</textarea></label>
+          <label class="field"><span>生成参数（JSON）</span><textarea id="model-params" class="mono" rows="2">{"max_tokens":512}</textarea></label>
+        </div>
+        <div class="submit-bar">
+          <button type="submit" class="btn primary">保存模型</button>
+          <span class="hint grow">保存成功不代表已设为默认，默认模型在「协作与邮件」里选。</span>
+        </div>
+      </form>
+    </section>
+
+    <section id="mcp" class="panel" hidden>
+      <div class="section-head">
+        <h2>已连接服务</h2>
+        <span class="hint">发现工具不等于授权调用，默认拒绝</span>
+        <button type="button" id="mcp-new" class="btn quiet">新建</button>
+      </div>
+      <div id="mcp-list" class="record-list"></div>
+      <div id="discovery" class="discovery mt-24">
+        <p class="muted">保存服务后点「测试与发现」。</p>
+      </div>
+
+      <form class="mt-26" id="mcp-form">
+        <div class="section-head"><h2>服务配置</h2></div>
+        <input id="mcp-id" type="hidden">
+        <div class="grid-2">
+          <label class="field"><span>服务名称</span><input id="mcp-name" required placeholder="股票数据服务"></label>
+          <label class="field"><span>连接方式</span>
+            <select id="mcp-transport">
+              <option value="streamable_http">Streamable HTTP</option>
+              <option value="stdio">本地 stdio 进程</option>
+            </select>
+          </label>
+        </div>
+        <div class="mt-14" id="mcp-http">
+          <div class="grid-2">
+            <label class="field"><span>服务地址</span><input id="mcp-url" value="http://127.0.0.1:8766/mcp"></label>
+            <label class="field"><span>Bearer token</span><input id="mcp-token" type="password" autocomplete="new-password" placeholder="留空保留已有值"></label>
+          </div>
+        </div>
+        <div class="mt-14" id="mcp-stdio" hidden>
+          <div class="grid-2">
+            <label class="field"><span>启动程序</span><input id="mcp-command" placeholder="完整程序路径，例如 python.exe"></label>
+            <label class="field"><span>启动参数（JSON 数组）</span><textarea id="mcp-args" class="mono" rows="2">[]</textarea></label>
+          </div>
+          <label class="field mt-14"><span>进程环境变量（加密保存）</span><textarea id="mcp-env" class="mono" rows="2" placeholder='{"SERVICE_TOKEN":"…"}'></textarea></label>
+          <p class="hint mt-6">只运行你信任的程序；凭据走环境变量，不写进启动参数。</p>
+        </div>
+        <div class="grid-3 mt-14">
+          <label class="field"><span>超时（秒）</span><input id="mcp-timeout" type="number" min="1" max="120" value="15"></label>
+          <label class="field"><span>允许工具（逗号分隔）</span><input id="mcp-tools" placeholder="get_context,send_email"></label>
+          <label class="field"><span>允许资源 URI（每行一个）</span><textarea id="mcp-resources" class="mono" rows="2"></textarea></label>
+        </div>
+        <label class="field mt-14"><span>每个工具的权限类型（JSON）</span>
+          <textarea id="mcp-effects" class="mono" rows="2" placeholder='{"get_context":"read","send_email":"email"}'>{}</textarea>
+          <span class="hint hint-block">read：只读工具；email：还需收件人授权；未声明等同 deny。</span>
+        </label>
+        <div class="submit-bar"><button type="submit" class="btn primary">保存 MCP 服务</button></div>
+      </form>
+    </section>
+
+    <section id="settings" class="panel" hidden>
+      <form id="settings-form">
+        <div class="setting-group">
+          <h2>默认模型与温度</h2>
+          <p class="hint">所有角色默认继承这里的模型。温度只影响生成随机性，与预测准确率无关。</p>
+          <div class="grid-3">
+            <label class="field"><span>默认模型</span><select id="default-model"></select></label>
+            <label class="field"><span>默认推理强度</span>
+              <select id="default-effort">
+                <option value="light">轻度</option>
+                <option value="medium">中</option>
+                <option value="high">高</option>
+                <option value="extreme">极高</option>
+                <option value="ultra">Ultra</option>
+              </select>
+            </label>
+            <label class="field"><span>全局温度</span><input id="global-temperature" type="number" min="0" max="2" step="0.1" value="0.2"></label>
+          </div>
+          <div class="actions mt-14">
+            <button type="button" id="reset-temperature" class="btn tiny">恢复默认温度</button>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <h2>主 Agent 与角色覆盖</h2>
+          <p class="hint">留空即继承。子 Agent 当前只接收已校验的预测与事实，不开放工具。</p>
+          <div id="role-settings"></div>
+        </div>
+
+        <div class="setting-group">
+          <h2>A2A 外部 Agent</h2>
+          <p class="hint">协议为 A2A 0.3 非流式子集，主 Agent 编排仍在本机。</p>
+          <div id="endpoint-list"></div>
+          <input id="endpoint-id" type="hidden">
+          <div class="grid-2 mt-12">
+            <label class="field"><span>服务名称</span><input id="endpoint-name" placeholder="风险服务"></label>
+            <label class="field"><span>A2A JSON-RPC 地址</span><input id="endpoint-url" placeholder="https://agent.example.com/a2a/risk"></label>
+          </div>
+          <div class="grid-2 mt-12">
+            <label class="field"><span>认证 token</span><input id="endpoint-token" type="password" autocomplete="new-password"></label>
+            <label class="field"><span>单次费用预留上限（USD）</span><input id="endpoint-cost" type="number" min="0" step="0.01" value="0.01"></label>
+          </div>
+          <div class="actions mt-12"><button type="button" id="endpoint-save" class="btn tiny">保存外部 Agent</button></div>
+        </div>
+
+        <div class="setting-group">
+          <h2>运行边界</h2>
+          <p class="hint">所有模型调用、工具调用与委派都计入调用次数与费用预留。</p>
+          <div class="grid-3">
+            <label class="field"><span>最大子 Agent 数</span><input id="limit-max_subagents" type="number" min="0" max="3"></label>
+            <label class="field"><span>最大委派深度</span><input id="limit-max_depth" type="number" min="0" max="3"></label>
+            <label class="field"><span>最大调用次数</span><input id="limit-max_calls" type="number" min="1" max="50"></label>
+          </div>
+          <div class="grid-3 mt-12">
+            <label class="field"><span>任务总超时（秒）</span><input id="limit-timeout_seconds" type="number" min="1" max="600"></label>
+            <label class="field"><span>子任务超时（秒）</span><input id="limit-child_timeout_seconds" type="number" min="1" max="120"></label>
+            <label class="field"><span>费用预算（USD）</span><input id="limit-budget_usd" type="number" min="0" max="100" step="0.01"></label>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <h2>邮件与授权</h2>
+          <p class="hint">这里决定「谁能收」。具体某一次要不要发，在分析页单独勾选——保存授权不会发信。</p>
+          <div class="grid-3">
+            <label class="field"><span>投递方式</span>
+              <select id="mail-transport">
+                <option value="file">本地文件（模拟）</option>
+                <option value="smtp">SMTP</option>
+                <option value="mcp">MCP 邮件工具</option>
+              </select>
+            </label>
+            <label class="field"><span>发件人</span><input id="mail-sender" placeholder="research@example.invalid"></label>
+            <label class="field"><span>图表形式</span>
+              <select id="chart-delivery"><option value="inline">正文内嵌</option><option value="attachment">附件</option></select>
+            </label>
+          </div>
+          <div class="grid-3 mt-12">
+            <label class="field"><span>SMTP 主机</span><input id="mail-host" placeholder="smtp.example.invalid"></label>
+            <label class="field"><span>端口</span><input id="mail-port" type="number" min="1" max="65535"></label>
+            <label class="field"><span>加密方式</span>
+              <select id="mail-tls"><option value="starttls">STARTTLS</option><option value="ssl">SSL</option></select>
+            </label>
+          </div>
+          <div class="grid-2 mt-12">
+            <div>
+              <label class="field"><span>收件人授权清单（每行一个）</span><textarea id="mail-allowlist" class="mono" rows="3"></textarea></label>
+              <p id="allowlist-summary" class="allow-sum" role="status"></p>
+            </div>
+            <div>
+              <div class="mt-24"><label class="check"><input id="mail-synthetic" type="checkbox"> 允许发送带 synthetic 标记的报告</label></div>
+              <div class="grid-2 mt-12">
+                <label class="field"><span>MCP 邮件服务</span><select id="mail-mcp-server"></select></label>
+                <label class="field"><span>MCP 工具名</span><input id="mail-mcp-tool" placeholder="send_email"></label>
+              </div>
+            </div>
+          </div>
+          <p class="hint mt-10">SMTP 账号密码通过服务端环境变量注入，不在页面里保存。</p>
+        </div>
+
+        <div class="submit-bar">
+          <button type="submit" class="btn primary">保存全部设置</button>
+          <span id="settings-dirty" class="dirty-flag" hidden>有未保存的修改</span>
+          <span class="hint grow">保存时会提交完整设置对象，页面未展示的字段（如环境变量名）会原样保留。</span>
+        </div>
+      </form>
+    </section>
+  </section>
+
+  <section class="view" data-view-pane="memory" hidden>
+    <div id="memory" class="panel">
+      <div class="page-head">
+        <p class="eyebrow">记忆</p>
+        <h1>接着上一轮说下去。</h1>
+        <p class="lede">用一个只有你知道的访问密钥恢复自己的会话与长期记忆。密钥只存在当前标签页，关掉即失效。</p>
+      </div>
+
+      <div class="card">
+        <label class="field"><span>记忆访问密钥</span><input id="memory-key" type="password" autocomplete="new-password"></label>
+        <div id="memory-access-actions" class="actions mt-12"></div>
+      </div>
+
+      <div class="mt-16" id="memory-details" hidden>
+        <div class="card">
+          <div class="section-head"><h2>记忆策略</h2><span class="hint">压缩阈值越大，保留的原文越多</span></div>
+          <div class="mb-14"><label class="check"><input id="memory-enabled" type="checkbox"> 启用跨会话写入和召回</label></div>
+          <div class="grid-2">
+            <label class="field"><span>压缩阈值（估算字节）</span><input id="memory-threshold" type="number" min="1024" max="15000"></label>
+            <label class="field"><span>保留近期轮数</span><input id="memory-recent" type="number" min="1" max="6"></label>
+          </div>
+          <div id="memory-settings-actions" class="actions mt-14"></div>
+          <p id="memory-pending" class="hint mt-10" role="status"></p>
+        </div>
+        <div class="mt-16" id="memory-entries"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="/app.js" defer></script>
+<script src="/memory.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,269 @@
+/* ===== 数据图形层 =====
+ * 深色重构新增的可视化元件：方向迷你折线、置信度环形仪表、
+ * 周期进度条、时间跨度轴，以及主内容区右侧的背景装饰。
+ * 只做「加图形」，不动任何控件的位置与功能。
+ */
+
+/* ---------------- 1. 预测方向 · 迷你趋势折线 ---------------- */
+
+.segmented button .seg-line {
+  display: block;
+  width: 34px;
+  height: 11px;
+  margin: 4px auto 0;
+  overflow: visible;
+  color: var(--ink-tertiary);
+  opacity: 0.5;
+  transition: color 0.18s ease, opacity 0.18s ease, filter 0.18s ease;
+}
+
+.segmented button .seg-line path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.segmented button .seg-line .seg-dot {
+  fill: currentColor;
+  opacity: 0.9;
+}
+
+.segmented button .seg-line .seg-fill {
+  stroke: none;
+  opacity: 0.16;
+}
+
+/* 各自的方向色：即使未选中也留一点点暗示 */
+.segmented button[data-value="up"] .seg-line {
+  color: var(--up);
+}
+
+.segmented button[data-value="down"] .seg-line {
+  color: var(--down);
+}
+
+.segmented button[data-value="flat"] .seg-line {
+  color: var(--accent);
+}
+
+.segmented button:hover .seg-line {
+  opacity: 0.8;
+}
+
+.segmented button[aria-pressed="true"] .seg-line {
+  opacity: 1;
+  filter: drop-shadow(0 0 4px currentColor);
+}
+
+.segmented button[aria-pressed="true"] .seg-line .seg-dot {
+  filter: drop-shadow(0 0 3px currentColor);
+}
+
+/* ---------------- 2. 置信度 · 环形仪表 ---------------- */
+
+.gauge-wrap {
+  position: relative;
+  display: block;
+}
+
+.gauge-wrap input {
+  padding-right: 34px;
+}
+
+.gauge {
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  width: 22px;
+  height: 22px;
+  transform: translateY(-50%) rotate(-90deg);
+  pointer-events: none;
+  overflow: visible;
+}
+
+.gauge-track {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.11);
+  stroke-width: 2.6;
+}
+
+.gauge-arc {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  opacity: 0;
+  transition: stroke-dashoffset 0.45s cubic-bezier(0.22, 0.8, 0.3, 1), opacity 0.3s ease;
+  filter: drop-shadow(0 0 3px rgba(22, 211, 230, 0.9));
+}
+
+/* 有值时数据环才亮起来 */
+.gauge-wrap[data-filled="true"] .gauge-track {
+  stroke: rgba(255, 255, 255, 0.15);
+}
+
+.gauge-wrap[data-filled="true"] .gauge-arc {
+  opacity: 1;
+}
+
+/* ---------------- 3. 周期 · 微型进度条 ---------------- */
+
+.cycle-bar {
+  position: relative;
+  display: block;
+  height: 3px;
+  margin-top: 7px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: visible;
+}
+
+.cycle-bar i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: 0;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(22, 211, 230, 0.45), var(--accent));
+  box-shadow: 0 0 10px rgba(22, 211, 230, 0.55);
+  transition: width 0.4s cubic-bezier(0.22, 0.8, 0.3, 1);
+}
+
+/* ---------------- 4. 时间区域 · 跨度时间轴 ---------------- */
+
+.span-track {
+  grid-column: 1 / -1;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  margin: -8px 0 8px;
+}
+
+.span-rail {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  top: 50%;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    rgba(22, 211, 230, 0.5),
+    rgba(22, 211, 230, 0.14) 34%,
+    rgba(22, 211, 230, 0.14) 66%,
+    rgba(22, 211, 230, 0.5)
+  );
+}
+
+/* 两端刻度：对齐上面两个时间框的内缘 */
+.span-rail::before,
+.span-rail::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  width: 1px;
+  height: 9px;
+  background: rgba(22, 211, 230, 0.55);
+  box-shadow: 0 0 6px rgba(22, 211, 230, 0.6);
+}
+
+.span-rail::before {
+  left: 0;
+}
+
+.span-rail::after {
+  right: 0;
+}
+
+.span-chip {
+  position: relative;
+  z-index: 1;
+  padding: 0 8px;
+  background: #0d131d;
+  border: 1px solid rgba(22, 211, 230, 0.22);
+  border-radius: 2px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  line-height: 15px;
+  letter-spacing: 0.3px;
+  color: rgba(22, 211, 230, 0.85);
+  white-space: nowrap;
+  transition: color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.span-chip[data-tone="invalid"] {
+  color: var(--danger);
+  border-color: rgba(226, 81, 60, 0.4);
+}
+
+.span-chip[data-tone="ok"] {
+  box-shadow: 0 0 12px rgba(22, 211, 230, 0.16);
+}
+
+/* ---------------- 5. 右侧背景装饰 ---------------- */
+
+.desk-bg {
+  position: absolute;
+  top: -110px;
+  right: -26px;
+  bottom: -20px;
+  left: -26px;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+#result {
+  position: relative;
+  z-index: 1;
+}
+
+.desk-bg svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.desk-bg .bg-wave {
+  fill: none;
+  stroke: rgba(22, 211, 230, 0.62);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.desk-bg .bg-wave-soft {
+  fill: none;
+  stroke: rgba(22, 211, 230, 0.24);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.desk-bg .bg-scatter {
+  fill: rgba(160, 210, 228, 0.42);
+}
+
+.desk-bg .bg-scatter-hot {
+  fill: rgba(22, 211, 230, 0.8);
+}
+
+@media (max-width: 1180px) {
+  .desk-bg {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gauge-arc,
+  .cycle-bar i,
+  .span-chip {
+    transition: none;
+  }
+}

@@ -577,6 +577,24 @@ class ConsoleAPITests(unittest.TestCase):
             more = self.client.get(f"/api/tasks/{tid}/events?after={events[-1]['seq']}").json()["events"]
             self.assertTrue(any(e["kind"] == "report" for e in more))
 
+    def test_task_list_orders_newest_first_and_exposes_request_brief(self):
+        first = MockPredictionAdapter().fetch()
+        second = {**first, "subject": "600000.SH", "prediction_id": "test-second"}
+        oldest = self.client.post("/api/tasks", json={"prediction": first}).json()
+        newest = self.client.post("/api/tasks", json={"prediction": second}).json()
+        self.assertEqual(oldest["metadata"]["request"]["subject"], first["subject"])
+        self.assertEqual(newest["metadata"]["request"]["horizon"], second["horizon"])
+
+        ascending = self.client.get("/api/tasks").json()
+        self.assertEqual([item["id"] for item in ascending["items"]], [oldest["id"], newest["id"]])
+        self.assertIsNone(ascending["next_after"])
+
+        descending = self.client.get("/api/tasks?order=desc&limit=1").json()
+        self.assertEqual([item["id"] for item in descending["items"]], [newest["id"]])
+        self.assertIsNotNone(descending["next_before"])
+        older = self.client.get(f"/api/tasks?order=desc&limit=1&before={descending['next_before']}").json()
+        self.assertEqual([item["id"] for item in older["items"]], [oldest["id"]])
+
     def test_session_csrf_origin_and_no_secret_response(self):
         bad = self.client.post("/api/models", json={"name": "Bad"}, headers={"X-CSRF-Token": "bad"})
         self.assertEqual(bad.status_code, 403)
@@ -610,7 +628,7 @@ class ConsoleAPITests(unittest.TestCase):
         self.assertEqual(self.client.get("/.well-known/agent-card.json").json()["protocolVersion"], "0.3.0")
 
     def test_external_a2a_bearer_exchange(self):
-        with patch.dict(os.environ, {"SPM_A2A_TOKEN": "mock-peer-token"}):
+        with patch.dict(os.environ, {"STOCK_PREDICT_MAILER_A2A_TOKEN": "mock-peer-token"}):
             endpoint = self.f.store.put("agents", {"name": "Risk peer", "url": f"http://127.0.0.1:{self.server.server_port}/a2a/risk",
                                                   "auth_token": "mock-peer-token", "cost_ceiling_usd": 0.0})
             budget = Budget(self.f.settings["limits"])

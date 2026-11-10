@@ -132,8 +132,10 @@ window.Workbench = (() => {
     $('report-inspector').hidden = !open;
     document.body.classList.toggle('inspector-visible', open);
     $('report-open').setAttribute('aria-expanded', String(open));
+    window.AnalysisInput?.layout();
   }
   function clearTask() {
+    window.AnalysisInput?.reset();
     window.PonyOffice?.reset();
     currentTask = null;
     displayed = null;
@@ -306,6 +308,7 @@ window.Workbench = (() => {
     heading(`${turns.at(-1)?.prediction?.subject || '预测'} · 分析会话`);
   }
   function task(value) {
+    window.AnalysisInput?.observe(value);
     if (displayed?.id !== value.id) {
       $('mail-live').replaceChildren();
       $('knowledge-report-evidence')?.remove();
@@ -358,6 +361,9 @@ window.Workbench = (() => {
     rememberPosition();
   }
   function view(name) {
+    if (name !== 'analysis') document.body.classList.remove('analysis-composer-visible');
+    else document.body.classList.add('analysis-composer-visible');
+    $('session-menu').open = false;
     window.PonyOffice?.view(name);
     document.body.dataset.view = name;
     document.body.classList.remove('sidebar-open');
@@ -489,6 +495,8 @@ window.Workbench = (() => {
   $('conversation-id').onchange = safe(() => $('conversation-id').value ? select($('conversation-id').value, {save: false}) : newAnalysis());
   for (const id of ['task-complexity', 'task-goal', 'task-effort']) $(id).addEventListener('change', () => { taskControlsDirty = true; });
   document.addEventListener('keydown', event => { if (event.key === 'Escape') { inspector(false); document.body.classList.add('report-dismissed'); document.body.classList.remove('sidebar-open'); $('sidebar-toggle').setAttribute('aria-expanded', 'false'); } });
+  document.addEventListener('click', event => { if (!$('session-menu').contains(event.target)) $('session-menu').open = false; });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') $('session-menu').open = false; });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveDraft(); });
   return {init, view, task, prepare, submitted: value => { submitted(value).catch(error => notice(error.message, true)); }, record, sessions, identityChanged, inspector};
 })();
@@ -665,7 +673,7 @@ window.KnowledgeUI = (() => {
   }
   function evidence(data) {
     let host = $('knowledge-report-evidence');
-    if (!host) { host = document.createElement('section'); host.id = 'knowledge-report-evidence'; $('inspector-content').append(host); }
+    if (!host) { host = document.createElement('section'); host.id = 'knowledge-report-evidence'; ($('analysis-pane-report') || $('inspector-content')).append(host); }
     renderEvidence(host, data); host.scrollIntoView({block: 'start'});
   }
   const CONFIG_LABELS = {provider: '服务类型', base_url: '服务地址', model: '模型名称', version: '模型版本', timeout_seconds: '单次超时（秒）', allow_external: '允许向远程服务发送资料与查询', mode: '处理范围', document_timeout_seconds: '每份资料总超时（秒）', max_calls: '每份资料最大调用次数', max_input_chars: '单次输入字符上限', max_output_tokens: '单次输出 Token 上限', budget_usd: '每份资料预算（美元）', input_usd_per_million: '每百万输入 Token 单价（美元）', output_usd_per_million: '每百万输出 Token 单价（美元）'};
@@ -756,20 +764,22 @@ globalThis.PonyFloor = (() => {
     ['risk', '风险分析', '#9570d6', 800, 160, false],
     ['mail', '邮件投递', '#4098df', 230, 390, true],
     ['charts', '图表生成', '#23afb0', 515, 390, false],
-    ['advice', '建议生成', '#dab32b', 800, 390, false]
-  ].map(([id, name, color, x, y, resident]) => ({id, name, color, x, y, resident}));
+    ['advice', '建议生成', '#dab32b', 800, 390, false],
+    ['assistant', '分析助理', '#e58b36', 900, 500, true]
+  ].map(([id, name, color, x, y, resident]) => ({id, name, color, x, y, resident, station: id !== 'assistant'}));
   const gate = {x: 35, y: 550}, radius = 30;
   const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
   class Floor {
     constructor() { this.reset(); }
     reset() {
-      this.time = 0; this.door = 0; this.transit = null; this.queue = []; this.serial = 0;
+      this.time = 0; this.door = 0; this.transit = null; this.queue = []; this.serial = 0; this.nextRoam = 5;
       this.actors = roles.map(role => ({...role, x: role.x, y: role.y + 70, deskX: role.x, deskY: role.y,
-        present: role.resident, pose: role.resident ? 'seated' : 'absent', state: 'idle', phase: 0, speed: 0, heading: 1, last: '', summoned: false}));
+        present: role.resident, pose: role.id === 'assistant' ? 'idle' : role.resident ? 'seated' : 'absent', state: 'idle', phase: 0, speed: 0, heading: 1, last: '', summoned: false}));
     }
     blocked(point, actor, dock = false) {
       if (point.x < 25 || point.x > 935 || point.y < 30 || point.y > 590) return true;
       for (const role of roles) {
+        if (!role.station) continue;
         if (point.x > role.x - 100 - radius && point.x < role.x + 100 + radius && point.y > role.y - 65 - radius && point.y < role.y + 25 + radius) return true;
         if (!(dock && role.id === actor.id) && point.x > role.x - 32 - radius && point.x < role.x + 32 + radius && point.y > role.y + 35 - radius && point.y < role.y + 88 + radius) return true;
       }
@@ -806,8 +816,12 @@ globalThis.PonyFloor = (() => {
     finish(state) {
       for (const actor of this.actors) if (actor.state === 'running') actor.state = state === 'completed' ? 'completed' : state;
     }
-    tick(dt, reduced = false) {
+    tick(dt, reduced = false, idle = false) {
       dt = Math.max(0, Math.min(dt, .05)); this.time += dt;
+      if (idle && !reduced && this.time > this.nextRoam && !this.transit && !this.queue.length) {
+        const resident = this.actors.filter(a => a.resident)[this.serial++ % 3];
+        this.queue.push({id: resident.id, roam: true}); this.nextRoam = this.time + 18;
+      }
       for (const actor of this.actors) {
         actor.phase += dt * (actor.pose === 'walking' ? 9 : 1.5);
         if (actor.present && !actor.resident && actor.state !== 'running' && !this.queue.some(job => job.id === actor.id) && this.transit?.id !== actor.id) this.queue.push({id: actor.id, exit: true});
@@ -815,9 +829,10 @@ globalThis.PonyFloor = (() => {
       if (!this.transit && this.queue.length) {
         const job = this.queue.shift(), actor = this.actors.find(a => a.id === job.id);
         // Completed-before-entry jobs are coalesced; never invent work for fast tasks.
-        if (!job.exit && actor.state !== 'running') return;
-        this.transit = {...job, stage: job.exit ? 'rise' : 'open', elapsed: 0, path: null, index: 0};
-        if (job.exit) actor.pose = 'rising';
+        if (!job.exit && !job.roam && actor.state !== 'running') return;
+        this.transit = {...job, stage: job.exit || job.roam ? 'rise' : 'open', elapsed: 0, path: null, index: 0};
+        if (job.exit || job.roam) actor.pose = 'rising';
+        if (job.roam && !actor.station) { this.transit.stage = 'stroll'; this.transit.path = this.path(actor, {x: actor.deskX - 80, y: actor.deskY + 70}, actor); actor.pose = 'walking'; }
       }
       if (!this.transit) { this.door = Math.max(0, this.door - dt * 4); return; }
       const job = this.transit, actor = this.actors.find(a => a.id === job.id);
@@ -841,18 +856,23 @@ globalThis.PonyFloor = (() => {
       } else if (job.stage === 'turn') {
         actor.pose = 'turning';
         if (job.elapsed > (reduced ? 0 : .25)) { job.path = [{x: actor.deskX, y: actor.deskY + 70}]; transition('dock'); }
+      } else if (job.stage === 'linger') {
+        actor.pose = 'idle';
+        if (!idle || job.elapsed > 1.5) { job.path = this.path(actor, {x: actor.deskX, y: actor.deskY + (actor.station ? 120 : 70)}, actor); transition('return'); }
       } else if (job.stage === 'close') {
         this.door = Math.max(0, this.door - dt * 4);
         if (!this.door) this.transit = null;
       } else {
         if (!job.path) {
-          job.path = this.path(actor, job.exit ? gate : {x: actor.deskX, y: actor.deskY + 120}, actor);
+          job.path = this.path(actor, job.exit ? gate : job.stage === 'stroll' ? {x: actor.deskX + 80, y: actor.deskY + 120} : {x: actor.deskX, y: actor.deskY + 120}, actor);
           actor.pose = 'waiting'; return;
         }
         const target = job.path[0];
         if (!target) {
           actor.speed = 0;
-          if (job.stage === 'undock') { job.path = this.path(actor, gate, actor); transition('walk'); }
+          if (job.stage === 'undock') { job.path = this.path(actor, job.roam ? {x: actor.deskX + 80, y: actor.deskY + 120} : gate, actor); transition(job.roam ? 'stroll' : 'walk'); }
+          else if (job.stage === 'stroll') { actor.pose = 'idle'; transition('linger'); }
+          else if (job.stage === 'return' && !actor.station) { actor.pose = 'idle'; this.transit = null; }
           else if (job.exit) {
             this.door = Math.min(1, this.door + dt * 4);
             actor.pose = 'waiting';
@@ -867,6 +887,7 @@ globalThis.PonyFloor = (() => {
         if (job.exit && next.x < 85 && next.y > 515 && this.door < 1) { this.door = Math.min(1, this.door + dt * 4); actor.pose = 'waiting'; return; }
         if (this.blocked(next, actor, ['dock', 'undock'].includes(job.stage))) { actor.pose = 'waiting'; actor.speed = 0; return; }
         actor.heading = target.x < actor.x ? -1 : target.x > actor.x ? 1 : actor.heading;
+        actor.facing = target.y < actor.y - .1 ? 'back' : 'side';
         actor.x = next.x; actor.y = next.y; actor.speed = speed; actor.pose = 'walking';
         if (d <= travel + .01) job.path.shift();
         if (distance(actor, gate) > 70 && !job.exit) this.door = Math.max(0, this.door - dt * 4);
@@ -902,6 +923,7 @@ window.PonyOffice = (() => {
   const desks = new Map(), ponies = new Map(), buttons = new Map();
   function choose(id) {
     selected = id;
+    if (id === 'assistant') { window.AnalysisInput?.open('input'); return; }
     for (const [key, button] of buttons) button.setAttribute('aria-pressed', String(key === id));
     window.Workbench.inspector(true);
     $('office-roles').querySelector(`[data-office-role="${id}"]`)?.scrollIntoView({block: 'nearest'});
@@ -922,8 +944,10 @@ window.PonyOffice = (() => {
       <path d="M-27 30H27L31 80H-31Z" fill="#d7dce0"/><path d="M-29 81H29L21 93H-21Z" fill="#c8cdd1"/><path d="M0 92V109M0 105L-22 115M0 105L22 115" stroke="#bfc6cb" stroke-width="4"/>
       <text x="0" y="-139" text-anchor="middle" class="office-desk-name">${role.name}</text><circle cx="-63" cy="-143" r="4" fill="${role.color}"/>`);
     desks.set(role.id, desk); world.append(desk);
+    if (!role.station) desk.setAttribute('display', 'none');
     const pony = el('g', {role: 'button', tabindex: '0', 'aria-label': `${role.name}小马，查看工作状态`, 'data-pony': role.id});
     pony.innerHTML = `<title>${role.name}</title><ellipse class="pony-ground" cx="0" cy="-1" rx="29" ry="7" fill="#101820" opacity=".15"/><g class="pony-rig"><g class="pony-leg-left"><path d="M-12-26L-15-9L-24-3L-23 3H-7L-1-25Z" fill="#111315"/></g><g class="pony-leg-right"><path d="M4-26L9-7L5 2H23L24-5L17-27Z" fill="#111315"/></g><path d="M-21-56Q0-69 23-54L25-24Q0-12-24-25Z" fill="#0c0e11"/><path d="M-22-37Q-41-46-33-29L-21-23" fill="#111315" class="pony-tail"/><g class="pony-arm-left"><path d="M-18-54Q-33-53-31-35L-23-29L-13-45Z" fill="#111315"/></g><g class="pony-arm-right"><path d="M17-54Q31-53 33-36L25-29L12-44Z" fill="#111315"/></g><g class="pony-head"><path d="M-22-67Q-28-92-11-102L-9-117L3-105Q18-108 21-94L34-85L29-66L11-62Q-4-57-22-67Z" fill="#090b0d"/><path d="M-26-83L-32-94L-17-96L-23-106L-7-102L1-114L5-101" fill="#090b0d"/><g class="pony-eyes"><ellipse cx="8" cy="-87" rx="6" ry="9" fill="white"/><ellipse cx="23" cy="-83" rx="5" ry="8" fill="white"/><ellipse cx="10" cy="-86" rx="2.8" ry="5" fill="#141820"/><ellipse cx="25" cy="-82" rx="2.4" ry="4.5" fill="#141820"/></g></g><path d="M-23-65Q0-56 23-65L24-55Q0-45-24-56Z" fill="${role.color}"/><path class="pony-scarf" d="M-14-54L-16-32L-5-34L-4-53Z" fill="${role.color}"/></g><circle class="pony-selected" cx="0" cy="-36" r="39" fill="none" stroke="${role.color}" stroke-width="1.5" stroke-dasharray="4 5" visibility="hidden"/>`;
+    pony.querySelector('.pony-eyes').append(el('ellipse', {cx: 29, cy: -75, rx: 1.4, ry: 2, fill: '#828a91'}), el('path', {d: 'M19-68L27-69', stroke: '#68717a', 'stroke-width': 1}));
     pony.addEventListener('click', () => choose(role.id));
     pony.addEventListener('keydown', event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); choose(role.id); } });
     ponies.set(role.id, pony); world.append(pony);
@@ -933,7 +957,7 @@ window.PonyOffice = (() => {
   }
   const portal = document.createElement('div'); portal.className = 'sidebar-office-door';
   portal.innerHTML = '<span class="sidebar-door-art" aria-hidden="true"><i></i></span><span>协作通道<small>子 Agent 由此进出</small></span>';
-  document.querySelector('.topbar .meta').before(portal);
+  office.querySelector('.office-heading').append(portal);
   const progress = document.createElement('section'); progress.id = 'office-progress'; progress.className = 'office-progress';
   progress.innerHTML = '<h3>工作进度</h3><p id="office-task-state" role="status">等待分析任务</p><p id="office-connection" class="error-text" hidden>连接中断，正在恢复；暂不显示新的工作进展。</p><div id="office-roles"></div>';
   $('inspector-content').prepend(progress);
@@ -952,7 +976,7 @@ window.PonyOffice = (() => {
       const name = document.createElement('strong'); name.textContent = actor.name;
       const state = document.createElement('span'); state.textContent = `${captions[actor.state] || actor.state}${actor.present && !['seated', 'absent'].includes(actor.pose) ? ' · ' + ({walking: '前往工位 / 返回', waiting: '等待通行', turning: '对齐工位', sitting: '正在落座', rising: '正在离座'}[actor.pose] || actor.pose) : ''}`;
       const note = document.createElement('small'); note.textContent = actor.last || (actor.resident ? '常驻办公室' : '按实际任务需要参与');
-      row.append(name, state, note); row.onclick = () => { selected = actor.id; renderUI(); }; host.append(row);
+      row.append(name, state, note); row.onclick = () => { if (actor.id === 'assistant') window.AnalysisInput?.open('input'); selected = actor.id; renderUI(); }; host.append(row);
     }
   }
   function reset(id = null, restoring = true) {
@@ -998,8 +1022,9 @@ window.PonyOffice = (() => {
       const phase = actor.phase, stride = walking ? Math.sin(phase) * 25 : 0;
       const bob = walking ? Math.abs(Math.sin(phase)) * 2 : 0;
       pony.setAttribute('transform', `translate(${actor.x.toFixed(2)} ${(actor.y - bob - (seated ? (1 - sit) * 5 : 0)).toFixed(2)}) scale(.88)`);
-      pony.querySelector('.pony-eyes').setAttribute('visibility', sit > .6 ? 'hidden' : 'visible');
-      pony.querySelector('.pony-head').setAttribute('transform', `rotate(${working && !reduced.matches ? Math.sin(phase * 4) * 1.4 : 0} 0 -72)`);
+      pony.querySelector('.pony-eyes').setAttribute('visibility', sit > .6 || (walking && actor.facing === 'back') ? 'hidden' : 'visible');
+      pony.querySelector('.pony-eyes').setAttribute('transform', `translate(0 -84) scale(1 ${!reduced.matches && actor.phase % 8 > 7.75 ? .08 : 1}) translate(0 84)`);
+      pony.querySelector('.pony-head').setAttribute('transform', `rotate(${!reduced.matches ? Math.sin(phase * (working ? 4 : .8)) * 1.4 : 0} 0 -72)`);
       pony.querySelector('.pony-rig').setAttribute('transform', `scale(${seated ? 1 : actor.heading} 1)`);
       pony.querySelector('.pony-leg-left').setAttribute('transform', seated ? `translate(${-2 * sit} ${-8 * sit}) rotate(${40 * sit} -10 -24)` : `rotate(${stride} -10 -26)`);
       pony.querySelector('.pony-leg-right').setAttribute('transform', seated ? `translate(${2 * sit} ${-8 * sit}) rotate(${-40 * sit} 10 -24)` : `rotate(${-stride} 10 -26)`);
@@ -1018,7 +1043,7 @@ window.PonyOffice = (() => {
     raf = 0;
     if (!active || document.hidden) { lastFrame = 0; return; }
     const dt = lastFrame ? Math.min((now - lastFrame) / 1000, .05) : 0; lastFrame = now;
-    if (connected) floor.tick(dt, reduced.matches);
+    if (connected) floor.tick(dt, reduced.matches, !['working', 'submitted'].includes(taskState));
     draw(); if (now - lastUI > 450) { renderUI(); lastUI = now; }
     raf = requestAnimationFrame(frame);
   }
@@ -1028,4 +1053,122 @@ window.PonyOffice = (() => {
   $('office-show-room').onclick = () => window.Workbench.inspector(false);
   reset(); view(document.body.dataset.view || 'analysis');
   return {reset, sync, view, disconnected: () => { connected = false; renderUI(); draw(); }, snapshot: () => ({taskId, taskState, door: floor.door, actors: floor.actors.map(a => ({id: a.id, present: a.present, pose: a.pose, state: a.state, x: a.x, y: a.y}))})};
+})();
+
+/* One structured request: a persistent composer and three inspector tabs. */
+window.AnalysisInput = (() => {
+  const form = $('task-form'), inspector = $('report-inspector'), content = $('inspector-content');
+  let lastPrediction = null, mode = 'progress', composing = false;
+  const tabs = document.createElement('div'); tabs.className = 'analysis-tabs'; tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', '分析工作区面板');
+  const panes = {};
+  for (const [id, label] of [['input', '分析资料'], ['progress', '工作进度'], ['report', '报告与证据']]) {
+    const button = document.createElement('button'); button.type = 'button'; button.textContent = label; button.id = 'analysis-tab-' + id; button.dataset.analysisTab = id;
+    button.setAttribute('role', 'tab'); button.setAttribute('aria-controls', 'analysis-pane-' + id); button.onclick = () => open(id);
+    const pane = document.createElement('section'); pane.id = 'analysis-pane-' + id; pane.setAttribute('role', 'tabpanel'); pane.setAttribute('aria-labelledby', button.id);
+    panes[id] = pane; tabs.append(button); content.append(pane);
+  }
+  inspector.querySelector('.inspector-head').after(tabs);
+  const status = document.createElement('p'); status.id = 'analysis-data-status'; status.className = 'analysis-data-status'; status.setAttribute('role', 'status'); panes.input.append(status);
+  panes.input.append(action('使用示例跑通', () => $('try-sample').click()));
+  const composer = document.querySelector('.composer'), bar = document.querySelector('#task-form .submit-bar');
+  const message = $('conversation-message');
+  // Move existing controls rather than clone them: IDs, event handlers and values survive.
+  const preferences = composer.querySelector('details');
+  form.append(preferences);
+  form.append($('task-data').closest('details'));
+  panes.input.append(form);
+  panes.progress.append($('office-progress'));
+  panes.report.append($('report'), $('mail-live'));
+  panes.report.append($('task-output').closest('details'));
+  const dock = document.createElement('section'); dock.id = 'analysis-composer'; dock.setAttribute('aria-label', 'AI 分析对话栏');
+  const controls = document.createElement('div'); controls.className = 'analysis-composer-controls';
+  const data = document.createElement('button'); data.id = 'analysis-data-open'; data.type = 'button'; data.className = 'btn'; data.onclick = () => open('input');
+  const session = document.createElement('span'); session.id = 'analysis-session-label'; session.className = 'hint';
+  controls.append(data, session);
+  const send = bar.querySelector('[type=submit]'); send.id = 'analysis-send'; send.textContent = '发送'; send.setAttribute('form', form.id);
+  controls.append($('task-cancel'), send);
+  dock.append(composer, controls); document.body.append(dock);
+  new MutationObserver(() => { dock.inert = form.inert; }).observe(form, {attributes:true, attributeFilter:['inert']});
+  bar.remove();
+  // Keep a form-owned submit target for native form semantics and existing automation.
+  const hiddenSubmit = document.createElement('button'); hiddenSubmit.type = 'submit'; hiddenSubmit.hidden = true; form.append(hiddenSubmit);
+  message.setAttribute('form', form.id); message.rows = 2; message.placeholder = '输入你的分析问题，例如：这份预测有哪些风险？';
+  message.closest('label').querySelector('span').textContent = '分析问题';
+  const autoSize = () => { message.style.height = 'auto'; message.style.height = Math.min(160, Math.max(52, message.scrollHeight)) + 'px'; layout(); };
+  message.addEventListener('input', () => { autoSize(); draftSchedule(); });
+  message.addEventListener('compositionstart', () => { composing = true; }); message.addEventListener('compositionend', () => { composing = false; });
+  message.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && !composing && event.keyCode !== 229) { event.preventDefault(); if (!send.disabled) form.requestSubmit(send); }
+  });
+  function viewport() {
+    const view = window.visualViewport;
+    dock.style.bottom = Math.max(0, view ? innerHeight - view.height - view.offsetTop : 0) + 'px';
+  }
+  window.visualViewport?.addEventListener('resize', viewport); window.visualViewport?.addEventListener('scroll', viewport);
+  const invalid = (id, message) => {
+    const field = $(id); field.setAttribute('aria-invalid', 'true'); field.setCustomValidity?.(message);
+    open('input'); let parent = field.parentElement;
+    while (parent && parent !== form) { if (parent.tagName === 'DETAILS') parent.open = true; parent = parent.parentElement; }
+    field.focus(); field.scrollIntoView({block: 'nearest'}); field.reportValidity?.();
+    throw new Error(message);
+  };
+  function validate() {
+    form.querySelectorAll('[aria-invalid]').forEach(field => { field.removeAttribute('aria-invalid'); field.setCustomValidity?.(''); });
+    let input;
+    try { input = JSON.parse($('task-data').value); } catch (_) { return invalid('task-data', '原始 JSON 无法解析，请检查格式。'); }
+    const prediction = input.prediction || lastPrediction;
+    if (!prediction?.subject?.trim()) return invalid('p-subject', '请先填写本轮分析的标的代码。');
+    if (!prediction.model_version?.trim()) return invalid('p-model-version', '请填写上游模型版本。');
+    if (!(prediction.horizon?.value > 0)) return invalid('p-horizon-value', '预测周期必须大于零。');
+    if (!prediction.valid_until || !(Date.parse(prediction.valid_until) > Date.now())) return invalid('p-valid-until', '预测已过期或有效期无效，请核对并更新预测。');
+    if (prediction.confidence != null && !(prediction.confidence >= 0 && prediction.confidence <= 1)) return invalid('p-confidence', '置信度须在 0 到 1 之间，也可以留空。');
+    for (const fact of input.context?.facts || []) if (!fact.source?.trim() || !Number.isFinite(Date.parse(fact.observed_at))) {
+      $('facts-editor').open = true; open('input'); throw new Error('每条客观事实都需要来源和有效的观测时间。');
+    }
+    if ($('task-notify').checked && !$('task-recipient').checkValidity()) return invalid('task-recipient', '请填写有效的收件地址。');
+    lastPrediction = prediction;
+  }
+  function update() {
+    let prediction;
+    try { prediction = JSON.parse($('task-data').value).prediction || lastPrediction; } catch (_) { /* show invalid state */ }
+    const ready = Boolean(prediction?.subject && prediction.model_version && Date.parse(prediction.valid_until) > Date.now());
+    const label = ready ? '资料已准备' : prediction?.subject ? '有信息需要修正' : '填写分析资料';
+    data.textContent = label; status.textContent = ready ? '已填写 · 可随时修改，发送时会再次校验。' : prediction?.subject ? '待修正 · 请核对预测与有效期。' : '未配置 · 首次分析需要填写预测信息。';
+    session.textContent = $('conversation-id').value ? '当前分析会话' : '新分析会话';
+    autoSize();
+  }
+  function open(id = 'input') {
+    mode = id;
+    for (const [name, pane] of Object.entries(panes)) {
+      pane.hidden = name !== id;
+      const button = $('analysis-tab-' + name); button.setAttribute('aria-selected', String(name === id)); button.tabIndex = name === id ? 0 : -1;
+    }
+    $('inspector-actions').hidden = id !== 'report';
+    window.Workbench.inspector(true); update();
+  }
+  function layout() { document.documentElement.style.setProperty('--composer-height', dock.offsetHeight + 'px'); viewport(); }
+  function observe(task) {
+    const prediction = task.artifacts?.[0]?.parts?.[0]?.data?.analysis?.prediction;
+    if (prediction) lastPrediction = prediction;
+    if (['working', 'submitted'].includes(task.status.state) && mode !== 'input') open('progress');
+    update();
+  }
+  function reset() { lastPrediction = null; update(); }
+  form.addEventListener('input', update); form.addEventListener('change', update);
+  form.addEventListener('input', event => { if (event.target.hasAttribute('aria-invalid')) { event.target.removeAttribute('aria-invalid'); event.target.setCustomValidity?.(''); } });
+  tabs.addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    event.preventDefault(); const names = Object.keys(panes); open(names[(names.indexOf(mode) + (event.key === 'ArrowRight' ? 1 : 2)) % 3]); $('analysis-tab-' + mode).focus();
+  });
+  $('report-open').onclick = () => open('report'); $('office-show-output').onclick = () => open('progress');
+  $('inspector-content').querySelector('#analysis-pane-progress').hidden = false;
+  for (const [name, pane] of Object.entries(panes)) { pane.hidden = name !== mode; $('analysis-tab-' + name).setAttribute('aria-selected', String(name === mode)); }
+  document.querySelectorAll('.office-heading, .office-footnote, .office-floor-line, .office-floor-caption, .office-legend, .office-welcome').forEach(node => { node.hidden = true; node.setAttribute('display', 'none'); });
+  document.querySelector('[data-view-pane="analysis"] .page-head').hidden = true;
+  document.querySelector('.inspector-launch').hidden = true;
+  $('inspector-actions').hidden = true;
+  new ResizeObserver(layout).observe(dock); window.addEventListener('resize', layout);
+  document.body.classList.toggle('analysis-composer-visible', document.body.dataset.view === 'analysis');
+  update();
+  return {open, validate, observe, reset, update, layout};
 })();

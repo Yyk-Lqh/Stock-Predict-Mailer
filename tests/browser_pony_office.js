@@ -15,6 +15,6 @@
   assert(document.querySelectorAll('.office-screen[visibility="visible"]').length===0,'completed screens off immediately');
   office.reset('history-fixture',true);
   office.sync({id:'history-fixture',status:{state:'completed'}},[{seq:1,kind:'step',step:'risk',status:'running',label:'历史运行'},{seq:2,kind:'step',step:'risk',status:'completed',label:'历史完成'}]);
-  assert(office.snapshot().actors.filter(a=>a.present).length===2,'history must not replay entrance');
+  assert(office.snapshot().actors.filter(a=>a.present).length===3,'history must not replay entrance');
   document.body.dataset.ponyCheck='screens, entry, completion, history passed';
 })().catch(error=>{document.body.dataset.ponyCheck=error.message;});

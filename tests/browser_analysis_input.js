@@ -1,0 +1,34 @@
+/* Run only against the disposable browser_console_fixture.py service. */
+(async () => {
+  const $ = id => document.getElementById(id), checks = [];
+  const assert = (ok, message) => { if (!ok) throw Error(message); };
+  const wait = async fn => { for (let i = 0; i < 120; i++) { if (fn()) return; await new Promise(r => setTimeout(r, 100)); } throw Error('timed out'); };
+  const set = (id, value) => { $(id).value = value; $(id).dispatchEvent(new Event('input', {bubbles:true})); };
+  document.querySelector('[data-view="analysis"]').click();
+  $('new-analysis').click(); await wait(() => !$('new-analysis').disabled && $('conversation-id').value);
+  set('conversation-message', '请分析这份预测的风险，并保留我的问题。');
+  $('analysis-send').click();
+  await wait(() => $('p-subject').getAttribute('aria-invalid') === 'true');
+  assert($('conversation-message').value.includes('保留我的问题'), 'validation lost message');
+  assert(!$('analysis-pane-input').hidden, 'validation must open input'); checks.push('missing input preserves question and focuses data');
+  $('analysis-tab-report').click();
+  document.querySelector('[data-pony="assistant"]').dispatchEvent(new MouseEvent('click', {bubbles:true}));
+  assert(!$('analysis-pane-input').hidden, 'assistant must open data'); checks.push('assistant opens structured data');
+  $('try-sample').click(); await wait(() => !$('try-sample').disabled && $('task-data').value.includes('console-mock'));
+  set('p-confidence', '.64'); set('conversation-constraints', '只依据已有证据，不补造置信度');
+  $('analysis-tab-progress').click(); $('analysis-tab-report').click(); $('analysis-tab-input').click();
+  assert($('p-confidence').value === '.64' && $('conversation-constraints').value.includes('已有证据'), 'tabs lost data'); checks.push('tabs preserve fields');
+  $('report-close').click();
+  $('conversation-message').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', isComposing:true, bubbles:true, cancelable:true}));
+  assert($('conversation-turns').children.length === 0, 'IME Enter submitted');
+  $('conversation-message').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', shiftKey:true, bubbles:true, cancelable:true}));
+  assert($('conversation-turns').children.length === 0, 'Shift Enter submitted');
+  $('conversation-message').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true, cancelable:true}));
+  await wait(() => $('result-summary').textContent.includes('报告已生成'));
+  const result = JSON.parse($('task-output').textContent);
+  assert(result.artifacts[0].parts[0].data.analysis.prediction.confidence === .64, 'structured fields not sent');
+  assert($('conversation-turns').textContent.includes('保留我的问题'), 'message not sent');
+  checks.push('Enter submits message and structured prediction; IME and Shift Enter do not');
+  assert(!$('analysis-pane-progress').hidden, 'submission must show progress');
+  document.body.dataset.analysisCheck = JSON.stringify(checks);
+})().catch(error => { document.body.dataset.analysisCheck = JSON.stringify({error:error.message}); });

@@ -1026,6 +1026,7 @@ function draftSnapshot() {
     constraints: $('conversation-constraints').value,
     format: $('conversation-format').value,
     controls_dirty: taskControlsDirty,
+    knowledge: window.KnowledgeUI?.selection(),
     saved_at: new Date().toISOString()
   };
 }
@@ -1050,6 +1051,7 @@ function draftRestore() {
   $('conversation-constraints').value = stored.constraints || '';
   $('conversation-format').value = stored.format || '';
   taskControlsDirty = Boolean(stored.controls_dirty);
+  if (stored.knowledge) window.KnowledgeUI?.restore(stored.knowledge);
   $('task-notify').checked = Boolean(stored.notify);
   $('task-recipient').value = stored.recipient || '';
   if (stored.complexity) $('task-complexity').value = stored.complexity;
@@ -1585,9 +1587,11 @@ async function poll(id) {
 }
 $('task-form').onsubmit = async event => {
   event.preventDefault();
-  const button = event.currentTarget.querySelector('[type=submit]');
+  const button = $('analysis-send') || event.currentTarget.querySelector('[type=submit]');
+  if (button.disabled || event.currentTarget.inert) return;
   button.disabled = true;
   try {
+    window.AnalysisInput?.validate();
     await window.Workbench?.prepare();
     const input = JSON.parse($('task-data').value);
     const conversationId = $('conversation-id').value;
@@ -1608,6 +1612,7 @@ $('task-form').onsubmit = async event => {
     const task = await api('tasks', 'POST', {...request, notify: $('task-notify').checked, recipient: $('task-recipient').value || null});
     if (conversationId !== $('conversation-id').value) { notice('任务已提交，可从对应会话查看。'); return; }
     currentTask = task.id;
+    window.AnalysisInput?.open('progress');
     window.Workbench?.submitted(task);
     recordLoaded = false;
     // 已提交的输入留作下次的起点，但不再提示「未提交」
@@ -1630,6 +1635,7 @@ $('task-form').onsubmit = async event => {
     notice(error.message, true);
   } finally {
     button.disabled = false;
+    window.AnalysisInput?.update();
   }
 };
 $('task-cancel').onclick = async () => {

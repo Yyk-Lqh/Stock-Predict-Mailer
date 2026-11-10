@@ -11,8 +11,10 @@ window.Workbench = (() => {
     $('report-inspector').hidden = !open;
     document.body.classList.toggle('inspector-visible', open);
     $('report-open').setAttribute('aria-expanded', String(open));
+    window.AnalysisInput?.layout();
   }
   function clearTask() {
+    window.AnalysisInput?.reset();
     window.PonyOffice?.reset();
     currentTask = null;
     displayed = null;
@@ -185,6 +187,7 @@ window.Workbench = (() => {
     heading(`${turns.at(-1)?.prediction?.subject || '预测'} · 分析会话`);
   }
   function task(value) {
+    window.AnalysisInput?.observe(value);
     if (displayed?.id !== value.id) {
       $('mail-live').replaceChildren();
       $('knowledge-report-evidence')?.remove();
@@ -237,6 +240,9 @@ window.Workbench = (() => {
     rememberPosition();
   }
   function view(name) {
+    if (name !== 'analysis') document.body.classList.remove('analysis-composer-visible');
+    else document.body.classList.add('analysis-composer-visible');
+    $('session-menu').open = false;
     window.PonyOffice?.view(name);
     document.body.dataset.view = name;
     document.body.classList.remove('sidebar-open');
@@ -368,6 +374,8 @@ window.Workbench = (() => {
   $('conversation-id').onchange = safe(() => $('conversation-id').value ? select($('conversation-id').value, {save: false}) : newAnalysis());
   for (const id of ['task-complexity', 'task-goal', 'task-effort']) $(id).addEventListener('change', () => { taskControlsDirty = true; });
   document.addEventListener('keydown', event => { if (event.key === 'Escape') { inspector(false); document.body.classList.add('report-dismissed'); document.body.classList.remove('sidebar-open'); $('sidebar-toggle').setAttribute('aria-expanded', 'false'); } });
+  document.addEventListener('click', event => { if (!$('session-menu').contains(event.target)) $('session-menu').open = false; });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') $('session-menu').open = false; });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveDraft(); });
   return {init, view, task, prepare, submitted: value => { submitted(value).catch(error => notice(error.message, true)); }, record, sessions, identityChanged, inspector};
 })();

@@ -6,20 +6,22 @@ globalThis.PonyFloor = (() => {
     ['risk', '风险分析', '#9570d6', 800, 160, false],
     ['mail', '邮件投递', '#4098df', 230, 390, true],
     ['charts', '图表生成', '#23afb0', 515, 390, false],
-    ['advice', '建议生成', '#dab32b', 800, 390, false]
-  ].map(([id, name, color, x, y, resident]) => ({id, name, color, x, y, resident}));
+    ['advice', '建议生成', '#dab32b', 800, 390, false],
+    ['assistant', '分析助理', '#e58b36', 900, 500, true]
+  ].map(([id, name, color, x, y, resident]) => ({id, name, color, x, y, resident, station: id !== 'assistant'}));
   const gate = {x: 35, y: 550}, radius = 30;
   const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
   class Floor {
     constructor() { this.reset(); }
     reset() {
-      this.time = 0; this.door = 0; this.transit = null; this.queue = []; this.serial = 0;
+      this.time = 0; this.door = 0; this.transit = null; this.queue = []; this.serial = 0; this.nextRoam = 5;
       this.actors = roles.map(role => ({...role, x: role.x, y: role.y + 70, deskX: role.x, deskY: role.y,
-        present: role.resident, pose: role.resident ? 'seated' : 'absent', state: 'idle', phase: 0, speed: 0, heading: 1, last: '', summoned: false}));
+        present: role.resident, pose: role.id === 'assistant' ? 'idle' : role.resident ? 'seated' : 'absent', state: 'idle', phase: 0, speed: 0, heading: 1, last: '', summoned: false}));
     }
     blocked(point, actor, dock = false) {
       if (point.x < 25 || point.x > 935 || point.y < 30 || point.y > 590) return true;
       for (const role of roles) {
+        if (!role.station) continue;
         if (point.x > role.x - 100 - radius && point.x < role.x + 100 + radius && point.y > role.y - 65 - radius && point.y < role.y + 25 + radius) return true;
         if (!(dock && role.id === actor.id) && point.x > role.x - 32 - radius && point.x < role.x + 32 + radius && point.y > role.y + 35 - radius && point.y < role.y + 88 + radius) return true;
       }
@@ -56,8 +58,12 @@ globalThis.PonyFloor = (() => {
     finish(state) {
       for (const actor of this.actors) if (actor.state === 'running') actor.state = state === 'completed' ? 'completed' : state;
     }
-    tick(dt, reduced = false) {
+    tick(dt, reduced = false, idle = false) {
       dt = Math.max(0, Math.min(dt, .05)); this.time += dt;
+      if (idle && !reduced && this.time > this.nextRoam && !this.transit && !this.queue.length) {
+        const resident = this.actors.filter(a => a.resident)[this.serial++ % 3];
+        this.queue.push({id: resident.id, roam: true}); this.nextRoam = this.time + 18;
+      }
       for (const actor of this.actors) {
         actor.phase += dt * (actor.pose === 'walking' ? 9 : 1.5);
         if (actor.present && !actor.resident && actor.state !== 'running' && !this.queue.some(job => job.id === actor.id) && this.transit?.id !== actor.id) this.queue.push({id: actor.id, exit: true});
@@ -65,9 +71,10 @@ globalThis.PonyFloor = (() => {
       if (!this.transit && this.queue.length) {
         const job = this.queue.shift(), actor = this.actors.find(a => a.id === job.id);
         // Completed-before-entry jobs are coalesced; never invent work for fast tasks.
-        if (!job.exit && actor.state !== 'running') return;
-        this.transit = {...job, stage: job.exit ? 'rise' : 'open', elapsed: 0, path: null, index: 0};
-        if (job.exit) actor.pose = 'rising';
+        if (!job.exit && !job.roam && actor.state !== 'running') return;
+        this.transit = {...job, stage: job.exit || job.roam ? 'rise' : 'open', elapsed: 0, path: null, index: 0};
+        if (job.exit || job.roam) actor.pose = 'rising';
+        if (job.roam && !actor.station) { this.transit.stage = 'stroll'; this.transit.path = this.path(actor, {x: actor.deskX - 80, y: actor.deskY + 70}, actor); actor.pose = 'walking'; }
       }
       if (!this.transit) { this.door = Math.max(0, this.door - dt * 4); return; }
       const job = this.transit, actor = this.actors.find(a => a.id === job.id);
@@ -91,18 +98,23 @@ globalThis.PonyFloor = (() => {
       } else if (job.stage === 'turn') {
         actor.pose = 'turning';
         if (job.elapsed > (reduced ? 0 : .25)) { job.path = [{x: actor.deskX, y: actor.deskY + 70}]; transition('dock'); }
+      } else if (job.stage === 'linger') {
+        actor.pose = 'idle';
+        if (!idle || job.elapsed > 1.5) { job.path = this.path(actor, {x: actor.deskX, y: actor.deskY + (actor.station ? 120 : 70)}, actor); transition('return'); }
       } else if (job.stage === 'close') {
         this.door = Math.max(0, this.door - dt * 4);
         if (!this.door) this.transit = null;
       } else {
         if (!job.path) {
-          job.path = this.path(actor, job.exit ? gate : {x: actor.deskX, y: actor.deskY + 120}, actor);
+          job.path = this.path(actor, job.exit ? gate : job.stage === 'stroll' ? {x: actor.deskX + 80, y: actor.deskY + 120} : {x: actor.deskX, y: actor.deskY + 120}, actor);
           actor.pose = 'waiting'; return;
         }
         const target = job.path[0];
         if (!target) {
           actor.speed = 0;
-          if (job.stage === 'undock') { job.path = this.path(actor, gate, actor); transition('walk'); }
+          if (job.stage === 'undock') { job.path = this.path(actor, job.roam ? {x: actor.deskX + 80, y: actor.deskY + 120} : gate, actor); transition(job.roam ? 'stroll' : 'walk'); }
+          else if (job.stage === 'stroll') { actor.pose = 'idle'; transition('linger'); }
+          else if (job.stage === 'return' && !actor.station) { actor.pose = 'idle'; this.transit = null; }
           else if (job.exit) {
             this.door = Math.min(1, this.door + dt * 4);
             actor.pose = 'waiting';
@@ -117,6 +129,7 @@ globalThis.PonyFloor = (() => {
         if (job.exit && next.x < 85 && next.y > 515 && this.door < 1) { this.door = Math.min(1, this.door + dt * 4); actor.pose = 'waiting'; return; }
         if (this.blocked(next, actor, ['dock', 'undock'].includes(job.stage))) { actor.pose = 'waiting'; actor.speed = 0; return; }
         actor.heading = target.x < actor.x ? -1 : target.x > actor.x ? 1 : actor.heading;
+        actor.facing = target.y < actor.y - .1 ? 'back' : 'side';
         actor.x = next.x; actor.y = next.y; actor.speed = speed; actor.pose = 'walking';
         if (d <= travel + .01) job.path.shift();
         if (distance(actor, gate) > 70 && !job.exit) this.door = Math.max(0, this.door - dt * 4);

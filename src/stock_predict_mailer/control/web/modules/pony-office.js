@@ -24,6 +24,7 @@ window.PonyOffice = (() => {
   const desks = new Map(), ponies = new Map(), buttons = new Map();
   function choose(id) {
     selected = id;
+    if (id === 'assistant') { window.AnalysisInput?.open('input'); return; }
     for (const [key, button] of buttons) button.setAttribute('aria-pressed', String(key === id));
     window.Workbench.inspector(true);
     $('office-roles').querySelector(`[data-office-role="${id}"]`)?.scrollIntoView({block: 'nearest'});
@@ -44,8 +45,10 @@ window.PonyOffice = (() => {
       <path d="M-27 30H27L31 80H-31Z" fill="#d7dce0"/><path d="M-29 81H29L21 93H-21Z" fill="#c8cdd1"/><path d="M0 92V109M0 105L-22 115M0 105L22 115" stroke="#bfc6cb" stroke-width="4"/>
       <text x="0" y="-139" text-anchor="middle" class="office-desk-name">${role.name}</text><circle cx="-63" cy="-143" r="4" fill="${role.color}"/>`);
     desks.set(role.id, desk); world.append(desk);
+    if (!role.station) desk.setAttribute('display', 'none');
     const pony = el('g', {role: 'button', tabindex: '0', 'aria-label': `${role.name}小马，查看工作状态`, 'data-pony': role.id});
     pony.innerHTML = `<title>${role.name}</title><ellipse class="pony-ground" cx="0" cy="-1" rx="29" ry="7" fill="#101820" opacity=".15"/><g class="pony-rig"><g class="pony-leg-left"><path d="M-12-26L-15-9L-24-3L-23 3H-7L-1-25Z" fill="#111315"/></g><g class="pony-leg-right"><path d="M4-26L9-7L5 2H23L24-5L17-27Z" fill="#111315"/></g><path d="M-21-56Q0-69 23-54L25-24Q0-12-24-25Z" fill="#0c0e11"/><path d="M-22-37Q-41-46-33-29L-21-23" fill="#111315" class="pony-tail"/><g class="pony-arm-left"><path d="M-18-54Q-33-53-31-35L-23-29L-13-45Z" fill="#111315"/></g><g class="pony-arm-right"><path d="M17-54Q31-53 33-36L25-29L12-44Z" fill="#111315"/></g><g class="pony-head"><path d="M-22-67Q-28-92-11-102L-9-117L3-105Q18-108 21-94L34-85L29-66L11-62Q-4-57-22-67Z" fill="#090b0d"/><path d="M-26-83L-32-94L-17-96L-23-106L-7-102L1-114L5-101" fill="#090b0d"/><g class="pony-eyes"><ellipse cx="8" cy="-87" rx="6" ry="9" fill="white"/><ellipse cx="23" cy="-83" rx="5" ry="8" fill="white"/><ellipse cx="10" cy="-86" rx="2.8" ry="5" fill="#141820"/><ellipse cx="25" cy="-82" rx="2.4" ry="4.5" fill="#141820"/></g></g><path d="M-23-65Q0-56 23-65L24-55Q0-45-24-56Z" fill="${role.color}"/><path class="pony-scarf" d="M-14-54L-16-32L-5-34L-4-53Z" fill="${role.color}"/></g><circle class="pony-selected" cx="0" cy="-36" r="39" fill="none" stroke="${role.color}" stroke-width="1.5" stroke-dasharray="4 5" visibility="hidden"/>`;
+    pony.querySelector('.pony-eyes').append(el('ellipse', {cx: 29, cy: -75, rx: 1.4, ry: 2, fill: '#828a91'}), el('path', {d: 'M19-68L27-69', stroke: '#68717a', 'stroke-width': 1}));
     pony.addEventListener('click', () => choose(role.id));
     pony.addEventListener('keydown', event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); choose(role.id); } });
     ponies.set(role.id, pony); world.append(pony);
@@ -55,7 +58,7 @@ window.PonyOffice = (() => {
   }
   const portal = document.createElement('div'); portal.className = 'sidebar-office-door';
   portal.innerHTML = '<span class="sidebar-door-art" aria-hidden="true"><i></i></span><span>协作通道<small>子 Agent 由此进出</small></span>';
-  document.querySelector('.topbar .meta').before(portal);
+  office.querySelector('.office-heading').append(portal);
   const progress = document.createElement('section'); progress.id = 'office-progress'; progress.className = 'office-progress';
   progress.innerHTML = '<h3>工作进度</h3><p id="office-task-state" role="status">等待分析任务</p><p id="office-connection" class="error-text" hidden>连接中断，正在恢复；暂不显示新的工作进展。</p><div id="office-roles"></div>';
   $('inspector-content').prepend(progress);
@@ -74,7 +77,7 @@ window.PonyOffice = (() => {
       const name = document.createElement('strong'); name.textContent = actor.name;
       const state = document.createElement('span'); state.textContent = `${captions[actor.state] || actor.state}${actor.present && !['seated', 'absent'].includes(actor.pose) ? ' · ' + ({walking: '前往工位 / 返回', waiting: '等待通行', turning: '对齐工位', sitting: '正在落座', rising: '正在离座'}[actor.pose] || actor.pose) : ''}`;
       const note = document.createElement('small'); note.textContent = actor.last || (actor.resident ? '常驻办公室' : '按实际任务需要参与');
-      row.append(name, state, note); row.onclick = () => { selected = actor.id; renderUI(); }; host.append(row);
+      row.append(name, state, note); row.onclick = () => { if (actor.id === 'assistant') window.AnalysisInput?.open('input'); selected = actor.id; renderUI(); }; host.append(row);
     }
   }
   function reset(id = null, restoring = true) {
@@ -120,8 +123,9 @@ window.PonyOffice = (() => {
       const phase = actor.phase, stride = walking ? Math.sin(phase) * 25 : 0;
       const bob = walking ? Math.abs(Math.sin(phase)) * 2 : 0;
       pony.setAttribute('transform', `translate(${actor.x.toFixed(2)} ${(actor.y - bob - (seated ? (1 - sit) * 5 : 0)).toFixed(2)}) scale(.88)`);
-      pony.querySelector('.pony-eyes').setAttribute('visibility', sit > .6 ? 'hidden' : 'visible');
-      pony.querySelector('.pony-head').setAttribute('transform', `rotate(${working && !reduced.matches ? Math.sin(phase * 4) * 1.4 : 0} 0 -72)`);
+      pony.querySelector('.pony-eyes').setAttribute('visibility', sit > .6 || (walking && actor.facing === 'back') ? 'hidden' : 'visible');
+      pony.querySelector('.pony-eyes').setAttribute('transform', `translate(0 -84) scale(1 ${!reduced.matches && actor.phase % 8 > 7.75 ? .08 : 1}) translate(0 84)`);
+      pony.querySelector('.pony-head').setAttribute('transform', `rotate(${!reduced.matches ? Math.sin(phase * (working ? 4 : .8)) * 1.4 : 0} 0 -72)`);
       pony.querySelector('.pony-rig').setAttribute('transform', `scale(${seated ? 1 : actor.heading} 1)`);
       pony.querySelector('.pony-leg-left').setAttribute('transform', seated ? `translate(${-2 * sit} ${-8 * sit}) rotate(${40 * sit} -10 -24)` : `rotate(${stride} -10 -26)`);
       pony.querySelector('.pony-leg-right').setAttribute('transform', seated ? `translate(${2 * sit} ${-8 * sit}) rotate(${-40 * sit} 10 -24)` : `rotate(${-stride} 10 -26)`);
@@ -140,7 +144,7 @@ window.PonyOffice = (() => {
     raf = 0;
     if (!active || document.hidden) { lastFrame = 0; return; }
     const dt = lastFrame ? Math.min((now - lastFrame) / 1000, .05) : 0; lastFrame = now;
-    if (connected) floor.tick(dt, reduced.matches);
+    if (connected) floor.tick(dt, reduced.matches, !['working', 'submitted'].includes(taskState));
     draw(); if (now - lastUI > 450) { renderUI(); lastUI = now; }
     raf = requestAnimationFrame(frame);
   }

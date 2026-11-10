@@ -19,7 +19,7 @@
     <button type="button" data-view="settings">设置</button>
     <button type="button" data-view="memory">记忆与访问</button>
   </nav>
-  <div class="sidebar-history"><div class="section-head"><span class="eyebrow">分析会话</span><button id="sessions-refresh" type="button" class="btn tiny" aria-label="刷新会话">刷新</button></div><div id="sidebar-sessions"></div><button id="sessions-more" type="button" class="btn tiny" hidden>更早的会话</button></div>
+  <details class="sidebar-history" id="session-menu"><summary>分析会话</summary><div class="session-menu-content"><div class="section-head"><span class="eyebrow">分析会话</span><button id="sessions-refresh" type="button" class="btn tiny" aria-label="刷新会话">刷新</button></div><div id="sidebar-sessions"></div><button id="sessions-more" type="button" class="btn tiny" hidden>更早的会话</button></div></details>
   <span class="meta">本机工作区 <span id="workspace-health">正在连接</span></span>
 </header>
 

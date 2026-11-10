@@ -6,8 +6,9 @@ globalThis.PonyFloor = (() => {
     ['risk', '风险分析', '#9570d6', 800, 160, false],
     ['mail', '邮件投递', '#4098df', 230, 390, true],
     ['charts', '图表生成', '#23afb0', 515, 390, false],
-    ['advice', '建议生成', '#dab32b', 800, 390, false]
-  ].map(([id, name, color, x, y, resident]) => ({id, name, color, x, y, resident}));
+    ['advice', '建议生成', '#dab32b', 800, 390, false],
+    ['assistant', '分析助理', '#e58b36', 900, 500, true]
+  ].map(([id, name, color, x, y, resident]) => ({id, name, color, x, y, resident, station: id !== 'assistant'}));
   const gate = {x: 35, y: 550}, radius = 30;
   const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
   class Floor {
@@ -15,11 +16,12 @@ globalThis.PonyFloor = (() => {
     reset() {
       this.time = 0; this.door = 0; this.transit = null; this.queue = []; this.serial = 0;
       this.actors = roles.map(role => ({...role, x: role.x, y: role.y + 70, deskX: role.x, deskY: role.y,
-        present: role.resident, pose: role.resident ? 'seated' : 'absent', state: 'idle', phase: 0, speed: 0, heading: 1, last: '', summoned: false}));
+        present: role.resident, pose: role.id === 'assistant' ? 'idle' : role.resident ? 'seated' : 'absent', state: 'idle', phase: 0, speed: 0, heading: 1, last: '', summoned: false}));
     }
     blocked(point, actor, dock = false) {
       if (point.x < 25 || point.x > 935 || point.y < 30 || point.y > 590) return true;
       for (const role of roles) {
+        if (!role.station) continue;
         if (point.x > role.x - 100 - radius && point.x < role.x + 100 + radius && point.y > role.y - 65 - radius && point.y < role.y + 25 + radius) return true;
         if (!(dock && role.id === actor.id) && point.x > role.x - 32 - radius && point.x < role.x + 32 + radius && point.y > role.y + 35 - radius && point.y < role.y + 88 + radius) return true;
       }

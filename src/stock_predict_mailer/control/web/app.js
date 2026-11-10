@@ -1026,6 +1026,7 @@ function draftSnapshot() {
     constraints: $('conversation-constraints').value,
     format: $('conversation-format').value,
     controls_dirty: taskControlsDirty,
+    knowledge: window.KnowledgeUI?.selection(),
     saved_at: new Date().toISOString()
   };
 }
@@ -1050,6 +1051,7 @@ function draftRestore() {
   $('conversation-constraints').value = stored.constraints || '';
   $('conversation-format').value = stored.format || '';
   taskControlsDirty = Boolean(stored.controls_dirty);
+  if (stored.knowledge) window.KnowledgeUI?.restore(stored.knowledge);
   $('task-notify').checked = Boolean(stored.notify);
   $('task-recipient').value = stored.recipient || '';
   if (stored.complexity) $('task-complexity').value = stored.complexity;

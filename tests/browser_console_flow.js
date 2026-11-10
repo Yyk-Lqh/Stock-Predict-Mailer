@@ -1,0 +1,36 @@
+(async () => {
+  const read = id => document.getElementById(id);
+  const wait = async (fn, label) => { for (let i=0;i<150;i++) { if(fn()) return; await new Promise(r=>setTimeout(r,100)); } throw Error(label); };
+  const set = (id, value) => { const el=read(id); el.value=value; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); };
+  const checks=[];
+  read('new-analysis').click();
+  await wait(()=>read('conversation-id').value && !read('memory-details').hidden && !read('new-analysis').disabled,'private conversation');
+  await wait(()=>!read('prediction-editor').hidden,'prediction editor');
+  read('workbench-sample').click();
+  await wait(()=>read('task-data').value.includes('console-mock') && !read('try-sample').disabled,'sample');
+  set('conversation-message','工作台验收：核对风险与依据');
+  read('task-form').requestSubmit();
+  await wait(()=>read('result-summary').textContent.includes('报告已生成'),'first report');
+  if(!read('conversation-turns').textContent.includes('工作台验收')) throw Error('lost initial message');
+  checks.push('first task preserves question and renders report');
+  read('report-close').click();
+  set('conversation-message','第二轮：只讨论风险，沿用预测');
+  read('task-form').requestSubmit();
+  await wait(()=>read('conversation-turns').children.length===2 && read('result-summary').textContent.includes('报告已生成'),'followup report');
+  if(read('task-notify').checked) throw Error('notification inherited');
+  checks.push('follow-up preserves prediction; notification off');
+  read('report-close').click();
+  set('conversation-message','会话甲的未提交草稿');
+  const first=read('conversation-id').value;
+  read('new-analysis').click();
+  await wait(()=>read('conversation-id').value!==first && !read('conversation-turns').children.length && !read('new-analysis').disabled,'new conversation');
+  if(read('conversation-message').value) throw Error('cross conversation draft');
+  checks.push('new conversation has independent draft');
+  document.querySelector('[data-conversation="'+first+'"]').click();
+  await wait(()=>read('conversation-id').value===first && read('conversation-message').value==='会话甲的未提交草稿','draft restoration');
+  checks.push('previous draft restored');
+  read('report-close').click();
+  document.querySelector('[data-view="knowledge"]').click();
+  await wait(()=>!read('knowledge-body').hidden,'knowledge access');
+  return JSON.stringify({checks, width:document.documentElement.scrollWidth, viewport:window.innerWidth});
+})().then(value => { document.body.dataset.testResult = value; }, error => { document.body.dataset.testResult = JSON.stringify({error:error.message}); })

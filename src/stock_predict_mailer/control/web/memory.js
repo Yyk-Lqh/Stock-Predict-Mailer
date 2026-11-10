@@ -668,7 +668,7 @@ window.KnowledgeUI = (() => {
   }
   function evidence(data) {
     let host = $('knowledge-report-evidence');
-    if (!host) { host = document.createElement('section'); host.id = 'knowledge-report-evidence'; $('inspector-content').append(host); }
+    if (!host) { host = document.createElement('section'); host.id = 'knowledge-report-evidence'; ($('analysis-pane-report') || $('inspector-content')).append(host); }
     renderEvidence(host, data); host.scrollIntoView({block: 'start'});
   }
   const CONFIG_LABELS = {provider: '服务类型', base_url: '服务地址', model: '模型名称', version: '模型版本', timeout_seconds: '单次超时（秒）', allow_external: '允许向远程服务发送资料与查询', mode: '处理范围', document_timeout_seconds: '每份资料总超时（秒）', max_calls: '每份资料最大调用次数', max_input_chars: '单次输入字符上限', max_output_tokens: '单次输出 Token 上限', budget_usd: '每份资料预算（美元）', input_usd_per_million: '每百万输入 Token 单价（美元）', output_usd_per_million: '每百万输出 Token 单价（美元）'};

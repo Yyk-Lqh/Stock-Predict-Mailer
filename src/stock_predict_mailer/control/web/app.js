@@ -1587,7 +1587,8 @@ async function poll(id) {
 }
 $('task-form').onsubmit = async event => {
   event.preventDefault();
-  const button = event.currentTarget.querySelector('[type=submit]');
+  const button = $('analysis-send') || event.currentTarget.querySelector('[type=submit]');
+  if (button.disabled || event.currentTarget.inert) return;
   button.disabled = true;
   try {
     await window.Workbench?.prepare();

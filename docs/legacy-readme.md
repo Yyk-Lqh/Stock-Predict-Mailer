@@ -1,5 +1,9 @@
 # Stock-Predict-Mailer
 
+> 历史归档：本文是 0.4 及更早版本 README 的原文。其中的命令名 `stock-mailer` 现已统一为
+> `stock-predict-mailer`，环境变量前缀 `SPM_` 已改为 `STOCK_PREDICT_MAILER_`（旧名仍可读取）。
+> 内容按当时原样保留，不要再按本文的命令操作。
+
 [![CI](https://github.com/Yyk-Lqh/Stock-Predict-Mailer/actions/workflows/ci.yml/badge.svg)](https://github.com/Yyk-Lqh/Stock-Predict-Mailer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)

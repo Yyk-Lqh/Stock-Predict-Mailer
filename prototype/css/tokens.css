@@ -1,0 +1,68 @@
+/* ===== 设计变量 · 深空科技（Dark Ops） =====
+ * 命名沿用旧版（--paper / --ink / --rule …），只换取值，
+ * 这样 layout / form / report / office 里已有的 token 引用自动跟随，
+ * 需要改的只剩各文件里少量写死的浅色值。
+ */
+
+:root {
+  /* —— 底色体系：深空炭黑 → 抬升 → 凹陷 —— */
+  --paper: #0a0e17;
+  --paper-raised: #111823;
+  --paper-sunken: #080b12;
+  --paper-tint: #0e141f;
+
+  /* —— 文字三层级 —— */
+  --ink: #f2f7fa;
+  --ink-secondary: #9aa9b8;
+  --ink-tertiary: #5d6b7a;
+  --ink-inverse: #eaf2f5;
+
+  /* —— 分隔线：1px 微光内描边 —— */
+  --rule: rgba(255, 255, 255, 0.07);
+  --rule-strong: rgba(255, 255, 255, 0.14);
+
+  /* —— 深层面板（侧栏） —— */
+  --deep: #060910;
+  --deep-soft: #0d141f;
+
+  /* —— 主强调色：低饱和霓虹青蓝 —— */
+  --accent: #16d3e6;
+  --accent-wash: rgba(22, 211, 230, 0.1);
+
+  /* —— 涨跌与状态 —— */
+  --up: #22e08a;
+  --down: #d2453a;
+  --ok: #22e08a;
+  --ok-wash: rgba(34, 224, 138, 0.1);
+  --warn: #e8b23c;
+  --warn-wash: rgba(232, 178, 60, 0.1);
+  --danger: #e2513c;
+  --danger-wash: rgba(226, 81, 60, 0.1);
+  --info: #16d3e6;
+  --info-wash: rgba(22, 211, 230, 0.1);
+
+  /* —— 玻璃与发光 —— */
+  --glass: rgba(17, 24, 35, 0.72);
+  --glass-soft: rgba(255, 255, 255, 0.03);
+  --bevel: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --glow-accent: 0 0 0 1px rgba(22, 211, 230, 0.45), 0 0 18px rgba(22, 211, 230, 0.22);
+  --glow-soft: 0 0 22px rgba(22, 211, 230, 0.16);
+  --shadow-card: 0 18px 46px rgba(0, 0, 0, 0.55), 0 2px 0 rgba(255, 255, 255, 0.02) inset;
+  --shadow-float: 0 28px 70px rgba(0, 0, 0, 0.68);
+
+  /* —— 网格与粒子 —— */
+  --grid-line: rgba(255, 255, 255, 0.026);
+  --grid-size: 40px;
+
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* 变量名沿用 --serif，实际指纹式无衬线：深色科技风不用书籍体 */
+  --serif: "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  --sans: "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  --mono: "Cascadia Mono", "JetBrains Mono", Consolas, "Courier New", monospace;
+
+  --sidebar-w: 232px;
+  --measure: 68ch;
+}

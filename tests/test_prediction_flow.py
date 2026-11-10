@@ -108,7 +108,7 @@ class PredictionFlowTests(unittest.TestCase):
 
     def test_unlisted_provider_degrades_to_template(self):
         prediction = self.predict()
-        with patch.dict(os.environ, {"SPM_GENERATION_PROVIDER": "vendor-x"}):
+        with patch.dict(os.environ, {"STOCK_PREDICT_MAILER_GENERATION_PROVIDER": "vendor-x"}):
             brief = generation.generate_brief(self.cfg, prediction, [], allow_generation=True)
         self.assertTrue(brief["degraded"])
         self.assertIn("允许清单", brief["reason"])
@@ -124,7 +124,7 @@ class PredictionFlowTests(unittest.TestCase):
         generation.register_provider("stub", stub)
         prediction = self.predict()
         with patch.object(generation, "ALLOWED_PROVIDERS", ("stub",)), \
-                patch.dict(os.environ, {"SPM_GENERATION_PROVIDER": "stub"}):
+                patch.dict(os.environ, {"STOCK_PREDICT_MAILER_GENERATION_PROVIDER": "stub"}):
             brief = generation.generate_brief(self.cfg, prediction, [], allow_generation=True)
         self.assertEqual(brief["mode"], "external:stub")
         self.assertFalse(brief["degraded"])
@@ -140,7 +140,7 @@ class PredictionFlowTests(unittest.TestCase):
         generation.register_provider("boom", boom)
         prediction = self.predict()
         with patch.object(generation, "ALLOWED_PROVIDERS", ("boom",)), \
-                patch.dict(os.environ, {"SPM_GENERATION_PROVIDER": "boom"}):
+                patch.dict(os.environ, {"STOCK_PREDICT_MAILER_GENERATION_PROVIDER": "boom"}):
             brief = generation.generate_brief(self.cfg, prediction, [], allow_generation=True)
         self.assertTrue(brief["degraded"])
         self.assertIn("回退", brief["reason"])

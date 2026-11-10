@@ -269,12 +269,12 @@ class KnowledgeTests(unittest.TestCase):
         with patch('stock_predict_mailer.private_knowledge.service.parse', side_effect=AssertionError('must resume')):
             self.assertEqual(self.kb.process_one()['status'], 'ready')
         self.kb.upload(self.owner, 'b.txt', b'Another risk', META)
-        with patch.dict('os.environ', {'SPM_MASTER_KEY': self.f.key.decode()}):
+        with patch.dict('os.environ', {'STOCK_PREDICT_MAILER_MASTER_KEY': self.f.key.decode()}):
             self.assertEqual(run(self.f.root, once=True), 0)
         self.assertEqual(len(self.kb.listing(self.owner)), 2)
         from stock_predict_mailer.core import Config
         from stock_predict_mailer.delivery import process_lock
-        with patch.dict('os.environ', {'SPM_MASTER_KEY': self.f.key.decode()}), process_lock(Config(self.kb.root)), self.assertRaises(RuntimeError):
+        with patch.dict('os.environ', {'STOCK_PREDICT_MAILER_MASTER_KEY': self.f.key.decode()}), process_lock(Config(self.kb.root)), self.assertRaises(RuntimeError):
             run(self.f.root, once=True)
         with self.assertRaises(ServiceError):
             self.kb.upload(self.owner, '../escape.txt', b'bad')

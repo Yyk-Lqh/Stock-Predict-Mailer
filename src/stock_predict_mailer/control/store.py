@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import sqlite3
 import threading
@@ -13,6 +12,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from pydantic import ValidationError
 
 from ..agent_service.contracts import ServiceError
+from ..naming import env, env_key
 from .schemas import AgentEndpoint, MCPProfile, ModelProfile, Settings
 
 TYPES = {"models": ModelProfile, "mcp": MCPProfile, "agents": AgentEndpoint}
@@ -23,11 +23,11 @@ class Store:
     def __init__(self, root, master_key=None):
         self.root = root
         root.mkdir(parents=True, exist_ok=True)
-        key = master_key or os.environ.get("SPM_MASTER_KEY", "")
+        key = master_key or env("MASTER_KEY")
         try:
             self.cipher = Fernet(key.encode() if isinstance(key, str) else key)
         except (ValueError, TypeError):
-            raise ServiceError("SECRET_CONFIG", "请先配置有效的 SPM_MASTER_KEY；主密钥不保存到工作区") from None
+            raise ServiceError("SECRET_CONFIG", f"请先配置有效的 {env_key('MASTER_KEY')}；主密钥不保存到工作区") from None
         self.lock = threading.RLock()
         with self.db() as con:
             con.executescript("""

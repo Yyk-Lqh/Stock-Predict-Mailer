@@ -14,10 +14,10 @@ external generator is a deliberate, explicit act:
 """
 from __future__ import annotations
 
-import os
 from typing import Callable
 
 from .core import Config
+from .naming import env
 
 ALLOWED_PROVIDERS: tuple[str, ...] = ()  # populated only after a vendor review
 PROVIDERS: dict[str, Callable[[dict], str]] = {}
@@ -67,7 +67,7 @@ def generate_brief(cfg: Config, prediction: dict, evidence: list[dict], *,
                    allow_generation: bool = False) -> dict:
     if not allow_generation:
         return _template(prediction, evidence, "")
-    provider = os.environ.get("SPM_GENERATION_PROVIDER", "").strip()
+    provider = env("GENERATION_PROVIDER").strip()
     if not provider:
         return _template(prediction, evidence, "没有配置生成服务，已回退到确定性模板")
     if provider not in ALLOWED_PROVIDERS:

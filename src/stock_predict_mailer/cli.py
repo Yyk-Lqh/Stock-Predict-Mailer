@@ -13,6 +13,7 @@ from .agent_service.config import load
 from .agent_service.contracts import ServiceError
 from .agent_service.mail import MailService
 from .agent_service.reporting import save_report
+from .naming import COMMAND, PROJECT_NAME, SUMMARY_ZH, banner
 
 
 def main(argv=None):
@@ -24,7 +25,8 @@ def main(argv=None):
         except ModuleNotFoundError:
             print(json.dumps({"error": {"code": "CONFIG_ERROR", "message": "旧功能需要安装 .[research,trees]", "retryable": False}}))
             return 2
-    parser = argparse.ArgumentParser(description="预测分析 Agent + 邮件通知服务")
+    parser = argparse.ArgumentParser(prog=COMMAND, description=f"{PROJECT_NAME}：{SUMMARY_ZH}")
+    parser.add_argument("--version", action="version", version=banner())
     parser.add_argument("--config", type=Path, default=Path("config/agent-example.toml"))
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run", help="接入、分析、报告并入队；--send 执行配置的投递")

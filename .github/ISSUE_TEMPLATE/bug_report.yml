@@ -38,7 +38,7 @@ body:
       label: 复现步骤
       description: 命令、输入与参数越具体越好；合成数据可用 `demo-data` 生成
       placeholder: |
-        1. uv run stock-mailer demo-data --days 200 --stocks 6
+        1. uv run stock-predict-mailer demo-data --days 200 --stocks 6
         2. ...
     validations:
       required: true

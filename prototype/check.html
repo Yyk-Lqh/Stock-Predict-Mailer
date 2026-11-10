@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>办公区 · 角色与状态核对</title>
+<!-- 开发用页面，不随包交付：只有 index.html / style.css / app.js / memory.js 进生产。
+     这里刻意不做深色外壳，只核对角色本身的造型、比例与四种状态。 -->
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/office.css">
+<style>
+  body { margin: 0; padding: 24px; background: #070A11; color: #9BAAB8; font: 13px/1.6 system-ui, sans-serif; }
+  h1 { font-size: 15px; font-weight: 600; letter-spacing: .08em; color: #E9F4F8; margin: 0 0 4px; }
+  p.note { margin: 0 0 20px; font-size: 12px; color: #5D6B7A; }
+  .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; max-width: 1180px; }
+  .cell { background: radial-gradient(120% 90% at 50% 10%, #101B2B, #080D16); border: 1px solid rgba(22,211,230,.14); border-radius: 10px; padding: 10px; }
+  .cell svg { display: block; width: 100%; height: 300px; }
+  .cap { margin-top: 6px; font: 600 10.5px/1.4 ui-monospace, monospace; letter-spacing: .06em; color: #7E8B99; text-align: center; }
+  .avatars { display: flex; gap: 18px; align-items: center; margin-top: 24px; }
+  .avatars div { width: 72px; height: 72px; border-radius: 50%; overflow: hidden; border: 1px solid rgba(22,211,230,.28); background: radial-gradient(circle at 50% 40%, rgba(22,211,230,.18), rgba(10,17,28,.9)); }
+</style>
+</head>
+<body>
+<div id="view-office" style="border:0;background:none">
+
+<h1>角色与状态核对</h1>
+<p class="note">左起：站立待命 / 落座 / 落座并打字 / 行走。打字的两条手臂各自绕肩关节摆，速率不同步。</p>
+
+<div class="grid" id="grid"></div>
+
+<div class="avatars" id="avatars"></div>
+
+</div>
+
+<script src="js/actors.js"></script>
+<script>
+(function () {
+  var grid = document.getElementById('grid');
+  var cases = [
+    { key: 'main', label: '小鲸 · 站立', pose: 'stand', typing: false, walking: false },
+    { key: 'main', label: '小鲸 · 落座', pose: 'sit', typing: false, walking: false },
+    { key: 'main', label: '小鲸 · 打字', pose: 'sit', typing: true, walking: false },
+    { key: 'sub', label: '小鱼 · 行走', pose: 'stand', typing: false, walking: true },
+    { key: 'sub', label: '小鱼 · 站立', pose: 'stand', typing: false, walking: false },
+    { key: 'sub', label: '小鱼 · 落座', pose: 'sit', typing: false, walking: false },
+    { key: 'sub', label: '小鱼 · 打字', pose: 'sit', typing: true, walking: false },
+    { key: 'main', label: '小鲸 · 行走', pose: 'stand', typing: false, walking: true }
+  ];
+
+  cases.forEach(function (c) {
+    var cell = document.createElement('div');
+    cell.className = 'cell';
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '-150 -400 300 420');
+    svg.setAttribute('preserveAspectRatio', 'xMidYMax meet');
+    var built = window.Actors.build(c.key);
+    window.Actors.setPose(built.node, c.pose);
+    window.Actors.setTyping(built.node, c.typing);
+    if (c.walking) built.node.classList.add('is-walking');
+    built.node.setAttribute('transform', 'translate(0,0)');
+    svg.appendChild(built.node);
+    cell.appendChild(svg);
+    var cap = document.createElement('div');
+    cap.className = 'cap';
+    cap.textContent = c.label;
+    cell.appendChild(cap);
+    grid.appendChild(cell);
+  });
+
+  var box = document.getElementById('avatars');
+  ['main', 'sub'].forEach(function (k) {
+    var d = document.createElement('div');
+    d.appendChild(window.Actors.avatar(k, 72));
+    box.appendChild(d);
+  });
+})();
+</script>
+</body>
+</html>

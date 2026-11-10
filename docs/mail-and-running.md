@@ -6,7 +6,7 @@ Python 3.11+，在仓库根目录执行：
 
 ```powershell
 uv sync
-uv run stock-mailer --config config/agent-example.toml run --send
+uv run stock-predict-mailer --config config/agent-example.toml run --send
 ```
 
 无 uv 时可以 `python -m pip install -e .` 后 `python -m stock_predict_mailer run --send`。已有 .venv 可直接 `.venv/Scripts/python.exe -m stock_predict_mailer run --send`。
@@ -20,8 +20,8 @@ Mock 上下文还携带 `chart_data`（observed / forecast / backtest 三条合�
 `run` 仅生成报告并入队；`run --send` 按配置执行一次投递。命令输出 mail.id，可随后执行：
 
 ```powershell
-uv run stock-mailer --config config/agent-example.toml mail-status <mail.id>
-uv run stock-mailer --config config/agent-example.toml send <mail.id>
+uv run stock-predict-mailer --config config/agent-example.toml mail-status <mail.id>
+uv run stock-predict-mailer --config config/agent-example.toml send <mail.id>
 ```
 
 file 的 simulated 表示本机文件已投递，绝不表示真实邮箱收到。SMTP 的 submitted 表示服务器已接受邮件，最终到达仍由邮件服务器决定。
@@ -31,7 +31,7 @@ file 的 simulated 表示本机文件已投递，绝不表示真实邮箱收到�
 退避只在被再次调用时才推进，进程不会自己醒来。`mail-drain` 扫描所有到期消息，由计划任务周期执行：
 
 ```powershell
-uv run stock-mailer --config config/agent-example.toml mail-drain --limit 20
+uv run stock-predict-mailer --config config/agent-example.toml mail-drain --limit 20
 ./scripts/mail-drain.ps1
 ```
 
@@ -40,8 +40,8 @@ uv run stock-mailer --config config/agent-example.toml mail-drain --limit 20
 `uncertain` 不会自动重发。核对邮件服务器日志或收件箱后，用 `mail-resolve` 写入一次审计再决定后续：
 
 ```powershell
-uv run stock-mailer --config config/agent-example.toml mail-resolve <mail.id>              # 确认未送达，回到 retry
-uv run stock-mailer --config config/agent-example.toml mail-resolve <mail.id> --delivered  # 确认已送达，记为 submitted
+uv run stock-predict-mailer --config config/agent-example.toml mail-resolve <mail.id>              # 确认未送达，回到 retry
+uv run stock-predict-mailer --config config/agent-example.toml mail-resolve <mail.id> --delivered  # 确认已送达，记为 submitted
 ```
 
 审计写在工作区 `agent-mail.sqlite3` 的 `mail_audit` 表，且先写审计再改状态。非 `uncertain` 状态的邮件不接受确认，避免把已结清的消息再次推进队列。确认未送达后的重发仍可能造成重复邮件，SMTP 没有 exactly-once 保证。
@@ -70,7 +70,7 @@ agent.provider="http" 时调用 [接口文档](interfaces.md) 的有约束策略
 
 ## 旧功能与测试
 
-旧研究、上传、训练和模型包仍保留。安装 `uv sync --extra research --extra trees --extra dev`，旧命令在 stock-mailer 后加 legacy，例如 `uv run stock-mailer legacy --config config/example.toml init`。旧操作手册见 [归档 README](legacy-readme.md)，其中命令需要相同 legacy 前缀。旧模块 Python 导入路径不变（旧 CLI 为 legacy_cli）。不再默认训练，也不默认加载模型文件。
+旧研究、上传、训练和模型包仍保留。安装 `uv sync --extra research --extra trees --extra dev`，旧命令在 stock-predict-mailer 后加 legacy，例如 `uv run stock-predict-mailer legacy --config config/example.toml init`。旧操作手册见 [归档 README](legacy-readme.md)，其中命令需要相同 legacy 前缀。旧模块 Python 导入路径不变（旧 CLI 为 legacy_cli）。不再默认训练，也不默认加载模型文件。
 
 仅验证新链路可 `uv run python -m unittest discover -s tests -p test_agent_service.py -v`；完整回归需 research/trees 依赖，再执行 `uv run python -m unittest discover -s tests -v`；lint 为 `uv run ruff check src tests scripts`。协议测试只用本机回环 HTTP/SMTP，不接真实模型或外部邮箱；测试 SMTP 工厂跳过 TLS/auth，生产路径强制 TLS/auth。
 
@@ -82,6 +82,6 @@ agent.provider="http" 时调用 [接口文档](interfaces.md) 的有约束策略
 
 ### 查询队列
 
-`uv run stock-mailer --config config/local.toml mail-list --limit 20 --status pending` 输出 JSON 数组，最新入队优先。省略 status 列出所有状态；limit 为 1–1000（默认 20）。每行含 id/recipient/sender/transport/status/attempts/next_attempt/error，空列表也返回 0。仅查询，不触发投递。
+`uv run stock-predict-mailer --config config/local.toml mail-list --limit 20 --status pending` 输出 JSON 数组，最新入队优先。省略 status 列出所有状态；limit 为 1–1000（默认 20）。每行含 id/recipient/sender/transport/status/attempts/next_attempt/error，空列表也返回 0。仅查询，不触发投递。
 
 `[mail].sender_name` 可选，例如 `sender_name = "研究报告"`，通过标准库 formataddr 编码 From 显示名。拒绝 CR/LF；不改变 SMTP 信封地址、幂等 ID 或已入队 EML。

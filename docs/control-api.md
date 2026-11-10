@@ -46,9 +46,10 @@ settings.default_model_id 可空（运行时将明确降级），agents 包含 m
 limits 默认 `{max_subagents:3,max_depth:1,max_calls:8,timeout_seconds:90,child_timeout_seconds:20,budget_usd:0.1}`。支持最多3个叶子子 Agent、总深度上限0..3（当前叶子禁止递归，因此有效深度最多1），全局最多4个同时运行的主任务。所有模型尝试、MCP 工具及外部 A2A 委派均计入调用预算；发现/读取为用户直接操作，以各自超时控制；其连接测试单独计预算。子任务顺序执行以便共享预算与审计，失败降级；主模型仅对复杂任务请求委派，简单任务忽略委派建议。auto 在事实多于1条或 metrics 非空时视为复杂，complex 允许主 Agent 自行决定，simple 强制不委派。
 
 - POST `/api/tasks`：必填 prediction（v1）；可选 context=null、complexity=auto/simple/complex、notify=false、recipient=null、depth=0。返回202 A2A Task；状态持久化。
+- GET `/api/tasks`：分页列出任务，默认升序（旧到新），`?after=<rowid>&limit=≤100`，响应为 `{items,next_after}`。传 `order=desc` 时改为从新到旧，游标改用 `before`，响应为 `{items,next_before}`；两个参数可跨页续取，不要同时理解成同一种语义。查询串只接受 after / before / limit / order，其他键或重复键返回 `INVALID_INPUT`。请求不带 `X-Memory-Key` 时只返回未绑定会话的任务。
 - GET `/api/tasks/{id}`：任务与产物。POST `/api/tasks/{id}/cancel`：取消，终态不可再次取消。进程重启将中断任务标 failed/INTERRUPTED，不自动重新产生外部效果。
 
-Task 为 `{kind:"task",id,contextId,status:{state,timestamp},artifacts:[]}`。state 为 submitted/working/completed/failed/canceled；失败有 metadata.error。completed 产物 DataPart 含 analysis（原契约，mode=orchestrated_bounded）、children（每项角色/状态/依据/不确定性）、conflicts（排除的冲突）、usage（调用数和费用预留）、mail、report_path。analysis.status=degraded 是明确的降级结果，不伪装成正常 LLM 输出。
+Task 为 `{kind:"task",id,contextId,status:{state,timestamp},artifacts:[]}`。state 为 submitted/working/completed/failed/canceled；失败有 metadata.error。metadata.request 是提交时的只读回显（subject/direction/horizon/confidence/synthetic/notify/recipient/goal/conversation_id），只用于列表展示，不参与执行，也不会据此重新校验输入。completed 产物 DataPart 含 analysis（原契约，mode=orchestrated_bounded）、children（每项角色/状态/依据/不确定性）、conflicts（排除的冲突）、usage（调用数和费用预留）、mail、report_path。analysis.status=degraded 是明确的降级结果，不伪装成正常 LLM 输出。
 
 ## A2A 0.3 互操作子集
 
@@ -56,7 +57,7 @@ Task 为 `{kind:"task",id,contextId,status:{state,timestamp},artifacts:[]}`。st
 
 支持 `message/send`、`tasks/get`、`tasks/cancel`；TaskIdParams `{id}`。message/send.params.message 为 `{kind:"message",role:"user",messageId,contextId?,parts:[{kind:"data",data:…}]}`。main data 为 TaskRequest；子角色 data 为 `{role,prediction,facts,depth:1,tools:[],cost_ceiling_usd?}`，返回 completed Task，其 artifact DataPart 是模型输出结构，经主 Agent再次校验。主任务非阻塞返回 submitted/working，调用 tasks/get 查询。子任务是同步非流式执行，有明确超时和结构化失败，不开放任意主机上的 Agent 创建。
 
-JSON-RPC 错误 -32600 请求不合法、-32601 未支持方法、-32602 参数错误、-32001 找不到任务、-32002 不可取消；不包含内部异常正文。浏览器使用会话/CSRF；外部 A2A 客户端使用服务端环境 SPM_A2A_TOKEN 对应的 Bearer token（未设置则不开放 Bearer 通道）。A2A 凭据是单独配置，不复用模型 Key。当前监听本机，外部远程部署需要另行实现 HTTPS、身份与网络隔离。
+JSON-RPC 错误 -32600 请求不合法、-32601 未支持方法、-32602 参数错误、-32001 找不到任务、-32002 不可取消；不包含内部异常正文。浏览器使用会话/CSRF；外部 A2A 客户端使用服务端环境 STOCK_PREDICT_MAILER_A2A_TOKEN 对应的 Bearer token（未设置则不开放 Bearer 通道）。A2A 凭据是单独配置，不复用模型 Key。当前监听本机，外部远程部署需要另行实现 HTTPS、身份与网络隔离。
 
 ## 官方依据与兼容边界
 
@@ -82,6 +83,12 @@ JSON-RPC 错误 -32600 请求不合法、-32601 未支持方法、-32602 参数�
 事件恢复：GET `/api/tasks/{id}/events?after=N` 每页最多100，客户端保存已处理的最后seq，循环排空，重连沿用游标。另读任务 status 判断 completed/failed/canceled；step completed 不代表任务成功。重启中断为 failed/INTERRUPTED；不要自动重发任务或邮件。不是 SSE/WebSocket。
 
 知识证据：主模型只接收服务端从有权检索结果中选择、重新校验版本hash/元数据的完整片段；证据数组最多4000 UTF-8字节，并为主输入预留空间。放不下的片段整体跳过，KNOWLEDGE_BUDGET 明示；不截断财务句子、不移除来源定位。source_material 为不可信资料，模型仍只能选择预定义结论代码，只有包内 citation_id 加入主模型白名单。analysis.knowledge_evidence 包含 as_of/results/used_ids，HTML和邮件共用该快照。知识声明仍不等于独立验证事实，不能用于训练发布。超长用户约束、近期会话本身仍可能触发上下文限制，真实厂商token预算另待验。
+
+提交图表数据的位置：`chart_data` 是**任务顶层字段**，不要塞进 `context`。`context` 只接受
+`schema_version`/`context_id`/`subject`/`facts` 四个键，多一个 `chart_data` 就会被判 `INVALID_INPUT`。
+`examples/context.json` 是 CLI（`run`）与 Agent 契约的样例，里面带 `chart_data`；把它原样 POST 给
+`/api/tasks` 会失败——要么把 `chart_data` 提到顶层，要么删掉该键。图表时间也有约束：`observed` 必须
+不晚于 `prediction.generated_at`，`forecast` 必须晚于它，否则报「图表时间与预测生成时间不一致」。
 
 上游模型仍需交付 docs/interfaces.md 中严格 v1 prediction 和可选同标的 facts/chart_data；不交付任意权重让默认入口加载。真实模型、Embedding、第三方MCP/A2A与邮箱收件均未验证。上传继续是 JSON base64，不是 multipart；知识最大原件10MiB、上传请求15MiB，其他JSON请求1MiB。错误继续使用 `{error:{code,message,retryable}}`。
 

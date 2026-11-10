@@ -213,7 +213,7 @@ async function initializeSession() {
 ## 8. 安全与体验要求
 
 - API Key、token、stdio env 不写入 URL、localStorage、埋点、console 或错误上报；保存后清空输入。HTTP 响应中的固定掩码是状态展示，不是可恢复密钥。
-- SPM_MASTER_KEY 由运行服务的人在服务端注入，不提供浏览器编辑/查询入口；已有工作区重启必须使用原 key。未配置主密钥时服务不能启动，页面应提示联系运行者，不伪装成凭据已重置。
+- STOCK_PREDICT_MAILER_MASTER_KEY 由运行服务的人在服务端注入，不提供浏览器编辑/查询入口；已有工作区重启必须使用原 key。未配置主密钥时服务不能启动，页面应提示联系运行者，不伪装成凭据已重置。
 - 外部文本、预测对象名、工具描述和资源内容使用文本节点呈现，禁止直接 innerHTML。若新增 Markdown/富文本渲染，先实现可验证的过滤方案。
 - 删除配置、清除凭据、取消任务和授予外部发送权限应有明确的对象与影响说明。保存授权与发送通知是两个独立操作，不在后台保存时顺带发邮件。
 - 使用真实 label、键盘焦点和 aria-live；状态不仅靠颜色区分。窄屏表单不横向溢出，长 ID/URL/Schema 可换行或局部滚动。
@@ -221,10 +221,10 @@ async function initializeSession() {
 
 ## 9. 接手后的启动与 Mock 联调
 
-需要 Python3.11+。从仓库根目录执行 `uv sync`。服务端运行者应从外部秘密管理方式注入 SPM_MASTER_KEY；仅首次创建一次性演示工作区时，可按 [控制台手册](control-console.md) 的命令生成会话内 key，不打印、不提交，且后续重启不要重新生成覆盖。
+需要 Python3.11+。从仓库根目录执行 `uv sync`。服务端运行者应从外部秘密管理方式注入 STOCK_PREDICT_MAILER_MASTER_KEY；仅首次创建一次性演示工作区时，可按 [控制台手册](control-console.md) 的命令生成会话内 key，不打印、不提交，且后续重启不要重新生成覆盖。
 
 ```powershell
-uv run stock-mailer --config config/agent-example.toml console --port 8767
+uv run stock-predict-mailer --config config/agent-example.toml console --port 8767
 ```
 
 打开 `http://127.0.0.1:8767`，先确认现有控制台可用。MCP HTTP Mock 可在另一个终端启动：

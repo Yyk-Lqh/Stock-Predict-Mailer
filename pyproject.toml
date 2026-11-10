@@ -3,8 +3,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
+# Canonical identity lives in src/stock_predict_mailer/naming.py; the values here
+# follow rule, not taste: index names are lowercase-hyphen, import paths are
+# snake_case, and prose is "Stock-Predict-Mailer".
 name = "stock-predict-mailer"
-version = "0.5.0"
+dynamic = ["version"]
 description = "Prediction analysis agent and reliable email notification service"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,7 +20,10 @@ trees = ["lightgbm>=4,<5"]
 dev = ["ruff==0.17.2"]
 
 [project.scripts]
-stock-mailer = "stock_predict_mailer.cli:main"
+stock-predict-mailer = "stock_predict_mailer.cli:main"
+
+[tool.hatch.version]
+path = "src/stock_predict_mailer/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/stock_predict_mailer"]

@@ -23,6 +23,7 @@ uv run ruff check src tests scripts
 uv run python -m compileall -q src tests
 uv run python -m unittest discover -s tests -q
 python scripts/check_repo_hygiene.py
+python scripts/check_naming.py
 ```
 
 - 测试用标准库 **unittest**，项目没有 pytest 配置，请不要引入第二套测试框架。
@@ -48,7 +49,25 @@ python scripts/check_repo_hygiene.py
 - **失败不得静默**：训练失败、取消、超时需要保留可解释的错误类别，且不得改写当前选择或覆盖旧版本。
 - **成本诊断不是可交易回测**，报告与文档中不要升级表述。
 
-## 5 文档同步要求
+## 5 命名约定
+
+项目正式名称是 **Stock-Predict-Mailer**，只有三种合法书写形式，各自被外部规则固定，不能凭喜好替换：
+
+| 形式 | 值 | 用在哪 |
+| --- | --- | --- |
+| 专有名 | `Stock-Predict-Mailer` | 标题、文档正文、界面、日志抬头、A2A 卡片 |
+| 发行名 | `stock-predict-mailer` | 包索引、`uv` / `pip`、命令行入口 |
+| 导入名 | `stock_predict_mailer` | 目录名与 `import` 语句 |
+
+派生的标识符沿用同一词根：环境变量是 `STOCK_PREDICT_MAILER_<KEY>`（例如 `STOCK_PREDICT_MAILER_MASTER_KEY`），
+会话 Cookie 是 `stock_predict_mailer_session`，浏览器本地键以 `stock_predict_mailer.` 开头。
+旧前缀 `SPM_` 只在读取时兼容，新代码与新文档不得再写。
+
+唯一来源是 `src/stock_predict_mailer/naming.py`；`python scripts/check_naming.py` 会拦下缺连字符或改写下划线的名字、
+已退役的命令别名与旧界面品牌，以及散落在代码里的旧环境变量前缀。
+`docs/legacy-readme.md` 是历史归档，按原样保留。
+
+## 6 文档同步要求
 
 改动行为、命令、门禁或范围时，同一个 PR 内必须同步：
 
@@ -59,13 +78,13 @@ python scripts/check_repo_hygiene.py
 
 只改代码不改文档的 PR 会被要求补充。
 
-## 6 数据、密钥与隐私
+## 7 数据、密钥与隐私
 
 - 真实行情、私有文档、模型包、签名私钥、运行数据库与日志**一律不进仓库**，`.gitignore` 已排除，但 PR 仍可能误带，CI 的 `check_repo_hygiene.py` 会拦截。
 - 测试只能用合成数据（`demo-data`）或临时目录生成的数据，不要在测试里引用本地真实文件路径。
 - 发现密钥泄露请按 [SECURITY.md](SECURITY.md) 走私密渠道，不要开公开 issue。
 
-## 7 权限与合并
+## 8 权限与合并
 
 | 角色 | 能做 | 怎么获得 |
 | --- | --- | --- |
@@ -75,6 +94,6 @@ python scripts/check_repo_hygiene.py
 
 约定上 `main` 分支由 Ruleset 保护：禁止直推与强推、必须 PR、必须 CI 通过。**但该规则集截至 0.5.0 尚未在仓库设置中实际启用**，因此当前不能依赖平台强制，只能靠协作者自觉。维护者应在 Settings → Rules 中尽快建好规则集；在此之前，请把"不要直接推 `main`"当作硬性约定而非建议。
 
-## 8 行为准则
+## 9 行为准则
 
 参与即表示同意 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。技术分歧请围绕可复现证据讨论，不要针对个人。

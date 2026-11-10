@@ -31,4 +31,17 @@ assert.equal(floor.actors.find(a => a.id === 'risk').present, false, 'fast compl
 floor.reset(); for (const a of floor.actors) floor.set(a.id, 'running');
 for (let i = 0; i < 4000; i++) floor.tick(1 / 60, true);
 assert.ok(floor.actors.every(a => !a.station || a.pose === 'seated'), 'reduced motion keeps correct arrival');
+floor.reset(); let roamed = false;
+for (let i = 0; i < 4000; i++) {
+  floor.tick(1 / 60, false, true);
+  if (floor.actors.some(a => a.resident && a.pose === 'walking')) roamed = true;
+  const visible = floor.actors.filter(a => a.present);
+  for (let a = 0; a < visible.length; a++) for (let b = a + 1; b < visible.length; b++) assert.ok(distance(visible[a], visible[b]) >= radius * 2 + 3 - .01, 'idle collision');
+}
+assert.ok(roamed, 'idle residents stroll');
+floor.set('main', 'running');
+for (let i = 0; i < 1500; i++) floor.tick(1 / 60, false, false);
+assert.equal(floor.actors.find(a => a.id === 'main').pose, 'seated', 'running task recalls roaming resident');
+floor.reset(); for (let i = 0; i < 3000; i++) floor.tick(1 / 60, true, true);
+assert.equal(floor.transit, null, 'reduced motion suppresses idle stroll');
 console.log(`Pony navigation passed: ${samples} swept-motion samples; arrivals, exits, collisions, fast completion, reduced motion.`);

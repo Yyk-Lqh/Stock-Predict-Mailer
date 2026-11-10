@@ -1,4 +1,20 @@
 /* Stock-Predict-Mailer · 预测分析控制台 */
+const THEME_KEY = 'stock_predict_mailer.console.theme';
+function applyTheme(theme) {
+  const value = theme === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = value;
+  document.querySelectorAll('[data-theme-choice]').forEach(button => {
+    button.setAttribute('aria-pressed', String(button.dataset.themeChoice === value));
+  });
+}
+try { applyTheme(localStorage.getItem(THEME_KEY)); } catch (_) { applyTheme('dark'); }
+document.querySelectorAll('[data-theme-choice]').forEach(button => {
+  button.onclick = () => {
+    applyTheme(button.dataset.themeChoice);
+    try { localStorage.setItem(THEME_KEY, button.dataset.themeChoice); } catch (_) { /* Theme still works without storage. */ }
+  };
+});
+window.addEventListener('storage', event => { if (event.key === THEME_KEY) applyTheme(event.newValue); });
 const $ = id => document.getElementById(id);
 let csrf = '', profiles = [], servers = [], endpoints = [], settings = null, currentTask = null;
 let taskControlsDirty = false;

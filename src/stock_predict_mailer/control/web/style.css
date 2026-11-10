@@ -755,3 +755,66 @@ button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px soli
 @media (max-width: 760px) { .report-inspector .inspector-head { top: -20px; margin: -20px -20px 16px; padding: 20px; } }
 #notice { top: auto; bottom: 24px; max-width: 560px; max-height: 180px; overflow-y: auto; }
 @media (max-width: 760px) { #notice { bottom: 16px; } }
+
+/* Day and night share the same semantic colors and layout. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --void: #f1f2f4;
+  --surface: #ffffff;
+  --surface-2: #f6f7f9;
+  --surface-3: #e9ecf0;
+  --ink: #20242b;
+  --ink-2: #505965;
+  --ink-3: #656e7a;
+  --rule: rgba(25, 35, 50, .12);
+  --rule-strong: rgba(25, 35, 50, .25);
+  --brass: #80602b;
+  --brass-soft: rgba(128, 96, 43, .08);
+  --brass-line: rgba(128, 96, 43, .35);
+  --up: #b43731;
+  --up-soft: rgba(180, 55, 49, .08);
+  --down: #23784e;
+  --down-soft: rgba(35, 120, 78, .08);
+  --warn: #8a5b12;
+  --warn-soft: #fff5df;
+  --danger: #b23e32;
+  --danger-soft: #fceeea;
+}
+.theme-switch { display: inline-flex; flex-shrink: 0; gap: 2px; padding: 3px; border: 1px solid var(--rule); border-radius: 7px; background: var(--void); }
+.theme-switch button { border: 0; border-radius: 4px; padding: 4px 10px; background: transparent; color: var(--ink-3); cursor: pointer; font-size: 11px; white-space: nowrap; }
+.theme-switch button:hover { color: var(--ink); }
+.theme-switch button[aria-pressed="true"] { color: var(--ink); background: var(--surface-3); }
+:root[data-theme="light"] .btn:hover,
+:root[data-theme="light"] input:hover,
+:root[data-theme="light"] select:hover,
+:root[data-theme="light"] textarea:hover,
+:root[data-theme="light"] .chip:hover { border-color: var(--rule-strong); }
+:root[data-theme="light"] .btn.primary,
+:root[data-theme="light"] .chip.active,
+:root[data-theme="light"] .steps li[data-done="true"] .mark { color: #ffffff; }
+:root[data-theme="light"] .btn.primary:hover { background: #684b1e; border-color: #684b1e; }
+:root[data-theme="light"] input::placeholder,
+:root[data-theme="light"] textarea::placeholder,
+:root[data-theme="light"] .filter-bar input[type="search"]::placeholder { color: #707986; }
+:root[data-theme="light"] input:disabled,
+:root[data-theme="light"] select:disabled { background: var(--surface-3); }
+:root[data-theme="light"] .note.warn,
+:root[data-theme="light"] .allow-sum.warn { color: var(--warn); }
+:root[data-theme="light"] .note.danger,
+:root[data-theme="light"] .allow-sum.danger,
+:root[data-theme="light"] #notice.error { color: var(--danger); }
+:root[data-theme="light"] .draft-note,
+:root[data-theme="light"] #notice { color: var(--brass); background: #faf4e8; }
+:root[data-theme="light"] .rail .seg { background: var(--surface-3); }
+:root[data-theme="light"] .rail .seg[data-status="completed"] { background: var(--brass); }
+:root[data-theme="light"] .pulse .bar { fill: var(--rule-strong); }
+:root[data-theme="light"] .chip.is-empty:not(.active) { color: var(--ink-3); }
+@media (max-width: 760px) {
+  .workspace-bar { gap: 10px; }
+  .workspace-bar > #workspace-title { min-width: 0; flex: 1; }
+  .theme-switch { margin-left: auto; }
+  .theme-switch button { padding-inline: 8px; }
+}
+:root[data-theme="light"] .check input:checked::after { border-color: #ffffff; }
+:root[data-theme="light"] .rail .seg[data-status="running"] { background: var(--brass-soft); }
+:root[data-theme="light"] .rail .seg[data-status="failed"] { background: var(--danger); }

@@ -1591,6 +1591,7 @@ $('task-form').onsubmit = async event => {
   if (button.disabled || event.currentTarget.inert) return;
   button.disabled = true;
   try {
+    window.AnalysisInput?.validate();
     await window.Workbench?.prepare();
     const input = JSON.parse($('task-data').value);
     const conversationId = $('conversation-id').value;
@@ -1611,6 +1612,7 @@ $('task-form').onsubmit = async event => {
     const task = await api('tasks', 'POST', {...request, notify: $('task-notify').checked, recipient: $('task-recipient').value || null});
     if (conversationId !== $('conversation-id').value) { notice('任务已提交，可从对应会话查看。'); return; }
     currentTask = task.id;
+    window.AnalysisInput?.open('progress');
     window.Workbench?.submitted(task);
     recordLoaded = false;
     // 已提交的输入留作下次的起点，但不再提示「未提交」
@@ -1633,6 +1635,7 @@ $('task-form').onsubmit = async event => {
     notice(error.message, true);
   } finally {
     button.disabled = false;
+    window.AnalysisInput?.update();
   }
 };
 $('task-cancel').onclick = async () => {

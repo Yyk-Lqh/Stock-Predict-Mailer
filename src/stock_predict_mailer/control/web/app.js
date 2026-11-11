@@ -909,6 +909,7 @@ function sample() {
   };
 }
 function applySample() {
+  setNumericPrediction(null);
   const data = sample();
   $('p-subject').value = data.prediction.subject;
   $('p-model-version').value = data.prediction.model_version;
@@ -942,13 +943,23 @@ function readPrediction() {
     metrics: {}
   };
 }
+let numericPrediction = null;
+function setNumericPrediction(prediction) {
+  numericPrediction = Number.isFinite(prediction?.value) && !prediction.direction ? prediction : null;
+  const status = $('numeric-prediction');
+  status.hidden = !numericPrediction;
+  status.textContent = numericPrediction ? `${numericPrediction.value} · ${numericPrediction.value_unit}。重新导入可更新预测。` : '';
+  document.querySelectorAll('#prediction-editor [id^="p-"], #prediction-editor input[name="p-dir"]').forEach(field => {
+    if (field.matches('input, select')) field.disabled = Boolean(numericPrediction);
+  });
+}
 function syncJSON() {
   let chart = null;
   try {
     const previous = JSON.parse($('task-data').value || '{}');
     chart = previous.chart_data || null;
   } catch (error) { chart = null; }
-  const prediction = readPrediction();
+  const prediction = numericPrediction || readPrediction();
   const payload = {prediction, context: facts.length ? {
     schema_version: '1',
     context_id: 'console-ctx',
@@ -970,7 +981,7 @@ function syncForm(quiet = false) {
   if (!p) throw new Error('JSON 里没有 prediction 对象');
   $('p-subject').value = p.subject ?? '';
   $('p-model-version').value = p.model_version ?? '';
-  setDirection(p.direction || 'up');
+  setDirection(p.direction || '');
   $('p-horizon-value').value = p.horizon?.value ?? 5;
   $('p-horizon-unit').value = p.horizon?.unit ?? 'trading_days';
   $('p-confidence').value = p.confidence ?? '';
@@ -978,6 +989,7 @@ function syncForm(quiet = false) {
   $('p-synthetic').checked = Boolean(p.synthetic);
   facts = (data.context?.facts || []).map(f => ({...f}));
   renderFacts();
+  setNumericPrediction(p);
   if (!quiet) notice('已按 JSON 回填表单。');
 }
 document.querySelectorAll('#task-form input, #task-form select').forEach(el => {
@@ -989,6 +1001,29 @@ document.querySelectorAll('#task-form input, #task-form select').forEach(el => {
 });
 $('form-to-json').onclick = () => { syncJSON(); notice('已用表单内容覆盖 JSON。'); };
 $('json-to-form').onclick = () => { try { syncForm(); } catch (error) { notice(error.message, true); } };
+$('prediction-import').onchange = async event => {
+  const field = event.currentTarget, file = field.files[0];
+  if (!file) return;
+  const selected = $('conversation-id').value;
+  try {
+    if (file.size > 1024 * 1024) throw new Error('预测文件须小于 1 MiB。');
+    const prediction = JSON.parse(await file.text());
+    if (selected !== $('conversation-id').value) return;
+    if (prediction?.schema_version !== '1' || typeof prediction.subject !== 'string' || !prediction.subject.trim() ||
+        !prediction.horizon || !(Date.parse(prediction.valid_until) > Date.now()) ||
+        (!Number.isFinite(prediction.value) && !['up', 'down', 'flat'].includes(prediction.direction))) {
+      throw new Error('请选择有效期内的 v1 预测文件。');
+    }
+    const previous = JSON.parse($('task-data').value || '{}');
+    const context = previous.context?.subject === prediction.subject ? previous.context : null;
+    $('task-data').value = JSON.stringify({prediction, context}, null, 2);
+    syncForm(true);
+    draftSchedule();
+    window.AnalysisInput?.update();
+    notice('预测已导入，请填写分析问题并发送。');
+  } catch (error) { notice(error.message, true); }
+  finally { field.value = ''; }
+};
 $('load-mock').onclick = () => { applySample(); notice('已填入示例预测与两条事实，可以直接提交。'); };
 
 /* ---------- draft：没提交的输入不该因为刷新或切页丢掉 ---------- */
@@ -1065,6 +1100,7 @@ function draftRestore() {
   return true;
 }
 function draftClear() {
+  setNumericPrediction(null);
   clearTimeout(draftTimer);
   draftWrite(null);
   draftBanner(null);
@@ -1192,7 +1228,7 @@ function renderReport(task) {
   const h = document.createElement('h2');
   h.append(document.createTextNode(`${p.subject || '未标注标的'} `));
   const dir = document.createElement('span');
-  dir.textContent = dirLabel;
+  dir.textContent = p.direction ? dirLabel : '数值预测';
   dir.style.color = dirColor;
   h.append(dir);
   head.append(h);

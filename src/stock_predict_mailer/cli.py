@@ -32,6 +32,10 @@ def main(argv=None):
     run = sub.add_parser("run", help="接入、分析、报告并入队；--send 执行配置的投递")
     run.add_argument("--recipient")
     run.add_argument("--send", action="store_true")
+    forest = sub.add_parser("predict-rf", help="用交付的随机森林与月频特征导出 v1 预测 JSON")
+    forest.add_argument("--features", type=Path, required=True)
+    forest.add_argument("--model", type=Path, help="已交付模型文件的位置")
+    forest.add_argument("--output", type=Path, required=True)
     send = sub.add_parser("send", help="发送或重试一条已入队邮件")
     send.add_argument("message_id")
     status = sub.add_parser("mail-status", help="查询邮件状态")
@@ -51,6 +55,17 @@ def main(argv=None):
     console.add_argument("--port", type=int, default=8767)
     args = parser.parse_args(argv)
     try:
+        if args.command == "predict-rf":
+            from .agent_service.random_forest import MODEL_PATH, predict_file
+            from .core import atomic_write
+
+            model_path = args.model or MODEL_PATH
+            if args.output.resolve() in (args.features.resolve(), model_path.resolve()):
+                raise ServiceError("INVALID_INPUT", "输出路径不能覆盖特征或模型文件")
+            result = predict_file(args.features, model_path)
+            atomic_write(args.output, json.dumps(result, ensure_ascii=False, indent=2).encode("utf-8"))
+            print(json.dumps(result, ensure_ascii=False))
+            return 0
         cfg = load(args.config)
         if args.command == "knowledge-worker":
             from .private_knowledge.worker import run

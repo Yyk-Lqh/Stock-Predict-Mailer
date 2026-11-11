@@ -1,0 +1,14 @@
+workspace = "../data/agent-rf-local"
+timezone = "Asia/Shanghai"
+
+[prediction]
+adapter = "file"
+path = "../data/agent-rf-local/prediction.json"
+
+[context]
+adapter = "none"
+
+[mail]
+transport = "file"
+sender = "research@example.invalid"
+recipient = "preview@example.invalid"

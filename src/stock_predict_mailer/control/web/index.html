@@ -107,6 +107,8 @@
             <span class="hint">来自上游模型，本系统不复核数值</span>
             <button type="button" id="load-mock" class="btn quiet">填入示例</button>
           </div>
+          <label class="field"><span>导入上游预测 JSON</span><input id="prediction-import" type="file" accept=".json,application/json"></label>
+          <p id="numeric-prediction" class="hint" hidden></p>
 
           <div class="grid-3">
             <label class="field"><span>标的代码</span><input id="p-subject" value="DEMO.SZ" autocomplete="off" required></label>

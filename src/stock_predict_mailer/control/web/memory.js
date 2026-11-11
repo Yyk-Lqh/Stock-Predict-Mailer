@@ -257,6 +257,7 @@ window.Workbench = (() => {
     } finally { if (epoch === selectionEpoch) $('task-form').inert = false; }
   }
   function blankPrediction() {
+    setNumericPrediction(null);
     $('p-subject').value = ''; $('p-model-version').value = '';
     $('p-confidence').value = ''; $('p-synthetic').checked = false;
     facts = []; renderFacts(); resetTiming();
@@ -397,6 +398,7 @@ window.Workbench = (() => {
   function identityChanged() {
     if (!ready) return;
     ++selectionEpoch; selected = ''; turns = []; clearTask(); clearFollowup(); renderTurns();
+    blankPrediction();
     $('task-form').inert = false;
     window.KnowledgeUI?.identityReset();
     $('conversation-id').value = '';

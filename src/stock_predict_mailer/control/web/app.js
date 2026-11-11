@@ -1,19 +1,51 @@
 /* Stock-Predict-Mailer · 预测分析控制台 */
+/* ---------- theme ---------- */
+/* One preference drives both switches: 浅色 / 深色 / 跟随系统. The choice is stored
+   locally per browser; the rendered attribute is always a concrete light|dark so the
+   stylesheet keeps a single contract. */
 const THEME_KEY = 'stock_predict_mailer.console.theme';
-function applyTheme(theme) {
-  const value = theme === 'light' ? 'light' : 'dark';
-  document.documentElement.dataset.theme = value;
-  document.querySelectorAll('[data-theme-choice]').forEach(button => {
-    button.setAttribute('aria-pressed', String(button.dataset.themeChoice === value));
+const THEME_MODES = ['light', 'dark', 'system'];
+const THEME_LABELS = {light: '浅色', dark: '深色'};
+const SYSTEM_THEME = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+let themeMode = 'dark';
+
+function systemTheme() { return SYSTEM_THEME && SYSTEM_THEME.matches ? 'dark' : 'light'; }
+function resolvedTheme() { return themeMode === 'system' ? systemTheme() : themeMode; }
+
+function applyTheme(mode, persist) {
+  themeMode = THEME_MODES.includes(mode) ? mode : 'dark';
+  const theme = resolvedTheme();
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.dataset.themeMode = themeMode;
+  document.querySelectorAll('[data-theme-choice]').forEach(choice => {
+    const selected = choice.dataset.themeChoice === themeMode;
+    if (choice.tagName === 'INPUT') choice.checked = selected;
+    else choice.setAttribute('aria-pressed', String(selected));
+    choice.closest('.theme-option')?.classList.toggle('is-selected', selected);
   });
+  const note = document.getElementById('theme-effective');
+  if (note) {
+    note.textContent = themeMode === 'system'
+      ? `正在跟随系统，当前显示${THEME_LABELS[theme]}；系统切换时会自动调整。`
+      : `已固定${THEME_LABELS[theme]}，不随系统变化。`;
+  }
+  if (persist) {
+    try { localStorage.setItem(THEME_KEY, themeMode); } catch (_) { /* Theme still works without storage. */ }
+  }
 }
-try { applyTheme(localStorage.getItem(THEME_KEY)); } catch (_) { applyTheme('dark'); }
-document.querySelectorAll('[data-theme-choice]').forEach(button => {
-  button.onclick = () => {
-    applyTheme(button.dataset.themeChoice);
-    try { localStorage.setItem(THEME_KEY, button.dataset.themeChoice); } catch (_) { /* Theme still works without storage. */ }
-  };
+
+document.querySelectorAll('[data-theme-choice]').forEach(choice => {
+  const pick = () => applyTheme(choice.dataset.themeChoice, true);
+  if (choice.tagName === 'INPUT') choice.addEventListener('change', pick);
+  else choice.addEventListener('click', pick);
 });
+try { applyTheme(localStorage.getItem(THEME_KEY)); } catch (_) { applyTheme('dark'); }
+/* Follow the OS only while the user asked us to; an explicit choice wins. */
+const followSystem = () => { if (themeMode === 'system') applyTheme('system'); };
+if (SYSTEM_THEME) {
+  if (SYSTEM_THEME.addEventListener) SYSTEM_THEME.addEventListener('change', followSystem);
+  else if (SYSTEM_THEME.addListener) SYSTEM_THEME.addListener(followSystem);
+}
 window.addEventListener('storage', event => { if (event.key === THEME_KEY) applyTheme(event.newValue); });
 const $ = id => document.getElementById(id);
 let csrf = '', profiles = [], servers = [], endpoints = [], settings = null, currentTask = null;

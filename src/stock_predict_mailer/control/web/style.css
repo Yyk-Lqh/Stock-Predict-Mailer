@@ -784,6 +784,18 @@ button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px soli
 .theme-switch button { border: 0; border-radius: 4px; padding: 4px 10px; background: transparent; color: var(--ink-3); cursor: pointer; font-size: 11px; white-space: nowrap; }
 .theme-switch button:hover { color: var(--ink); }
 .theme-switch button[aria-pressed="true"] { color: var(--ink); background: var(--surface-3); }
+/* Appearance panel: the same preference as the quick switch, spelled out. */
+.theme-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.theme-option { display: flex; align-items: flex-start; gap: 10px; padding: 14px 16px; border: 1px solid var(--rule); border-radius: var(--radius-sm); background: var(--surface-2); cursor: pointer; }
+.theme-option:hover { border-color: var(--rule-strong); }
+.theme-option:focus-within { border-color: var(--brass-line); outline: 2px solid var(--brass-soft); outline-offset: 1px; }
+.theme-option input { flex: none; width: auto; margin: 2px 0 0; padding: 0; accent-color: var(--brass); }
+.theme-option-body { display: grid; gap: 4px; min-width: 0; }
+.theme-option-body strong { font-size: 12.5px; font-weight: 500; color: var(--ink); }
+.theme-option-body small { font-size: 11px; line-height: 1.5; color: var(--ink-3); }
+.theme-option.is-selected { border-color: var(--brass-line); background: var(--brass-soft); }
+.theme-option.is-selected strong { color: var(--brass); }
+@media (max-width: 760px) { .theme-options { grid-template-columns: 1fr; } }
 :root[data-theme="light"] .btn:hover,
 :root[data-theme="light"] input:hover,
 :root[data-theme="light"] select:hover,
@@ -838,7 +850,7 @@ button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px soli
 [data-theme="dark"] .office-floor-line { stroke: #3c4854; }
 [data-theme="dark"] .pony-rig { stroke: #586572; stroke-width: .7; paint-order: stroke; }
 [data-pony] { cursor: pointer; outline: none; }
-[data-pony]:focus-visible .pony-selected { visibility: visible; stroke-width: 3; }
+[data-pony]:focus-visible { outline: 2px solid var(--brass); outline-offset: 4px; }
 .office-legend { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 14px; }
 .office-role-button { border: 1px solid var(--rule); border-radius: 5px; color: var(--ink-2); padding: 5px 8px; font-size: 11px; background: transparent; cursor: pointer; }
 .office-role-button::before, .office-role-state strong::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--role-color); margin-right: 7px; }

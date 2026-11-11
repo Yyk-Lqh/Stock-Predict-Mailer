@@ -591,6 +591,9 @@ class ConsoleAPITests(unittest.TestCase):
         self.assertEqual(oldest["metadata"]["request"]["subject"], first["subject"])
         self.assertEqual(newest["metadata"]["request"]["horizon"], second["horizon"])
 
+        # A late update to the first task must retain its original pagination position.
+        self.f.store.task(oldest["id"], self.f.store.task(oldest["id"]))
+
         ascending = self.client.get("/api/tasks").json()
         self.assertEqual([item["id"] for item in ascending["items"]], [oldest["id"], newest["id"]])
         self.assertIsNone(ascending["next_after"])

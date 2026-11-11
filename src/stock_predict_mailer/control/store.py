@@ -180,7 +180,9 @@ class Store:
     def task(self, tid, value=None):
         with self.db() as con:
             if value is not None:
-                con.execute("INSERT OR REPLACE INTO tasks VALUES (?,?)", (tid, json.dumps(value, ensure_ascii=False)))
+                # Task pagination uses rowid as the submission-order cursor.
+                con.execute("INSERT INTO tasks (id,body) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
+                            (tid, json.dumps(value, ensure_ascii=False)))
             row = con.execute("SELECT body FROM tasks WHERE id=?", (tid,)).fetchone()
         if row is None:
             raise ServiceError("NOT_FOUND", "任务不存在")

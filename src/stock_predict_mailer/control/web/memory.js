@@ -1121,7 +1121,7 @@ window.PonyOffice = (() => {
   const {Floor, roles} = PonyFloor, floor = new Floor();
   const NS = 'http://www.w3.org/2000/svg';
   let taskId = null, replay = true, seen = new Set(), active = true, connected = true, taskState = 'idle', selected = 'main';
-  let lastFrame = 0, raf = 0, lastUI = 0;
+  let lastFrame = 0, raf = 0, lastUI = 0, terminalFeedback = "";
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   const el = (name, attrs = {}, markup = '') => {
     const node = document.createElementNS(NS, name);
@@ -1199,7 +1199,7 @@ window.PonyOffice = (() => {
     }
   }
   function reset(id = null, restoring = true) {
-    taskId = id; replay = restoring; seen = new Set(); taskState = id ? 'submitted' : 'idle'; connected = true; floor.reset();
+    taskId = id; replay = restoring; seen = new Set(); taskState = id ? 'submitted' : 'idle'; connected = true; floor.reset(); terminalFeedback="";
     for (const desk of desks.values()) desk.querySelector('.office-chart-screen').setAttribute('visibility', 'hidden');
     renderUI(); draw();
   }
@@ -1212,18 +1212,36 @@ window.PonyOffice = (() => {
       if (event.kind === 'step') {
         const actor = floor.actors.find(a => a.id === id);
         const state = event.status === 'running' ? 'running' : event.status;
+        actor.taskId = task.id; actor.taskLabel = task.metadata?.request?.subject || task.input?.subject || 'Agent 任务';
+        if (event.child_id) actor.childId = event.child_id;
+        if (state === 'completed') actor.completedSteps++;
+        if (state === 'running' && !actor.startedAt) actor.startedAt = event.timestamp;
         if (replay) { actor.state = state; actor.last = event.label; if (state === 'running') { actor.present = true; actor.pose = 'seated'; } }
         else floor.set(id, state, event.label);
+      }
+      if (event.kind === 'tool' || event.kind === 'adjustment') {
+        const actor = floor.actors.find(a => a.id === id);
+        actor.last = event.label || actor.last;
+        if (event.kind === 'tool' && event.status === 'running') floor.set(id, 'running', '调用工具 · ' + event.label);
+      }
+      if (event.kind === 'step' && ['prediction','risk','advice'].includes(id)) {
+        const main = floor.actors.find(a => a.id === 'main');
+        main.taskId = task.id;
+        if (event.status === 'running') floor.set('main','running','等待 ' + (floor.actors.find(a => a.id === id).name) + ' 返回');
       }
       if (event.kind === 'mail') floor.set('mail', event.status, event.label);
       if (event.kind === 'chart' && event.svg) {
         const screen = desks.get('charts').querySelector('.office-chart-screen'); screen.setAttribute('href', 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(event.svg));
       }
     }
-    if (['completed', 'failed', 'canceled'].includes(taskState)) floor.finish(taskState);
+    if (['completed', 'failed', 'canceled'].includes(taskState) && terminalFeedback!==task.id+taskState) {
+      floor.finish(taskState);
+      floor.set('main',taskState,taskState==='completed'?'分析任务已完成':taskState==='failed'?'分析任务失败':'分析任务已取消');
+      terminalFeedback=task.id+taskState;
+    }
     if (replay) for (const actor of floor.actors) if (!actor.resident && actor.state !== 'running') { actor.present = false; actor.pose = 'absent'; }
     if (events && events.length < 100) replay = false;
-    renderUI(); draw();
+    renderUI(); draw(true);
   }
   function draw() {
     const nodes = [];

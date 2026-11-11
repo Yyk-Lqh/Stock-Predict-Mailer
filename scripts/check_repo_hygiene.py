@@ -23,7 +23,7 @@ FORBIDDEN_NAMES = {".env", "publisher.key", "publisher.pub", "id_ed25519", "id_r
 # Split so this file does not match its own rule.
 KEY_HEADER = "-----BEGIN " + "PRIVATE KEY-----"
 # Training delivery d6cc73f. The inference adapter accepts this same artifact.
-DELIVERED_MODEL = Path("src/数据面/随机森林_数据面模型.pkl")
+DELIVERED_MODEL = Path("src/数据面/random_forest_monthly.pkl")
 DELIVERED_MODEL_SHA256 = "03c9b627004c39b9a60f292770417aaf561bc34fb2d41f829be5baf07f850dda"
 
 

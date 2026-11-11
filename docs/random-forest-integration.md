@@ -2,6 +2,8 @@
 
 `predict-rf` 读取训练方交付的随机森林和一只股票的月频特征，导出已有的 v1 预测 JSON。CLI 使用原有 `file` 适配器读取结果，分析工作台通过「分析资料 → 预测 → 导入上游预测 JSON」读取同一文件。模型加载限定为已交付的 SHA-256 文件，使用锁定的 scikit-learn 1.9.1。
 
+默认模型为 [random_forest_monthly.pkl](../src/数据面/random_forest_monthly.pkl)。[训练脚本](../src/数据面/train_random_forest.py) 将重新训练的模型保存为 `random_forest_monthly_candidate.pkl`，以便与交付模型区分。
+
 从仓库根目录运行示例：
 
 ```powershell

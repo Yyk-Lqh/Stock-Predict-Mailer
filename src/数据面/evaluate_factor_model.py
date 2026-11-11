@@ -173,7 +173,7 @@ FEATS = ['PB分位', '收益率', '均线偏移', '动量_20日',
 
 missing_cols = [c for c in FEATS if c not in monthly.columns]
 if missing_cols:
-    raise KeyError(f"以下特征列不存在，请先跑 特征工程2.py：{missing_cols}")
+    raise KeyError(f"以下特征列不存在，请先跑 build_price_volume_features.py：{missing_cols}")
 
 
 monthly = monthly.replace([np.inf, -np.inf], np.nan)

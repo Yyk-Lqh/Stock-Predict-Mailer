@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from .contracts import ServiceError, decode, keys, number, prediction, string, utcnow
 
-MODEL_PATH = Path('src/数据面/随机森林_数据面模型.pkl')
+MODEL_PATH = Path('src/数据面/random_forest_monthly.pkl')
 MODEL_DIGEST = '03c9b627004c39b9a60f292770417aaf561bc34fb2d41f829be5baf07f850dda'
 SKLEARN_VERSION = '1.9.1'
 FEATURES = ('PB分位', '收益率', '均线偏移', '动量_20日', '量价相关_10日', '波动率_60日', '价格位置_20日', 'roe_delta_r', 'eps_yoy_r')

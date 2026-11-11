@@ -2,12 +2,12 @@
 """数据面2 流程：训练随机森林模型并落盘
 
 口径说明：
-- 特征工程、训练参数与 因子试探_步骤(8).py 完全一致（9 特征 + 截面排名前 30% 为正类）
+- 特征工程、训练参数与 evaluate_factor_model.py 完全一致（9 特征 + 截面排名前 30% 为正类）
 - 先按 80/20 切分做验证对照（输出训练/测试 AUC，可与步骤8 输出比对）
 - 再用全部可用月份训练最终模型（生产口径）并保存
 前置：all_stock_history120_deep_cleaned.csv（步骤4 产出）、
       fundamental_quarterly_cleaned.csv（步骤6 产出）已位于 数据面2/
-产出：随机森林_数据面2模型.pkl（模型 + 特征列表 + 训练元数据）
+产出：random_forest_monthly_candidate.pkl（模型 + 特征列表 + 训练元数据）
 """
 import os
 import pickle
@@ -30,13 +30,13 @@ def 找文件(名称):
     raise FileNotFoundError(f'找不到 {名称}，已尝试 {BASE_DIR} 及其上级目录')
 
 
-# ========== 全局参数（与 因子试探_步骤(8).py 完全一致） ==========
+# ========== 全局参数（与 evaluate_factor_model.py 完全一致） ==========
 随机种子 = 42
 正类阈值 = 0.7          # 截面排名前 30% 为正类
 FEATS = ['PB分位', '收益率', '均线偏移', '动量_20日',
          '量价相关_10日', '波动率_60日', '价格位置_20日',
          'roe_delta_r', 'eps_yoy_r']
-模型文件 = os.path.join(BASE_DIR, '随机森林_数据面2模型.pkl')
+模型文件 = os.path.join(BASE_DIR, 'random_forest_monthly_candidate.pkl')
 
 # ========== 1. 量价数据 → 月频 ==========
 print('[1/6] 读取量价数据（大文件，约 1~2 分钟）…')
@@ -93,7 +93,7 @@ print('[3/6] 特征清洗与标签截面化…')
 
 缺失列 = [c for c in FEATS if c not in 月度.columns]
 if 缺失列:
-    raise KeyError(f'特征列不存在，请先跑 特征工程2_步骤(4).py：{缺失列}')
+    raise KeyError(f'特征列不存在，请先跑 build_price_volume_features.py：{缺失列}')
 
 月度 = 月度.replace([np.inf, -np.inf], np.nan)
 月度 = 月度.dropna(subset=FEATS + ['下月收益']).reset_index(drop=True)
@@ -105,7 +105,7 @@ print(f'  清洗后 {len(月度)} 行   {月度["股票代码"].nunique()} 只  
       f'{月度["年月"].min()} ~ {月度["年月"].max()}')
 
 # ========== 4. 80/20 验证对照 ==========
-print('[4/6] 80/20 切分验证（与 因子试探_步骤(8).py 同口径）…')
+print('[4/6] 80/20 切分验证（与 evaluate_factor_model.py 同口径）…')
 月份 = sorted(月度['年月'].unique())
 切点 = 月份[int(len(月份) * 0.8)]
 训练 = 月度[月度['年月'] <= 切点].copy()
@@ -145,7 +145,7 @@ assert auc_测试 > 0.5, f'测试 AUC {auc_测试:.3f} 未超过 0.5，模型无
     '参数': 模型参数,
     'sklearn版本': sklearn.__version__,
     '训练时间': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-    '口径': '特征工程与 因子试探_步骤(8).py 一致；最终模型用全部可用月份训练',
+    '口径': '特征工程与 evaluate_factor_model.py 一致；最终模型用全部可用月份训练',
 }
 with open(模型文件, 'wb') as f:
     pickle.dump(包, f)
@@ -153,6 +153,6 @@ print(f'\n已保存 → {模型文件}')
 
 print('\n以后加载模型：')
 print('    import pickle')
-print('    with open(r\'数据面2\\随机森林_数据面2模型.pkl\', \'rb\') as f:')
+print(f'    with open({模型文件!r}, "rb") as f:')
 print('        包 = pickle.load(f)')
 print('    概率 = 包["model"].predict_proba(本月[包["FEATS"]])[:, 1]')

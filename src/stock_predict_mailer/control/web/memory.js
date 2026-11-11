@@ -1121,7 +1121,7 @@ window.PonyOffice = (() => {
   const {Floor, roles} = PonyFloor, floor = new Floor();
   const NS = 'http://www.w3.org/2000/svg';
   let taskId = null, replay = true, seen = new Set(), active = true, connected = true, taskState = 'idle', selected = 'main';
-  let lastFrame = 0, raf = 0, lastUI = 0, terminalFeedback = "";
+  let lastFrame = 0, raf = 0, lastUI = 0, roleSignature = '', terminalFeedback = '';
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   const el = (name, attrs = {}, markup = '') => {
     const node = document.createElementNS(NS, name);
@@ -1130,16 +1130,18 @@ window.PonyOffice = (() => {
     return node;
   };
   const office = document.createElement('section'); office.className = 'pony-office'; office.setAttribute('aria-label', '小马协作办公室');
-  office.innerHTML = `<div class="office-heading"><div><span class="eyebrow">AGENT OFFICE</span><h2>小马办公室</h2></div><span id="office-live" class="hint">等待分析任务</span></div><div class="office-mobile-tabs"><button type="button" id="office-show-room" aria-pressed="true">办公室</button><button type="button" id="office-show-output" aria-pressed="false">进度与报告</button></div><div class="office-stage"></div><div class="office-legend" aria-label="角色选择"></div><p class="office-footnote">围巾标记职责 · 黑屏表示未工作 · 点击小马查看真实进度</p>`;
+  office.innerHTML = `<div class="office-heading"><div><span class="eyebrow">AGENT OFFICE</span><h2>小马办公室</h2></div><span id="office-live" class="hint">等待分析任务</span></div><div class="office-mobile-tabs"><button type="button" id="office-show-room" aria-pressed="true">办公室</button><button type="button" id="office-show-output" aria-pressed="false">进度与报告</button></div><div class="office-stage"></div><div class="office-legend" aria-label="角色选择"></div><p class="office-footnote">围巾标记职责 · 在室亮屏 · 游戏仅为空闲活动 · 点击小马查看真实进度</p>`;
   $('analysis-title').textContent = '分析工作台';
   $('analysis-title').closest('.page-head').after(office);
   $('workbench-intro').classList.add('office-welcome');
-  const svg = el('svg', {viewBox: '0 0 960 620', role: 'group', 'aria-label': '六个固定工位，主 Agent 与邮件小马常驻'});
+  const svg = el('svg', {viewBox: '-65 0 1025 620', role: 'group', 'aria-label': '六个固定工位，主 Agent 与邮件小马常驻，门外设候门区'});
   svg.innerHTML = `<defs><filter id="pony-shadow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="7"/></filter><linearGradient id="pony-desk" x2="0" y2="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#dfe2e5"/></linearGradient></defs><rect width="960" height="620" rx="12" class="office-floor"/><path d="M64 580H910" class="office-floor-line"/><text x="76" y="580" class="office-floor-caption">预测 · 证据 · 分析 · 交付</text>`;
-  const door = el('g', {transform: 'translate(0 480)'}, '<rect x="1" y="0" width="60" height="108" rx="3" class="office-door-frame"/><rect x="8" y="6" width="46" height="96" fill="#222831"/><path d="M8 6H54V102H8Z" class="office-door-leaf"/><circle cx="45" cy="58" r="2" fill="#c3a97a"/><text x="30" y="127" text-anchor="middle" class="office-floor-caption">出入口</text>');
+  const door = el('g', {transform: 'translate(0 480)'}, '<rect x="1" y="0" width="60" height="108" rx="3" class="office-door-frame"/><rect x="8" y="6" width="46" height="96" fill="#222831"/><g class="office-door-leaf"><path d="M8 6H54V102H8Z"/><circle cx="18" cy="52" r="2" fill="#c3a97a"/><circle cx="45" cy="52" r="2" fill="#c3a97a"/></g><text x="30" y="127" text-anchor="middle" class="office-floor-caption">出入口</text>');
   svg.append(door);
+  svg.insertBefore(el('rect',{x:-65,y:465,width:65,height:140,rx:8,fill:'#465361',opacity:.12}),door);
   const world = el('g'); svg.append(world); office.querySelector('.office-stage').append(svg);
-  const desks = new Map(), ponies = new Map(), buttons = new Map();
+  const desks = new Map(), ponies = new Map(), buttons = new Map(), rigs = new Map(), screens = new Map();
+  let lastScreen = -1;
   function choose(id) {
     selected = id;
     if (id === 'assistant') { window.AnalysisInput?.open('input'); return; }
@@ -1153,27 +1155,37 @@ window.PonyOffice = (() => {
       <ellipse cx="8" cy="76" rx="109" ry="28" fill="#131820" opacity=".13" filter="url(#pony-shadow)"/>
       <path d="M-98-28L-91 65H-85L-84-28M91-28L85 65H91L99-28" fill="#c8cdd1"/>
       <path d="M52-22H94V57H52Z" fill="#e3e5e7"/><path d="M55-2H91M55 19H91" stroke="#cbd0d4"/>
-      <path d="M-105-45H105V-21H-105Z" fill="#d3d7da"/><path d="M-105-53H105V-29H-105Z" fill="url(#pony-desk)"/>
-      <path d="M-40-43H40L34-34H-34Z" fill="#edf0f2" stroke="#cdd2d6"/>
+      <path d="M-105-13H105V12H-105Z" fill="#d3d7da"/><path d="M-105-53H105V3H-105Z" fill="url(#pony-desk)"/>
+      <g class="office-keyboard" transform="translate(-4 34)"><path d="M-40-43H30L34-31H-44Z" fill="#b8c5ce" stroke="#8f9eaa"/><path d="M-35-40H25M-37-36H27M-20-42V-33M-5-42V-33M10-42V-33" stroke="#edf4fa" stroke-width="1.5"/></g><g class="office-mouse" transform="translate(-1 34)"><ellipse cx="49" cy="-36" rx="7" ry="5" fill="#9eabb8"/><path d="M49-40V-36" stroke="#e6edf4"/></g>
       <path d="M-8-80H8V-57H-8Z" fill="#c5cbd0"/><path d="M-25-55H25" stroke="#bec5ca" stroke-width="5"/>
       <rect x="-53" y="-121" width="106" height="69" rx="2" fill="#cbd0d4"/>
       <rect x="-48" y="-116" width="96" height="58" rx="1" fill="#101215" class="office-monitor"/>
       <g class="office-screen" visibility="hidden"><rect x="-48" y="-116" width="96" height="58" fill="#79a9e0"/><path d="M-38-104H30M-38-94H20M-38-84H36M-38-74H8" stroke="#eaf4ff" stroke-width="4" opacity=".85"/></g>
       <image class="office-chart-screen" x="-48" y="-116" width="96" height="58" visibility="hidden"/>
-      <path d="M-27 30H27L31 80H-31Z" fill="#d7dce0"/><path d="M-29 81H29L21 93H-21Z" fill="#c8cdd1"/><path d="M0 92V109M0 105L-22 115M0 105L22 115" stroke="#bfc6cb" stroke-width="4"/>
+      <path d="M-26 38Q0 31 26 38L29 72Q0 83-29 72Z" fill="#d7dce0"/><path d="M-29 53H29L25 64H-25Z" fill="#c8cdd1"/><path d="M0 65V99M0 94L-22 105M0 94L22 105" stroke="#bfc6cb" stroke-width="4"/>
       <text x="0" y="-139" text-anchor="middle" class="office-desk-name">${role.name}</text><circle cx="-63" cy="-143" r="4" fill="${role.color}"/>`);
     desks.set(role.id, desk); world.append(desk);
     if (!role.station) desk.setAttribute('display', 'none');
     const pony = el('g', {role: 'button', tabindex: '0', 'aria-label': `${role.name}小马，查看工作状态`, 'data-pony': role.id});
-    pony.innerHTML = `<title>${role.name}</title><ellipse class="pony-ground" cx="0" cy="-1" rx="29" ry="7" fill="#101820" opacity=".15"/><g class="pony-rig"><g class="pony-leg-left"><path d="M-12-26L-15-9L-24-3L-23 3H-7L-1-25Z" fill="#111315"/></g><g class="pony-leg-right"><path d="M4-26L9-7L5 2H23L24-5L17-27Z" fill="#111315"/></g><path d="M-21-56Q0-69 23-54L25-24Q0-12-24-25Z" fill="#0c0e11"/><path d="M-22-37Q-41-46-33-29L-21-23" fill="#111315" class="pony-tail"/><g class="pony-arm-left"><path d="M-18-54Q-33-53-31-35L-23-29L-13-45Z" fill="#111315"/></g><g class="pony-arm-right"><path d="M17-54Q31-53 33-36L25-29L12-44Z" fill="#111315"/></g><g class="pony-head"><path d="M-22-67Q-28-92-11-102L-9-117L3-105Q18-108 21-94L34-85L29-66L11-62Q-4-57-22-67Z" fill="#090b0d"/><path d="M-26-83L-32-94L-17-96L-23-106L-7-102L1-114L5-101" fill="#090b0d"/><g class="pony-eyes"><ellipse cx="8" cy="-87" rx="6" ry="9" fill="white"/><ellipse cx="23" cy="-83" rx="5" ry="8" fill="white"/><ellipse cx="10" cy="-86" rx="2.8" ry="5" fill="#141820"/><ellipse cx="25" cy="-82" rx="2.4" ry="4.5" fill="#141820"/></g></g><path d="M-23-65Q0-56 23-65L24-55Q0-45-24-56Z" fill="${role.color}"/><path class="pony-scarf" d="M-14-54L-16-32L-5-34L-4-53Z" fill="${role.color}"/></g>`;
-    pony.querySelector('.pony-eyes').append(el('ellipse', {cx: 29, cy: -75, rx: 1.4, ry: 2, fill: '#828a91'}), el('path', {d: 'M19-68L27-69', stroke: '#68717a', 'stroke-width': 1}));
+    pony.innerHTML = PonyRig.markup(role, roles.indexOf(role));
     pony.addEventListener('click', () => choose(role.id));
     pony.addEventListener('keydown', event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); choose(role.id); } });
     ponies.set(role.id, pony); world.append(pony);
+    rigs.set(role.id, Object.fromEntries(['eyes','head','rig','leg-left','leg-right','arm-left','arm-right','scarf','tail','ear','mane','seated-head','back-eye','back-ear'].map(part => [part, pony.querySelector('.pony-'+part)])));
+    rigs.get(role.id).pupils = [...pony.querySelectorAll('.pony-pupil')];
+    const rig = rigs.get(role.id);
+    rig.expression = pony.querySelector('.pony-expression');
+    rig.arms = Object.fromEntries(['left','right'].map(side => [side, {
+      line: rig['arm-'+side].querySelector('path'), elbow:rig['arm-'+side].querySelector('circle'), hoof:rig['arm-'+side].querySelector('ellipse')
+    }]));
+    const screen = desk.querySelector('.office-screen');
+    screen.replaceChildren(); const screenTitle = el('title'); desk.prepend(screenTitle);
+    screens.set(role.id, {node:screen, title:screenTitle, chart:desk.querySelector('.office-chart-screen')});
     const button = document.createElement('button'); button.type = 'button'; button.className = 'office-role-button';
     button.textContent = role.name; button.style.setProperty('--role-color', role.color); button.setAttribute('aria-pressed', 'false'); button.onclick = () => choose(role.id);
     buttons.set(role.id, button); office.querySelector('.office-legend').append(button);
   }
+  door.querySelector('circle').classList.add('office-door-handle');
   const portal = document.createElement('div'); portal.className = 'sidebar-office-door';
   portal.innerHTML = '<span class="sidebar-door-art" aria-hidden="true"><i></i></span><span>协作通道<small>子 Agent 由此进出</small></span>';
   office.querySelector('.office-heading').append(portal);
@@ -1188,18 +1200,22 @@ window.PonyOffice = (() => {
     $('office-live').textContent = taskId ? `${TASK_STATE[taskState] || taskState} · ${taskId.slice(0, 8)}` : '等待分析任务';
     $('office-task-state').textContent = taskId ? `${TASK_STATE[taskState] || taskState} · 已运行 ${$('runviz-elapsed').textContent}` : '尚无运行任务，主 Agent 与邮件小马待命。';
     $('office-connection').hidden = connected;
+    const signature = floor.actors.map(a => [a.id,a.state,a.pose,a.last,a.activity,a.present].join(':')).join('|') + selected;
+    if (signature === roleSignature) return;
+    roleSignature = signature;
     const host = $('office-roles'); host.replaceChildren();
     for (const actor of floor.actors) {
       const row = document.createElement('button'); row.type = 'button'; row.className = 'office-role-state'; row.dataset.officeRole = actor.id;
       row.classList.toggle('selected', selected === actor.id); row.style.setProperty('--role-color', actor.color);
       const name = document.createElement('strong'); name.textContent = actor.name;
       const state = document.createElement('span'); state.textContent = `${captions[actor.state] || actor.state}${actor.present && !['seated', 'absent'].includes(actor.pose) ? ' · ' + ({walking: '前往工位 / 返回', waiting: '等待通行', turning: '对齐工位', sitting: '正在落座', rising: '正在离座'}[actor.pose] || actor.pose) : ''}`;
-      const note = document.createElement('small'); note.textContent = actor.last || (actor.resident ? '常驻办公室' : '按实际任务需要参与');
+      const note = document.createElement('small'); note.textContent = actor.state === 'running' || floor.time < actor.feedbackUntil ? actor.last : !actor.present ? '离室 · 场景来访不会启动模型' : actor.pose === 'seated' ? '空闲 · ' + PonyScreen.games[actor.activity % 5] : '办公室活动 · 未启动模型';
       row.append(name, state, note); row.onclick = () => { if (actor.id === 'assistant') window.AnalysisInput?.open('input'); selected = actor.id; renderUI(); }; host.append(row);
     }
   }
   function reset(id = null, restoring = true) {
-    taskId = id; replay = restoring; seen = new Set(); taskState = id ? 'submitted' : 'idle'; connected = true; floor.reset(); terminalFeedback="";
+    taskId = id; replay = restoring; seen = new Set(); taskState = id ? 'submitted' : 'idle'; connected = true; floor.reset();
+    terminalFeedback='';
     for (const desk of desks.values()) desk.querySelector('.office-chart-screen').setAttribute('visibility', 'hidden');
     renderUI(); draw();
   }
@@ -1243,43 +1259,97 @@ window.PonyOffice = (() => {
     if (events && events.length < 100) replay = false;
     renderUI(); draw(true);
   }
-  function draw() {
+  function draw(force = false) {
+    const refreshScreen = force || floor.time - lastScreen > .16 || lastScreen > floor.time;
+    if (refreshScreen) lastScreen = floor.time;
     const nodes = [];
     for (const actor of floor.actors) {
-      const desk = desks.get(actor.id), pony = ponies.get(actor.id);
+      if (actor.state === 'running' && actor.startedAt && Number.isFinite(Date.parse(actor.startedAt))) actor.elapsed = Math.max(0,(Date.now()-Date.parse(actor.startedAt))/1000);
+      const desk = desks.get(actor.id), pony = ponies.get(actor.id), rig = rigs.get(actor.id), screen = screens.get(actor.id);
       const working = connected && actor.state === 'running' && actor.pose === 'seated' && !['completed', 'failed', 'canceled'].includes(taskState);
-      desk.querySelector('.office-screen').setAttribute('visibility', working ? 'visible' : 'hidden');
-      if (actor.id === 'charts' && desk.querySelector('image').hasAttribute('href')) desk.querySelector('image').setAttribute('visibility', working ? 'visible' : 'hidden');
+      if (refreshScreen) {
+        const display = PonyScreen.render(actor, floor.time, connected);
+        screen.node.setAttribute('visibility', display.mode === 'off' ? 'hidden' : 'visible');
+        screen.node.dataset.mode = display.mode; screen.title.textContent = actor.name + ' · ' + display.title;
+        screen.node.innerHTML = display.markup;
+      }
+      screen.chart.setAttribute('visibility', actor.id === 'charts' && working && screen.chart.hasAttribute('href') ? 'visible' : 'hidden');
       nodes.push({node: desk, depth: actor.deskY + 25});
       pony.setAttribute('display', actor.present ? 'inline' : 'none'); pony.setAttribute('tabindex', actor.present ? '0' : '-1');
       const seated = ['seated', 'sitting', 'rising'].includes(actor.pose);
-      const transition = Math.min(1, (floor.transit?.id === actor.id ? floor.transit.elapsed : 0) / .4);
-      const sit = actor.pose === 'seated' ? 1 : actor.pose === 'sitting' ? transition : actor.pose === 'rising' ? 1 - transition : 0;
+      const motion=floor.motion(actor.id);
+      const transition = Math.min(1, (motion?.elapsed || 0) / (actor.pose === 'rising' ? .55 : .7));
+      const sit = PonyRig.smooth(actor.pose === 'seated' ? 1 : actor.pose === 'sitting' ? transition : actor.pose === 'rising' ? 1-transition : 0);
       const walking = actor.pose === 'walking' && !reduced.matches;
-      const phase = actor.phase, stride = walking ? Math.sin(phase) * 25 : 0;
-      const bob = walking ? Math.abs(Math.sin(phase)) * 2 : 0;
-      pony.setAttribute('transform', `translate(${actor.x.toFixed(2)} ${(actor.y - bob - (seated ? (1 - sit) * 5 : 0)).toFixed(2)}) scale(.88)`);
-      pony.querySelector('.pony-eyes').setAttribute('visibility', sit > .6 || (walking && actor.facing === 'back') ? 'hidden' : 'visible');
-      pony.querySelector('.pony-eyes').setAttribute('transform', `translate(0 -84) scale(1 ${!reduced.matches && actor.phase % 8 > 7.75 ? .08 : 1}) translate(0 84)`);
-      pony.querySelector('.pony-head').setAttribute('transform', `rotate(${!reduced.matches ? Math.sin(phase * (working ? 4 : .8)) * 1.4 : 0} 0 -72)`);
-      pony.querySelector('.pony-rig').setAttribute('transform', `scale(${seated ? 1 : actor.heading} 1)`);
-      pony.querySelector('.pony-leg-left').setAttribute('transform', seated ? `translate(${-2 * sit} ${-8 * sit}) rotate(${40 * sit} -10 -24)` : `rotate(${stride} -10 -26)`);
-      pony.querySelector('.pony-leg-right').setAttribute('transform', seated ? `translate(${2 * sit} ${-8 * sit}) rotate(${-40 * sit} 10 -24)` : `rotate(${-stride} 10 -26)`);
-      const typing = working && !reduced.matches ? Math.sin(phase * 13) * 5 : 0;
-      pony.querySelector('.pony-arm-left').setAttribute('transform', seated ? `rotate(${-95 * sit + typing} -18 -54)` : `rotate(${-stride * .7} -18 -54)`);
-      pony.querySelector('.pony-arm-right').setAttribute('transform', seated ? `rotate(${95 * sit + typing} 18 -54)` : `rotate(${stride * .7} 18 -54)`);
-      pony.querySelector('.pony-scarf').setAttribute('transform', `rotate(${walking ? Math.sin(phase - .5) * 5 : 0} -10 -54)`);
+      const phase = actor.phase, stride = walking ? Math.sin(phase)*23 : 0;
+      // Root stays at the seat anchor. Breathing and typing never drag hooves off devices.
+      const bob = reduced.matches ? 0 : walking ? Math.abs(Math.sin(phase))*1.7 : Math.sin(phase)*.4*(1-sit);
+      const origin={x:actor.x,y:actor.y-bob};
+      pony.setAttribute('transform', `translate(${origin.x.toFixed(3)} ${origin.y.toFixed(3)}) scale(${PonyRig.scale})`);
+      actor.visualHeading = reduced.matches ? actor.heading : (actor.visualHeading ?? actor.heading) + (actor.heading-(actor.visualHeading ?? actor.heading))*.14;
+      rig.rig.setAttribute('transform', `scale(${1*sit+actor.visualHeading*(1-sit)} 1)`);
+      rig.head.setAttribute('opacity', String(1-sit));
+      rig['seated-head'].setAttribute('opacity', String(sit));
+      const blink = !reduced.matches && actor.phase % (7.3+actor.seed*.37) > 7.05+actor.seed*.37 ? .08 : 1;
+      rig.eyes.setAttribute('visibility', actor.facing==='back' && walking ? 'hidden':'visible');
+      rig.eyes.setAttribute('transform', `translate(0 -85) scale(1 ${blink}) translate(0 85)`);
+      rig['back-eye'].setAttribute('transform',`translate(0 -89) scale(1 ${blink}) translate(0 89)`);
+      const mode=PonyScreen.state(actor,floor.time,connected);
+      const joints=PonyRig.arms(actor,origin,sit,floor.time,mode,reduced.matches);
+      const focus=working ? .6 : 1.6;
+      const tilt=reduced.matches ? 0 : Math.sin(phase*.42)*focus;
+      rig.head.setAttribute('transform',`rotate(${tilt} 0 -65)`);
+      rig['seated-head'].setAttribute('transform',`rotate(${tilt*.5} 0 -65) translate(0 ${reduced.matches ? 0 : Math.sin(phase)*.35})`);
+      for(const pupil of rig.pupils) pupil.setAttribute('transform',`translate(${reduced.matches ? 0 : Math.sin(phase*.27)} ${working ? -1 : 0})`);
+      rig.expression.setAttribute('d',working ? 'M20-69L28-69':actor.state==='failed' && floor.time<actor.feedbackUntil ? 'M20-67Q24-71 28-68':'M20-69Q24-65 28-69');
+      rig['leg-left'].setAttribute('transform',`translate(${-sit*2} ${-sit*9}) rotate(${sit*27+stride*(1-sit)} -10 -26)`);
+      rig['leg-right'].setAttribute('transform',`translate(${sit*2} ${-sit*9}) rotate(${-sit*27-stride*(1-sit)} 10 -26)`);
+      rig.tail.setAttribute('transform',`rotate(${reduced.matches ? 0 : Math.sin(phase*.8)*9+stride*.12} -22 -32)`);
+      for(const ear of [rig.ear,rig['back-ear']]) ear.setAttribute('transform',`rotate(${reduced.matches ? 0 : Math.sin(phase*.31)*5} 0 -101)`);
+      rig.mane.setAttribute('transform',`rotate(${stride*.07} -8 -96)`);
+      for(const side of ['left','right']) {
+        let arm=joints[side];
+        const opening=actor.pose==='opening'||actor.pose==='door-handle';
+        if(opening && side==='right') {
+          // The handle contact uses the same fixed-length solver as the devices.
+          const exit=Boolean(motion?.exit);
+          const heading=exit?-1:1;
+          const contact={x:exit?45:18,y:532};
+          const goal={x:(contact.x-origin.x)/(PonyRig.scale*heading),y:(contact.y-origin.y)/PonyRig.scale};
+          const progress=exit?(motion.handleElapsed||0)/.35:(motion.elapsed-.5)/.3;
+          const reach=PonyRig.smooth(progress)*(1-PonyRig.smooth(floor.door/.45));
+          arm=PonyRig.solve({x:20,y:-54},{x:arm.hoof.x+(goal.x-arm.hoof.x)*reach,y:arm.hoof.y+(goal.y-arm.hoof.y)*reach},exit?1:-1);
+        }
+        const nodes=rig.arms[side];
+        nodes.line.setAttribute('d',PonyRig.path(arm));
+        nodes.elbow.setAttribute('cx',String(arm.elbow.x)); nodes.elbow.setAttribute('cy',String(arm.elbow.y));
+        nodes.hoof.setAttribute('cx',String(arm.hoof.x)); nodes.hoof.setAttribute('cy',String(arm.hoof.y));
+        nodes.hoof.setAttribute('transform',`rotate(${sit*-8} ${arm.hoof.x} ${arm.hoof.y})`);
+      }
+      pony.dataset.operation=actor.pose==='seated'?joints.operation.label:actor.pose;
+      // Contact coordinates are observable for browser geometry regression checks.
+      pony.dataset.contacts=JSON.stringify({left:joints.left.hoof,right:joints.right.hoof,origin,sit});
+      rig.scarf.setAttribute('transform',`rotate(${walking?Math.sin(phase-.5)*4:0} -10 -54)`);
       nodes.push({node: pony, depth: actor.y});
     }
     nodes.sort((a, b) => a.depth - b.depth).forEach((item, index) => { if (world.children[index] !== item.node) world.insertBefore(item.node, world.children[index] || null); });
-    door.querySelector('.office-door-leaf').setAttribute('transform', `translate(8 0) scale(${1 - floor.door * .85} 1) translate(-8 0)`);
+    door.querySelector('.office-door-leaf').setAttribute('transform', `translate(54 0) scale(${1 - floor.door * .85} 1) translate(-54 0)`);
     portal.dataset.open = String(floor.door > .2);
   }
   function frame(now) {
     raf = 0;
     if (!active || document.hidden) { lastFrame = 0; return; }
     const dt = lastFrame ? Math.min((now - lastFrame) / 1000, .05) : 0; lastFrame = now;
-    if (connected) floor.tick(dt, reduced.matches, !['working', 'submitted'].includes(taskState));
+    if (connected) floor.tick(dt, reduced.matches, true);
+    for (const actor of floor.actors) if (actor.present && actor.pose === 'seated' && actor.state !== 'running') {
+      actor.idleClock = (actor.idleClock || 0) + dt;
+      actor.activity = (actor.seed + Math.floor(actor.idleClock/33)) % 5;
+    }
+    for (const actor of floor.actors) {
+      const target=PonyRig.operation({...actor,deviceBlend:undefined},floor.time,PonyScreen.state(actor,floor.time,connected),reduced.matches).mouse;
+      const value=actor.deviceBlend||0, delta=target-value;
+      actor.deviceBlend=value+Math.sign(delta)*Math.min(Math.abs(delta),dt*1.25);
+    }
     draw(); if (now - lastUI > 450) { renderUI(); lastUI = now; }
     raf = requestAnimationFrame(frame);
   }
@@ -1290,7 +1360,7 @@ window.PonyOffice = (() => {
   window.addEventListener('pagehide', () => { if (raf) cancelAnimationFrame(raf); raf = 0; });
   window.addEventListener('pageshow', () => { lastFrame = 0; if (active && !raf) raf = requestAnimationFrame(frame); });
   reset(); view(document.body.dataset.view || 'analysis');
-  return {reset, sync, view, disconnected: () => { connected = false; renderUI(); draw(); }, snapshot: () => ({taskId, taskState, door: floor.door, actors: floor.actors.map(a => ({id: a.id, present: a.present, pose: a.pose, state: a.state, x: a.x, y: a.y}))})};
+  return {reset, sync, view, disconnected: () => { connected = false; renderUI(); draw(true); }, snapshot: () => ({taskId, taskState, door: floor.door, actors: floor.actors.map(a => ({id: a.id, present: a.present, pose: a.pose, state: a.state, x: a.x, y: a.y, screen: PonyScreen.state(a, floor.time, connected), taskId: a.taskId, childId:a.childId, activity:a.activity}))})};
 })();
 
 /* One structured request: a persistent composer and three inspector tabs. */

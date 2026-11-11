@@ -1287,6 +1287,8 @@ window.PonyOffice = (() => {
   document.addEventListener('visibilitychange', () => { if (!document.hidden && active) { lastFrame = 0; if (taskId) poll(taskId); if (!raf) raf = requestAnimationFrame(frame); } });
   $('office-show-output').onclick = () => window.Workbench.inspector(true);
   $('office-show-room').onclick = () => window.Workbench.inspector(false);
+  window.addEventListener('pagehide', () => { if (raf) cancelAnimationFrame(raf); raf = 0; });
+  window.addEventListener('pageshow', () => { lastFrame = 0; if (active && !raf) raf = requestAnimationFrame(frame); });
   reset(); view(document.body.dataset.view || 'analysis');
   return {reset, sync, view, disconnected: () => { connected = false; renderUI(); draw(); }, snapshot: () => ({taskId, taskState, door: floor.door, actors: floor.actors.map(a => ({id: a.id, present: a.present, pose: a.pose, state: a.state, x: a.x, y: a.y}))})};
 })();

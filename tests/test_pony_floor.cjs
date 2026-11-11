@@ -15,7 +15,7 @@ function advance(seconds) {
     const visible = floor.actors.filter(a => a.present);
     for (let x = 0; x < visible.length; x++) for (let y = x + 1; y < visible.length; y++) assert.ok(distance(visible[x], visible[y]) >= radius * 2 + 3 - .01, 'actor collision');
     for (const actor of visible) if (actor.pose === 'walking') {
-      const docking = ['dock', 'undock'].includes(floor.transit?.stage);
+      const docking = ['dock', 'undock'].includes(floor.motion(actor.id)?.stage);
       assert.equal(floor.blocked(actor, actor, docking), false, `static collision: ${actor.id}`);
       samples++;
     }

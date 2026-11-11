@@ -792,12 +792,15 @@ globalThis.PonyFloor = (() => {
       const key = p => `${p.x},${p.y}`, snap = p => ({x: Math.round(p.x / 10) * 10, y: Math.round(p.y / 10) * 10});
       const first = snap(start), last = snap(end), open = [first], costs = new Map([[key(first), 0]]), prev = new Map();
       let found = null;
-      while (open.length) {
+      const closed = new Set();
+      while (open.length && closed.size < 6000) {
         open.sort((a, b) => costs.get(key(a)) + distance(a, last) - costs.get(key(b)) - distance(b, last));
-        const p = open.shift(); if (key(p) === key(last)) { found = p; break; }
+        const p = open.shift(); if (closed.has(key(p))) continue;
+        closed.add(key(p));
+        if (key(p) === key(last)) { found = p; break; }
         for (const [dx, dy] of [[10, 0], [-10, 0], [0, 10], [0, -10]]) {
           const next = {x: p.x + dx, y: p.y + dy}, k = key(next), cost = costs.get(key(p)) + 10;
-          if (this.blocked(next, actor) || this.blocked({x: p.x + dx / 2, y: p.y + dy / 2}, actor) || cost >= (costs.get(k) ?? Infinity)) continue;
+          if (closed.has(k) || this.blocked(next, actor) || this.blocked({x: p.x + dx / 2, y: p.y + dy / 2}, actor) || cost >= (costs.get(k) ?? Infinity)) continue;
           costs.set(k, cost); prev.set(k, p); open.push(next);
         }
       }

@@ -7,6 +7,7 @@ ignored by git anyway).
 """
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +22,9 @@ FORBIDDEN_SUFFIXES = {
 FORBIDDEN_NAMES = {".env", "publisher.key", "publisher.pub", "id_ed25519", "id_rsa"}
 # Split so this file does not match its own rule.
 KEY_HEADER = "-----BEGIN " + "PRIVATE KEY-----"
+# Training delivery d6cc73f. The inference adapter accepts this same artifact.
+DELIVERED_MODEL = Path("src/数据面/随机森林_数据面模型.pkl")
+DELIVERED_MODEL_SHA256 = "03c9b627004c39b9a60f292770417aaf561bc34fb2d41f829be5baf07f850dda"
 
 
 def tracked_files() -> list[Path]:
@@ -33,6 +37,10 @@ def tracked_files() -> list[Path]:
 
 
 def problem(path: Path) -> str | None:
+    if path == DELIVERED_MODEL:
+        if path.is_file() and path.stat().st_size <= MAX_BYTES and hashlib.sha256(path.read_bytes()).hexdigest() == DELIVERED_MODEL_SHA256:
+            return None
+        return "delivered model differs from the approved artifact"
     parts = path.parts
     if any(part in FORBIDDEN_DIRS for part in parts[:-1]):
         return f"forbidden directory: {path.parent}"

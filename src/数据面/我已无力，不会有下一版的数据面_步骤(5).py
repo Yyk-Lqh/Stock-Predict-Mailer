@@ -405,7 +405,7 @@ def main():
                 f.write('\n'.join(sorted(set(failed))))
             log(f"\n失败 {len(set(failed))} 只 -> {path}")
 
-    if not all_rows: 
+    if not all_rows:
         log("未采集到任何数据，请先用 测试Iip解封.py 探测 IP 状态")
         return
 

@@ -54,7 +54,8 @@ jobs:
       - name: Sync dependencies
         run: uv sync --all-extras --locked
       - name: Lint
-        run: uv run ruff check src tests scripts
+        # The data-plane training scripts are an upstream delivery.
+        run: uv run ruff check src/stock_predict_mailer tests scripts
       - name: Compile
         run: uv run python -m compileall -q src tests
       - name: Unit tests

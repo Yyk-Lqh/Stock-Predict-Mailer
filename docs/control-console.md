@@ -5,6 +5,10 @@
 
 ## 启动与凭据保存
 
+开发期间可直接运行 `uv run stock-predict-mailer console --port 8767`，无需设置 `STOCK_PREDICT_MAILER_MASTER_KEY`。后端会在 workspace 中自动生成 `control-development.key`，并使用独立的 `control-development.sqlite3`。两者均被 Git 忽略；开发密钥与开发数据库应一起保留，否则无法读取开发期间保存的凭据。
+
+以后重新设置该环境变量时，服务恢复使用 `control.sqlite3`；开发配置不会自动迁入正式配置库。已有正式配置及其校验标记保持原样，仍需原主密钥解密。下面的外部主密钥说明适用于正式配置模式。
+
 先 `uv sync` 安装锁定的 MCP SDK、加密与 Schema 校验依赖。第一次配置时，用秘密管理工具为服务进程设置 STOCK_PREDICT_MAILER_MASTER_KEY（Fernet 32字节 URL-safe Base64 key），并将同一主密钥持久保管于工作区之外。可在当前 PowerShell 会话生成，不将其打印到终端：
 
 ```powershell

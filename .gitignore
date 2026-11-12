@@ -37,6 +37,8 @@ build/
 *.egg-info/
 
 # Local agent state and planning notes
+control-development.key
+control-development.sqlite3*
 .gstack/
 .codex/
 .agents/

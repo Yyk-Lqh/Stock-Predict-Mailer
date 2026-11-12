@@ -1,4 +1,4 @@
-"""Independent configuration/task database; encrypted write-only credentials."""
+"""Configuration/task database with encrypted credentials and an isolated local development vault."""
 from __future__ import annotations
 
 import json
@@ -24,6 +24,19 @@ class Store:
         self.root = root
         root.mkdir(parents=True, exist_ok=True)
         key = master_key or env("MASTER_KEY")
+        self.development_mode = not key
+        self.db_path = root / ("control-development.sqlite3" if self.development_mode else "control.sqlite3")
+        if self.development_mode:
+            key_path = root / "control-development.key"
+            try:
+                key = key_path.read_bytes()
+            except FileNotFoundError:
+                key = Fernet.generate_key()
+                try:
+                    with key_path.open("xb") as stream:
+                        stream.write(key)
+                except FileExistsError:
+                    key = key_path.read_bytes()
         try:
             self.cipher = Fernet(key.encode() if isinstance(key, str) else key)
         except (ValueError, TypeError):
@@ -53,7 +66,7 @@ class Store:
     @contextmanager
     def db(self):
         with self.lock:
-            con = sqlite3.connect(self.root / "control.sqlite3", timeout=10)
+            con = sqlite3.connect(self.db_path, timeout=10)
             try:
                 yield con
                 con.commit()

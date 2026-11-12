@@ -375,6 +375,8 @@ def make_server(root, port=8767, master_key=None):
 def serve(root, port=8767):
     server = make_server(root, port)
     print(f"配置控制台：http://127.0.0.1:{server.server_port}（仅本机）", flush=True)
+    if server.store.development_mode:
+        print("开发模式：无需主密钥环境变量，使用独立开发配置库和自动生成的本机开发密钥。", flush=True)
     try:
         server.serve_forever()
     finally:

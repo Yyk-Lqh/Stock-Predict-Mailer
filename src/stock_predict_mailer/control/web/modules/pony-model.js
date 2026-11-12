@@ -4,9 +4,9 @@ globalThis.PonyFloor = (() => {
     ['main', '主 Agent', '#df5353', 230, 160, true],
     ['prediction', '预测分析', '#4eac70', 515, 160, false],
     ['risk', '风险分析', '#9570d6', 800, 160, false],
-    ['mail', '邮件投递', '#4098df', 230, 390, true],
-    ['charts', '图表生成', '#23afb0', 515, 390, false],
-    ['advice', '建议生成', '#dab32b', 800, 390, false],
+    ['mail', '邮件投递', '#4098df', 230, 410, true],
+    ['charts', '图表生成', '#23afb0', 515, 410, false],
+    ['advice', '建议生成', '#dab32b', 800, 410, false],
     ['assistant', '分析助理', '#e58b36', 900, 500, true]
   ].map(([id, name, color, x, y, resident]) => ({id, name, color, x, y, resident, station: id !== 'assistant'}));
   const gate = {x: 35, y: 550}, radius = 30;
@@ -19,6 +19,18 @@ globalThis.PonyFloor = (() => {
         present: role.resident, pose: role.id === 'assistant' ? 'idle' : role.resident ? 'seated' : 'absent', state: 'idle', phase: index * 2.37, seed: index, nextVisit: 8 + index * 11, feedbackUntil: 0, activity: index % 5, elapsed: 0, completedSteps: 0, speed: 0, heading: 1, last: '', summoned: false}));
     }
     motion(id) { return this.jobs.get(id) || null; }
+    operateDoor(job,actor,dt,reduced,closing=false) {
+      if(!job.doorAction) job.doorAction={elapsed:0,from:this.door,side:actor.x<gate.x?'outside':'inside'};
+      const action=job.doorAction;
+      action.elapsed+=reduced?dt*6:dt;
+      const pose=PonyDoor.sample(action.elapsed,closing,action.from);
+      this.door=pose.open;
+      actor.heading=action.side==='outside'?1:-1;
+      actor.facing='side'; actor.speed=0; actor.pose=closing?'door-close':'door-handle';
+      actor.doorAction={...pose,side:action.side,closing};
+      if(pose.done) { delete job.doorAction;actor.doorAction=null;actor.pose='waiting'; }
+      return pose.done;
+    }
     // One direction owns the full door cycle; gateOwner still admits only one body at a time.
     doorDirectionFor(job) {
       if (job.exit) return 'exit';
@@ -35,7 +47,7 @@ globalThis.PonyFloor = (() => {
       return actor.randomState/4294967296;
     }
     blocked(point, actor, dock = false) {
-      const portal = (this.motion(actor.id)?.stage === 'open' && point.x >= -65 && point.x <= 0) || (this.door === 1 && ['enter', 'cross'].includes(this.motion(actor.id)?.stage) && point.x >= -30 && point.x <= 95);
+      const portal = (this.motion(actor.id)?.stage === 'open' && point.x >= -65 && point.x <= 0) || (this.door === 1 && ['enter', 'cross'].includes(this.motion(actor.id)?.stage) && point.x >= -30 && point.x <= PonyDoor.frame.insideX);
       if (portal && Math.abs(point.y-gate.y)<1) return this.actors.some(other=>other!==actor && other.present && distance(point,other)<radius*2+3);
       if (point.x < 25 || point.x > 935 || point.y < 30 || point.y > 590) return true;
       for (const role of roles) {
@@ -140,7 +152,7 @@ globalThis.PonyFloor = (() => {
         this.gateOwner=actor.id;
       }
       const transition = stage => { job.stage = stage; job.elapsed = 0; };
-      if (job.roam && (job.waitTotal || 0) > 3) {
+      if (job.roam && ['stroll','linger'].includes(job.stage) && (job.waitTotal || 0) > 3) {
         job.roam=false; job.waitTotal=0;
         job.path=this.path(actor,{x:actor.deskX,y:actor.deskY+(actor.station?120:70)},actor);
         transition('return');
@@ -149,17 +161,24 @@ globalThis.PonyFloor = (() => {
         job.exit = false; job.roam = false; job.recall = false; job.path = this.path(actor, {x: actor.deskX, y: actor.deskY + 120}, actor); transition('walk');
       }
       if (job.stage === 'open') {
-        if (job.elapsed < .5 && !reduced) { actor.x = -60 + job.elapsed * 60; actor.pose = 'walking'; actor.speed = 60; return; }
-        actor.x = -30;
-        if (this.door < 1) {
-          actor.pose = 'opening';
-          if (job.elapsed < .85 && !reduced) return;
-          this.doorDirection='enter';
-          this.door = Math.min(1, this.door + dt * 4);
+        if (job.elapsed < .7 && !reduced) {
+          const t=job.elapsed/.7, before=actor.x;
+          actor.x=-60+PonyDoor.ease(t)*30;actor.pose='walking';actor.speed=(actor.x-before)/dt;return;
         }
-        if (this.door === 1) {
+        actor.x = -30;
+        if ((this.door===1&&!job.doorAction)||this.operateDoor(job,actor,dt,reduced)) {
           actor.present = true; actor.x = -30; actor.y = gate.y; actor.pose = 'walking';
-          job.path = [{x: 95, y: gate.y}]; transition('enter');
+          job.path = [{x: PonyDoor.frame.insideX, y: gate.y}]; transition('enter');
+        }
+      } else if (job.stage==='exit-open') {
+        if(job.elapsed<.45&&!reduced) {
+          const before={x:actor.x,y:actor.y},t=PonyDoor.ease(job.elapsed/.45);
+          actor.x=job.approachX+(PonyDoor.frame.insideX-job.approachX)*t;actor.y=job.approachY+(gate.y-job.approachY)*t;
+          actor.pose='walking';actor.speed=distance(actor,before)/dt;return;
+        }
+        actor.x=PonyDoor.frame.insideX;actor.y=gate.y;
+        if(this.operateDoor(job,actor,dt,reduced)) {
+          job.path=[{x:35,y:gate.y}];transition('walk');
         }
       } else if (job.stage === 'rise') {
         if (job.elapsed > (reduced ? 0 : .55)) {
@@ -175,9 +194,21 @@ globalThis.PonyFloor = (() => {
       } else if (job.stage === 'linger') {
         actor.pose = 'idle';
         if (job.recall || actor.state === 'running' || !idle || job.elapsed > 3 + actor.seed % 4) { job.path = this.path(actor, {x: actor.deskX, y: actor.deskY + (actor.station ? 120 : 70)}, actor); transition('return'); }
-      } else if (job.stage === 'close') {
-        this.door = Math.max(0, this.door - dt * 4);
-        if (!this.door) { if(!this.hasDoorWork('exit',actor.id)){this.doorDirection=null;this.doorHoldUntil=0;} this.transit = null; if (actor.state === 'running') this.queue.unshift({id: actor.id}); }
+      } else if (job.stage === 'close' || job.stage === 'latch') {
+        // The last pony in a batch remains beside the handle until the door closes.
+        const entering=job.stage==='latch';
+        if (this.operateDoor(job,actor,dt,reduced,true)) {
+          this.doorDirection=null;this.doorHoldUntil=0;
+          if(entering) {
+            this.gateOwner=null;
+            actor.pose='waiting';
+            job.path=this.path(actor,{x:actor.deskX,y:actor.deskY+120},actor);transition('walk');
+          } else {
+            actor.present=false;actor.pose='absent';actor.nextVisit=this.time+40+this.random(actor)*45;
+            this.transit=null;
+            if(actor.state==='running')this.queue.unshift({id:actor.id});
+          }
+        }
       } else {
         if (!job.path) {
           job.waitTotal=(job.waitTotal||0)+dt;
@@ -191,20 +222,22 @@ globalThis.PonyFloor = (() => {
         if (!target) {
           actor.speed = 0;
           if (job.stage === 'undock') { job.path = this.path(actor, job.roam ? {x: actor.deskX + 80, y: actor.deskY + 120} : gate, actor); transition(job.roam ? 'stroll' : 'walk'); }
-          else if (job.stage === 'enter') { job.path = this.path(actor, {x: actor.deskX, y: actor.deskY + 120}, actor); transition('walk'); }
+          else if (job.stage === 'enter') {
+            if(this.hasDoorWork('enter',actor.id)) { job.path = this.path(actor, {x: actor.deskX, y: actor.deskY + 120}, actor); transition('walk'); }
+            else { actor.pose='door-close'; transition('latch'); }
+          }
           else if (job.stage === 'cross') {
-            actor.present = false; actor.pose = 'absent'; actor.nextVisit = this.time + 40 + this.random(actor)*45;
             if (this.hasDoorWork('exit',actor.id)) {
+              actor.present = false; actor.pose = 'absent'; actor.nextVisit = this.time + 40 + this.random(actor)*45;
               this.gateOwner=null; this.doorDirection='exit'; this.doorHoldUntil=this.time+2;
               if(actor.state==='running')this.queue.unshift({id:actor.id,exit:false});
               this.transit=null;
-            } else transition('close');
+            } else { actor.pose='door-close'; transition('close'); }
           }
           else if (job.stage === 'stroll') { actor.pose = 'idle'; transition('linger'); }
           else if (job.stage === 'return' && !actor.station) { actor.pose = 'idle'; this.transit = null; }
           else if (job.exit) {
             this.doorDirection='exit';
-            this.door = Math.min(1, this.door + dt * 4);
             actor.pose = 'waiting';
             if (this.door === 1) { job.path = [{x: -30, y: gate.y}]; transition('cross'); }
           } else if (job.stage === 'dock') { actor.pose = 'sitting'; transition('sit'); }
@@ -217,19 +250,27 @@ globalThis.PonyFloor = (() => {
         if (this.time < (job.lookUntil || 0)) { actor.pose = 'turning'; actor.speed = 0; return; }
         const speed = reduced ? 420 : Math.min(120 + actor.seed * 5, actor.speed + dt * 240, job.path.length === 1 ? Math.max(45, d * 6) : 160);
         const travel = Math.min(d, speed * dt), next = {x: actor.x + (target.x - actor.x) / (d || 1) * travel, y: actor.y + (target.y - actor.y) / (d || 1) * travel};
-        if (job.exit && next.x < 85 && next.y > 515 && this.door < 1) {
+        if (job.exit && next.x < PonyDoor.frame.insideX && next.y > 515 && this.door < 1) {
           if (this.gateOwner && this.gateOwner !== actor.id) { actor.pose='waiting'; actor.speed=0; return; }
           this.gateOwner=actor.id;
-          actor.heading = -1; actor.pose = 'door-handle'; actor.speed = 0;
-          job.handleElapsed = (job.handleElapsed || 0) + dt;
+          actor.heading = -1; actor.pose = 'turning'; actor.speed = 0;
+          job.approachX=actor.x;job.approachY=actor.y;transition('exit-open');
           this.doorDirection='exit';
-          if (reduced || job.handleElapsed > .4) this.door = Math.min(1,this.door+dt*2);
           return;
         }
-        if (this.blocked(next, actor, ['dock', 'undock'].includes(job.stage))) { actor.pose = 'waiting'; actor.speed = 0; job.waitTotal=(job.waitTotal||0)+dt; job.blockedFor=(job.blockedFor||0)+dt; if(job.blockedFor>.7 && !['dock','undock','enter','cross'].includes(job.stage)) { const end=job.path[job.path.length-1]; job.path=this.path(actor,end,actor); job.blockedFor=0; } return; }
+        if (this.blocked(next, actor, ['dock', 'undock'].includes(job.stage))) {
+          actor.pose='waiting';actor.speed=0;job.waitTotal=(job.waitTotal||0)+dt;job.blockedFor=(job.blockedFor||0)+dt;
+          const other=this.actors.find(a=>a!==actor&&a.present&&distance(next,a)<radius*2+3);
+          // Stagger replanning so two ponies do not repeatedly choose mirrored detours.
+          const patience=other&&actor.seed>other.seed?3:.7;
+          if(job.blockedFor>patience&&!['dock','undock','enter','cross'].includes(job.stage)) {
+            const end=job.path[job.path.length-1];job.path=this.path(actor,end,actor);job.blockedFor=0;
+          }
+          return;
+        }
         job.waitTotal=0;
         actor.heading = target.x < actor.x ? -1 : target.x > actor.x ? 1 : actor.heading;
-        actor.facing = target.y < actor.y - .1 ? 'back' : 'side';
+        actor.facing = target.y < actor.y - .1 ? 'back' : target.y > actor.y + .1 ? 'front' : 'side';
         actor.x = next.x; actor.y = next.y; actor.speed = speed; actor.pose = 'walking';
         if (d <= travel + .01) job.path.shift();
         if (distance(actor,gate)>85 && !job.exit && job.stage!=='enter' && this.gateOwner===actor.id) {

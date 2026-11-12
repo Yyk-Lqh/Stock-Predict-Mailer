@@ -1,6 +1,6 @@
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
 const context = vm.createContext({});
-for (const name of ['pony-model','pony-screen']) vm.runInContext(fs.readFileSync(`src/stock_predict_mailer/control/web/modules/${name}.js`,'utf8'),context);
+for (const name of ['pony-door','pony-model','pony-screen']) vm.runInContext(fs.readFileSync(`src/stock_predict_mailer/control/web/modules/${name}.js`,'utf8'),context);
 const {Floor,distance,radius} = context.PonyFloor, screen = context.PonyScreen;
 const floor = new Floor(), modes = new Set(), visitors = new Set();
 const seconds=Number(process.env.PONY_SIM_SECONDS||600);

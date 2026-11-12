@@ -3,7 +3,7 @@ const {readFileSync} = require('node:fs');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const context = vm.createContext({});
-vm.runInContext(readFileSync('src/stock_predict_mailer/control/web/modules/pony-model.js', 'utf8'), context);
+for(const name of ['pony-door','pony-model']) vm.runInContext(readFileSync(`src/stock_predict_mailer/control/web/modules/${name}.js`, 'utf8'), context);
 const {Floor, distance, radius, gate} = context.PonyFloor;
 const floor = new Floor();
 assert.equal(floor.actors.filter(a => a.present).length, 3);
@@ -49,13 +49,19 @@ assert.equal(floor.transit, null, 'reduced motion suppresses idle stroll');
 const shared = new Floor(), arrivals = ['prediction','risk','charts'];
 for (const id of arrivals) shared.set(id,'running');
 shared.actors.find(a=>a.id==='main').resident=false;
-let previousOpen=false,openCycles=0,oppositeAdmitted=false;
+let previousOpen=false,openCycles=0,oppositeAdmitted=false,entryCloser=false,exitCloser=false;
 for(let i=0;i<30000;i++){
   shared.tick(1/60,false,false);
   const open=shared.door===1;
   if(open&&!previousOpen)openCycles++;
   previousOpen=open;
   const mainMotion=shared.motion('main');
+  for(const actor of shared.actors)if(actor.pose==='door-close') {
+    assert.ok(actor.present,'door closer remains visible until the latch finishes');
+    const entering=shared.motion(actor.id)?.stage==='latch';
+    assert.equal(actor.x,entering?context.PonyDoor.frame.insideX:-30,'closing pony stays beside the handle');
+    if(entering)entryCloser=true;else exitCloser=true;
+  }
   if(mainMotion?.exit&&!oppositeAdmitted){oppositeAdmitted=true;assert.equal(shared.door,0,'opposite direction waits until the current door cycle closes');}
   const visible=shared.actors.filter(a=>a.present);
   for(let a=0;a<visible.length;a++)for(let b=a+1;b<visible.length;b++)assert.ok(distance(visible[a],visible[b])>=radius*2+3-.01,'no overlap during shared gate transit');
@@ -63,6 +69,7 @@ for(let i=0;i<30000;i++){
   if(arrivals.every(id=>{const a=shared.actors.find(actor=>actor.id===id);return a.present&&a.pose==='seated';})&&!shared.actors.find(a=>a.id==='main').present&&shared.jobs.size===0&&shared.queue.length===0&&shared.door===0)break;
 }
 assert.ok(oppositeAdmitted,'queued opposite direction eventually receives the doorway');
+assert.ok(entryCloser&&exitCloser,'both arrival and departure batches have a visible door-closing pony');
 assert.equal(openCycles,2,'three arrivals share one opening and the opposite departure uses the next opening');
 assert.ok(arrivals.every(id=>{const a=shared.actors.find(actor=>actor.id===id);return a.present&&a.pose==='seated';}),'batched arrivals all reach their stations');
 assert.equal(shared.actors.find(a=>a.id==='main').present,false,'opposite departure completes after the arrival batch');

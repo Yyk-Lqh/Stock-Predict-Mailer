@@ -758,15 +758,52 @@ window.KnowledgeUI = (() => {
   return {init, load, reset, identityReset, restore, selection, evidence, processing: () => { tab('processing'); configs().catch(error => notice(error.message, true)); }};
 })();
 
+/* Shared projected door geometry and contact timing, independent of the DOM. */
+globalThis.PonyDoor = (() => {
+  const clamp = x => Math.max(0,Math.min(1,x));
+  const ease = x => { x=clamp(x); return x*x*x*(x*(x*6-15)+10); };
+  const frame=Object.freeze({y:430,width:80,height:128,left:8,right:74,top:436,bottom:552,insideX:115});
+  function geometry(open) {
+    const angle=clamp(open)*1.23;
+    const width=Math.cos(angle), depth=Math.sin(angle)*10;
+    const project=(x,y)=>({x:frame.right-(frame.right-x)*width,y:y-depth*(frame.right-x)/(frame.right-frame.left)});
+    const handle=side=>{
+      const p=project(side==='outside'?18:65,80);
+      return {x:p.x,y:p.y+frame.y};
+    };
+    return {project,handle,angle};
+  }
+  function sample(elapsed,closing=false,from=closing?1:0) {
+    const orient=closing?.45:.35, reach=.75, grip=.18, swing=closing?1.2:1.1, release=.8, settle=.2;
+    const touchAt=orient+reach, swingAt=touchAt+grip, releaseAt=swingAt+swing, finishAt=releaseAt+release+settle;
+    const contact=elapsed<touchAt?ease((elapsed-orient)/reach):elapsed<releaseAt?1:1-ease((elapsed-releaseAt)/release);
+    const phase=elapsed<orient?'align':elapsed<touchAt?'reach':elapsed<swingAt?'grip':elapsed<releaseAt?'swing':elapsed<releaseAt+release?'release':'settle';
+    const target=closing?0:1, open=from+(target-from)*ease((elapsed-swingAt)/swing);
+    return {phase,contact,open,pressed:elapsed>=touchAt&&elapsed<releaseAt,
+      look:ease(elapsed/.25)*(1-ease((elapsed-releaseAt)/release)),
+      lean:2.5*contact,done:elapsed>=finishAt};
+  }
+  function portal(actor,motion,open) {
+    if(!actor.present || (motion?.entry&&motion.stage==='open') || (motion?.exit&&motion.stage==='close')) {
+      return {visible:false,clipped:false,state:'outside'};
+    }
+    const crossing=['enter','cross'].includes(motion?.stage) ||
+      (motion?.exit&&motion.stage==='walk'&&actor.x<=frame.insideX&&actor.y>=549.99&&open===1);
+    if(crossing) return {visible:open===1&&actor.x+39*.88>frame.left,clipped:true,state:'threshold'};
+    return {visible:true,clipped:false,state:'room'};
+  }
+  return {ease,geometry,sample,portal,frame};
+})();
+
 /* Deterministic floor navigation; independent of DOM and backend timing. */
 globalThis.PonyFloor = (() => {
   const roles = [
     ['main', '主 Agent', '#df5353', 230, 160, true],
     ['prediction', '预测分析', '#4eac70', 515, 160, false],
     ['risk', '风险分析', '#9570d6', 800, 160, false],
-    ['mail', '邮件投递', '#4098df', 230, 390, true],
-    ['charts', '图表生成', '#23afb0', 515, 390, false],
-    ['advice', '建议生成', '#dab32b', 800, 390, false],
+    ['mail', '邮件投递', '#4098df', 230, 410, true],
+    ['charts', '图表生成', '#23afb0', 515, 410, false],
+    ['advice', '建议生成', '#dab32b', 800, 410, false],
     ['assistant', '分析助理', '#e58b36', 900, 500, true]
   ].map(([id, name, color, x, y, resident]) => ({id, name, color, x, y, resident, station: id !== 'assistant'}));
   const gate = {x: 35, y: 550}, radius = 30;
@@ -779,6 +816,18 @@ globalThis.PonyFloor = (() => {
         present: role.resident, pose: role.id === 'assistant' ? 'idle' : role.resident ? 'seated' : 'absent', state: 'idle', phase: index * 2.37, seed: index, nextVisit: 8 + index * 11, feedbackUntil: 0, activity: index % 5, elapsed: 0, completedSteps: 0, speed: 0, heading: 1, last: '', summoned: false}));
     }
     motion(id) { return this.jobs.get(id) || null; }
+    operateDoor(job,actor,dt,reduced,closing=false) {
+      if(!job.doorAction) job.doorAction={elapsed:0,from:this.door,side:actor.x<gate.x?'outside':'inside'};
+      const action=job.doorAction;
+      action.elapsed+=reduced?dt*6:dt;
+      const pose=PonyDoor.sample(action.elapsed,closing,action.from);
+      this.door=pose.open;
+      actor.heading=action.side==='outside'?1:-1;
+      actor.facing='side'; actor.speed=0; actor.pose=closing?'door-close':'door-handle';
+      actor.doorAction={...pose,side:action.side,closing};
+      if(pose.done) { delete job.doorAction;actor.doorAction=null;actor.pose='waiting'; }
+      return pose.done;
+    }
     // One direction owns the full door cycle; gateOwner still admits only one body at a time.
     doorDirectionFor(job) {
       if (job.exit) return 'exit';
@@ -795,7 +844,7 @@ globalThis.PonyFloor = (() => {
       return actor.randomState/4294967296;
     }
     blocked(point, actor, dock = false) {
-      const portal = (this.motion(actor.id)?.stage === 'open' && point.x >= -65 && point.x <= 0) || (this.door === 1 && ['enter', 'cross'].includes(this.motion(actor.id)?.stage) && point.x >= -30 && point.x <= 95);
+      const portal = (this.motion(actor.id)?.stage === 'open' && point.x >= -65 && point.x <= 0) || (this.door === 1 && ['enter', 'cross'].includes(this.motion(actor.id)?.stage) && point.x >= -30 && point.x <= PonyDoor.frame.insideX);
       if (portal && Math.abs(point.y-gate.y)<1) return this.actors.some(other=>other!==actor && other.present && distance(point,other)<radius*2+3);
       if (point.x < 25 || point.x > 935 || point.y < 30 || point.y > 590) return true;
       for (const role of roles) {
@@ -900,7 +949,7 @@ globalThis.PonyFloor = (() => {
         this.gateOwner=actor.id;
       }
       const transition = stage => { job.stage = stage; job.elapsed = 0; };
-      if (job.roam && (job.waitTotal || 0) > 3) {
+      if (job.roam && ['stroll','linger'].includes(job.stage) && (job.waitTotal || 0) > 3) {
         job.roam=false; job.waitTotal=0;
         job.path=this.path(actor,{x:actor.deskX,y:actor.deskY+(actor.station?120:70)},actor);
         transition('return');
@@ -909,17 +958,24 @@ globalThis.PonyFloor = (() => {
         job.exit = false; job.roam = false; job.recall = false; job.path = this.path(actor, {x: actor.deskX, y: actor.deskY + 120}, actor); transition('walk');
       }
       if (job.stage === 'open') {
-        if (job.elapsed < .5 && !reduced) { actor.x = -60 + job.elapsed * 60; actor.pose = 'walking'; actor.speed = 60; return; }
-        actor.x = -30;
-        if (this.door < 1) {
-          actor.pose = 'opening';
-          if (job.elapsed < .85 && !reduced) return;
-          this.doorDirection='enter';
-          this.door = Math.min(1, this.door + dt * 4);
+        if (job.elapsed < .7 && !reduced) {
+          const t=job.elapsed/.7, before=actor.x;
+          actor.x=-60+PonyDoor.ease(t)*30;actor.pose='walking';actor.speed=(actor.x-before)/dt;return;
         }
-        if (this.door === 1) {
+        actor.x = -30;
+        if ((this.door===1&&!job.doorAction)||this.operateDoor(job,actor,dt,reduced)) {
           actor.present = true; actor.x = -30; actor.y = gate.y; actor.pose = 'walking';
-          job.path = [{x: 95, y: gate.y}]; transition('enter');
+          job.path = [{x: PonyDoor.frame.insideX, y: gate.y}]; transition('enter');
+        }
+      } else if (job.stage==='exit-open') {
+        if(job.elapsed<.45&&!reduced) {
+          const before={x:actor.x,y:actor.y},t=PonyDoor.ease(job.elapsed/.45);
+          actor.x=job.approachX+(PonyDoor.frame.insideX-job.approachX)*t;actor.y=job.approachY+(gate.y-job.approachY)*t;
+          actor.pose='walking';actor.speed=distance(actor,before)/dt;return;
+        }
+        actor.x=PonyDoor.frame.insideX;actor.y=gate.y;
+        if(this.operateDoor(job,actor,dt,reduced)) {
+          job.path=[{x:35,y:gate.y}];transition('walk');
         }
       } else if (job.stage === 'rise') {
         if (job.elapsed > (reduced ? 0 : .55)) {
@@ -935,9 +991,21 @@ globalThis.PonyFloor = (() => {
       } else if (job.stage === 'linger') {
         actor.pose = 'idle';
         if (job.recall || actor.state === 'running' || !idle || job.elapsed > 3 + actor.seed % 4) { job.path = this.path(actor, {x: actor.deskX, y: actor.deskY + (actor.station ? 120 : 70)}, actor); transition('return'); }
-      } else if (job.stage === 'close') {
-        this.door = Math.max(0, this.door - dt * 4);
-        if (!this.door) { if(!this.hasDoorWork('exit',actor.id)){this.doorDirection=null;this.doorHoldUntil=0;} this.transit = null; if (actor.state === 'running') this.queue.unshift({id: actor.id}); }
+      } else if (job.stage === 'close' || job.stage === 'latch') {
+        // The last pony in a batch remains beside the handle until the door closes.
+        const entering=job.stage==='latch';
+        if (this.operateDoor(job,actor,dt,reduced,true)) {
+          this.doorDirection=null;this.doorHoldUntil=0;
+          if(entering) {
+            this.gateOwner=null;
+            actor.pose='waiting';
+            job.path=this.path(actor,{x:actor.deskX,y:actor.deskY+120},actor);transition('walk');
+          } else {
+            actor.present=false;actor.pose='absent';actor.nextVisit=this.time+40+this.random(actor)*45;
+            this.transit=null;
+            if(actor.state==='running')this.queue.unshift({id:actor.id});
+          }
+        }
       } else {
         if (!job.path) {
           job.waitTotal=(job.waitTotal||0)+dt;
@@ -951,20 +1019,22 @@ globalThis.PonyFloor = (() => {
         if (!target) {
           actor.speed = 0;
           if (job.stage === 'undock') { job.path = this.path(actor, job.roam ? {x: actor.deskX + 80, y: actor.deskY + 120} : gate, actor); transition(job.roam ? 'stroll' : 'walk'); }
-          else if (job.stage === 'enter') { job.path = this.path(actor, {x: actor.deskX, y: actor.deskY + 120}, actor); transition('walk'); }
+          else if (job.stage === 'enter') {
+            if(this.hasDoorWork('enter',actor.id)) { job.path = this.path(actor, {x: actor.deskX, y: actor.deskY + 120}, actor); transition('walk'); }
+            else { actor.pose='door-close'; transition('latch'); }
+          }
           else if (job.stage === 'cross') {
-            actor.present = false; actor.pose = 'absent'; actor.nextVisit = this.time + 40 + this.random(actor)*45;
             if (this.hasDoorWork('exit',actor.id)) {
+              actor.present = false; actor.pose = 'absent'; actor.nextVisit = this.time + 40 + this.random(actor)*45;
               this.gateOwner=null; this.doorDirection='exit'; this.doorHoldUntil=this.time+2;
               if(actor.state==='running')this.queue.unshift({id:actor.id,exit:false});
               this.transit=null;
-            } else transition('close');
+            } else { actor.pose='door-close'; transition('close'); }
           }
           else if (job.stage === 'stroll') { actor.pose = 'idle'; transition('linger'); }
           else if (job.stage === 'return' && !actor.station) { actor.pose = 'idle'; this.transit = null; }
           else if (job.exit) {
             this.doorDirection='exit';
-            this.door = Math.min(1, this.door + dt * 4);
             actor.pose = 'waiting';
             if (this.door === 1) { job.path = [{x: -30, y: gate.y}]; transition('cross'); }
           } else if (job.stage === 'dock') { actor.pose = 'sitting'; transition('sit'); }
@@ -977,19 +1047,27 @@ globalThis.PonyFloor = (() => {
         if (this.time < (job.lookUntil || 0)) { actor.pose = 'turning'; actor.speed = 0; return; }
         const speed = reduced ? 420 : Math.min(120 + actor.seed * 5, actor.speed + dt * 240, job.path.length === 1 ? Math.max(45, d * 6) : 160);
         const travel = Math.min(d, speed * dt), next = {x: actor.x + (target.x - actor.x) / (d || 1) * travel, y: actor.y + (target.y - actor.y) / (d || 1) * travel};
-        if (job.exit && next.x < 85 && next.y > 515 && this.door < 1) {
+        if (job.exit && next.x < PonyDoor.frame.insideX && next.y > 515 && this.door < 1) {
           if (this.gateOwner && this.gateOwner !== actor.id) { actor.pose='waiting'; actor.speed=0; return; }
           this.gateOwner=actor.id;
-          actor.heading = -1; actor.pose = 'door-handle'; actor.speed = 0;
-          job.handleElapsed = (job.handleElapsed || 0) + dt;
+          actor.heading = -1; actor.pose = 'turning'; actor.speed = 0;
+          job.approachX=actor.x;job.approachY=actor.y;transition('exit-open');
           this.doorDirection='exit';
-          if (reduced || job.handleElapsed > .4) this.door = Math.min(1,this.door+dt*2);
           return;
         }
-        if (this.blocked(next, actor, ['dock', 'undock'].includes(job.stage))) { actor.pose = 'waiting'; actor.speed = 0; job.waitTotal=(job.waitTotal||0)+dt; job.blockedFor=(job.blockedFor||0)+dt; if(job.blockedFor>.7 && !['dock','undock','enter','cross'].includes(job.stage)) { const end=job.path[job.path.length-1]; job.path=this.path(actor,end,actor); job.blockedFor=0; } return; }
+        if (this.blocked(next, actor, ['dock', 'undock'].includes(job.stage))) {
+          actor.pose='waiting';actor.speed=0;job.waitTotal=(job.waitTotal||0)+dt;job.blockedFor=(job.blockedFor||0)+dt;
+          const other=this.actors.find(a=>a!==actor&&a.present&&distance(next,a)<radius*2+3);
+          // Stagger replanning so two ponies do not repeatedly choose mirrored detours.
+          const patience=other&&actor.seed>other.seed?3:.7;
+          if(job.blockedFor>patience&&!['dock','undock','enter','cross'].includes(job.stage)) {
+            const end=job.path[job.path.length-1];job.path=this.path(actor,end,actor);job.blockedFor=0;
+          }
+          return;
+        }
         job.waitTotal=0;
         actor.heading = target.x < actor.x ? -1 : target.x > actor.x ? 1 : actor.heading;
-        actor.facing = target.y < actor.y - .1 ? 'back' : 'side';
+        actor.facing = target.y < actor.y - .1 ? 'back' : target.y > actor.y + .1 ? 'front' : 'side';
         actor.x = next.x; actor.y = next.y; actor.speed = speed; actor.pose = 'walking';
         if (d <= travel + .01) job.path.shift();
         if (distance(actor,gate)>85 && !job.exit && job.stage!=='enter' && this.gateOwner===actor.id) {
@@ -1179,14 +1257,16 @@ globalThis.PonyRig = (() => {
   const smooth = x => { x=clamp(x,0,1); return x*x*(3-2*x); };
   const mix = (a,b,t) => a+(b-a)*t;
   const point = (a,b,t) => ({x:mix(a.x,b.x,t),y:mix(a.y,b.y,t)});
-  function solve(shoulder, target, bend = 1, upper = 26, lower = 25) {
+  function solve(shoulder, target, bend = 1, upper = 24, lower = 25) {
     const dx=target.x-shoulder.x, dy=target.y-shoulder.y, raw=Math.hypot(dx,dy);
-    const d=clamp(raw,Math.abs(upper-lower)+.001,upper+lower-.001);
+    // Keep a visible elbow bend at full reach and prevent folding back onto the shoulder.
+    const atAngle=degrees=>Math.sqrt(upper*upper+lower*lower-2*upper*lower*Math.cos(degrees*Math.PI/180));
+    const min=atAngle(35),max=atAngle(165),d=clamp(raw,min,max);
     const ux=raw ? dx/raw : 0, uy=raw ? dy/raw : -1;
     const along=(upper*upper-lower*lower+d*d)/(2*d);
     const height=Math.sqrt(Math.max(0,upper*upper-along*along));
     return {shoulder, elbow:{x:shoulder.x+ux*along-uy*height*bend,y:shoulder.y+uy*along+ux*height*bend},
-      hoof:{x:shoulder.x+ux*d,y:shoulder.y+uy*d}, reachable:raw<=upper+lower, upper,lower};
+      hoof:{x:shoulder.x+ux*d,y:shoulder.y+uy*d}, reachable:raw>=min&&raw<=max, upper,lower};
   }
   function operation(actor, time, mode, reduced=false) {
     const clock=actor.state==='running' ? time + actor.seed*3.71 : actor.idleClock || 0;
@@ -1196,7 +1276,7 @@ globalThis.PonyRig = (() => {
     const start=prefersMouse ? .8 : 5.2, end=prefersMouse ? 8.8 : 8.2;
     const intended=smooth((cycle-start)/.85)*(1-smooth((cycle-end)/.8));
     const mouse=Number.isFinite(actor.deviceBlend)?actor.deviceBlend:intended;
-    const input=cycle<9.5 && actor.pose==='seated';
+    const input=cycle<9.5 && actor.pose==='seated' && expression(actor,time,mode,reduced).sleep<.05;
     const taps=input && !reduced ? Math.max(0,Math.sin(clock*7.8))*.95 : 0;
     const rightTaps=input && !reduced ? Math.max(0,Math.sin(clock*7.8+Math.PI))*.95 : 0;
     return {clock,mouse,input, leftLift:taps, rightLift:rightTaps*(1-mouse),
@@ -1213,47 +1293,94 @@ globalThis.PonyRig = (() => {
     const right=point(toLocal({...desk.keyboard.right,y:desk.keyboard.right.y-op.rightLift}),mouse,op.mouse);
     // A small arc lifts the hoof between devices, rather than sweeping through them.
     right.y-=Math.sin(op.mouse*Math.PI)*4;
-    const stride=actor.pose==='walking' ? Math.sin(actor.phase)*11 : 0;
-    const standingLeft={x:-25+stride*.5,y:-22+stride*.35}, standingRight={x:25-stride*.5,y:-22-stride*.35};
-    return {left:solve({x:-20,y:-54},point(standingLeft,left,amount),-1),
-      right:solve({x:20,y:-54},point(standingRight,right,amount),1), operation:op,
+    const stride=actor.pose==='walking' && !reduced ? Math.sin(actor.phase)*3 : 0;
+    const standingLeft={x:-17+stride*.35,y:-20+stride}, standingRight={x:17-stride*.35,y:-20-stride};
+    const shoulderY=mix(-50,-55,amount);
+    return {left:solve({x:-18,y:shoulderY},point(standingLeft,left,amount),-1),
+      right:solve({x:18,y:shoulderY},point(standingRight,right,amount),1), operation:op,
       contacts:{left, right, mouse}, amount};
   }
   const path = arm => `M${arm.shoulder.x} ${arm.shoulder.y}L${arm.elbow.x.toFixed(3)} ${arm.elbow.y.toFixed(3)}L${arm.hoof.x.toFixed(3)} ${arm.hoof.y.toFixed(3)}`;
+  function doorArm(actor,origin,scaleX,arm,open) {
+    const action=actor.doorAction;
+    if(!action) return arm;
+    const contact=PonyDoor.geometry(open).handle(action.side);
+    const goal={x:(contact.x-origin.x)/(scale*scaleX),y:(contact.y-origin.y)/scale};
+    const target=point(arm.hoof,goal,action.contact);
+    target.y-=Math.sin(action.contact*Math.PI)*3;
+    return solve(arm.shoulder,target,1,arm.upper,arm.lower);
+  }
+  function expression(actor,time,mode,reduced=false) {
+    if(reduced) return {blink:1,look:0,tilt:0,nod:0,sleep:0,ear:0,breath:0};
+    const clock=time+actor.seed*9.13, cycle=clock%47;
+    const resting=actor.pose==='seated' && actor.state==='idle';
+    const sleep=resting?smooth((cycle-35)/2)*(1-smooth((cycle-43)/2)):0;
+    const blinkPhase=(clock%(4.8+actor.seed*.19));
+    const blink=1-Math.sin(clamp(blinkPhase/.18,0,1)*Math.PI)*.94;
+    const look=resting?Math.sin(clock*.39)*smooth(Math.sin(clock*.23)*.5+.5):.12;
+    return {blink:Math.max(.06,blink*(1-sleep)),look, sleep,
+      tilt:Math.sin(clock*.43)*(mode==='task'?.6:1.8),
+      nod:sleep*(4+Math.sin(clock*1.3)*2),
+      ear:Math.sin(clock*.71)*2.5+Math.max(0,Math.sin(clock*.17))**12*7,
+      breath:Math.sin(clock*1.8)*.45};
+  }
+  function legs(actor,sit,reduced=false) {
+    const moving=actor.pose==='walking'&&!reduced;
+    const leg=(side,offset)=>{
+      const cycle=((actor.phase/(2*Math.PI)+offset)%1+1)%1;
+      const stance=cycle<.62;
+      const swing=smooth((cycle-.62)/.38);
+      const step=moving?(stance?1-cycle/.62*2:-1+swing*2):0;
+      const lift=moving&&!stance?Math.sin(swing*Math.PI)*4:0;
+      const angle=step*13*(1-sit)-side*sit*12;
+      const hip={x:side*8,y:-29-lift-sit*10},radians=angle*Math.PI/180;
+      return {hip,angle,length:29,hoof:{x:hip.x-Math.sin(radians)*29,y:hip.y+Math.cos(radians)*29}};
+    };
+    return {left:leg(-1,0),right:leg(1,.5)};
+  }
   function markup(role,index) {
-    const mane=['#615469','#466a58','#655280','#496782','#427c7a','#857347','#825a43'][index];
-    const coat=['#222831','#252e2a','#292631','#232c37','#233132','#302d25','#302824'][index];
-    const tuft=['M-24-91Q-9-116 10-103L2-93L-9-99L-16-84Z','M-24-91Q-19-112-4-106L8-105L1-94L-13-89Z','M-25-90L-20-108L-10-102L1-113L10-100L-7-94Z'][index%3];
-    const arm=side=>`<g class="pony-arm-${side}"><path class="pony-arm-line" d="M0 0" fill="none" stroke="${coat}" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/><circle class="pony-elbow" r="4.5" fill="${coat}"/><ellipse class="pony-hoof" rx="6" ry="4" fill="#48515c" stroke="#727d88" stroke-width=".6"/></g>`;
+    const mane='#101113', coat='#191a1d';
+    const tuft=['M-28-96Q-31-112-17-114Q-13-127 1-123Q-9-113 1-109Q11-104 16-114Q22-100 7-95Z',
+      'M-29-97Q-29-111-16-114Q-10-126 4-120Q-6-111 3-106Q14-106 17-113Q22-98 6-95Z',
+      'M-28-96Q-30-111-18-113Q-15-122-3-124Q-9-110 2-108Q12-105 16-116Q25-100 7-95Z'][index%3];
+    const arm=side=>`<g class="pony-arm-${side}"><path class="pony-arm-line" d="M0 0" fill="none" stroke="${coat}" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/><circle class="pony-elbow" r="4.5" fill="${coat}"/><ellipse class="pony-hoof" rx="6.2" ry="4.7" fill="#151619"/></g>`;
+    const leg=side=>`<g class="pony-leg-${side}"><path class="pony-leg-shape" d="M-6-2Q0-5 6-2L7 21Q8 25 5 28Q0 30-6 28Q-9 26-7 21Z" fill="${coat}"/></g>`;
     return `<title>${role.name}</title><ellipse class="pony-ground" cy="1" rx="28" ry="6" fill="#101820" opacity=".13"/>
       <g class="pony-rig">
-      <path class="pony-tail" d="M-20-33Q-46-48-38-23Q-32-16-25-26Q-38-28-30-35" fill="${mane}"/>
-      <g class="pony-leg-left"><path d="M-12-28Q-19-17-14-6L-23-3L-22 2H-7L-2-25" fill="${coat}"/><path d="M-22-3H-7V2H-22Z" fill="#46515c"/></g>
-      <g class="pony-leg-right"><path d="M5-28Q17-19 15-6L23-3V2H7L1-25" fill="${coat}"/><path d="M7-3H23V2H7Z" fill="#46515c"/></g>
-      <path d="M-20-56Q0-67 22-54L24-27Q1-12-23-27Z" fill="${coat}"/>
-      <path d="M-15-48Q-4-56 10-50" fill="none" stroke="#626b77" stroke-width="1" opacity=".4"/>
-      ${arm('left')}${arm('right')}
+      <path class="pony-tail" d="M-20-34Q-29-30-25-16Q-18-22-18-31Z" fill="${mane}"/>
+      ${leg('left')}${leg('right')}
+      <g class="pony-arms">${arm('left')}${arm('right')}</g>
+      <g class="pony-torso"><path d="M-24-57Q0-70 25-56L28-31Q26-17 2-16Q-24-16-28-30Z" fill="${coat}"/>
+      <path d="M-19-48Q-25-35-18-28" fill="none" stroke="#424349" stroke-width="1.4" opacity=".45"/></g>
       <g class="pony-head">
-      <path class="pony-ear" d="M-14-98L-20-119Q-5-117-3-101Z" fill="${coat}"/><path d="M-14-106L-16-115L-8-108Z" fill="#8a7378"/>
-      <path d="M8-101L11-116Q23-111 19-95Z" fill="${coat}"/>
-      <path d="M-23-69Q-29-92-13-103Q8-115 23-94L33-84L29-67L12-61Q-7-58-23-69Z" fill="${coat}"/>
+      <g class="pony-ear"><path d="M-22-101L-25-121Q-11-122-9-106Z" fill="${coat}"/><path d="M-21-109L-22-116L-15-110Z" fill="#514448"/></g>
+      <path d="M13-105L20-122Q32-118 26-100Z" fill="${coat}"/>
+      <path d="M-29-73Q-37-99-18-110Q7-124 27-102L39-89L35-70Q19-58-6-62Q-23-63-29-73Z" fill="${coat}"/>
       <path class="pony-mane" d="${tuft}" fill="${mane}"/>
-      <path class="pony-muzzle" d="M14-79Q27-87 34-77L31-67Q16-62 12-70Z" fill="#515963"/>
-      <g class="pony-eyes"><ellipse cx="7" cy="-87" rx="6" ry="8" fill="#f4f3ee"/><ellipse cx="23" cy="-84" rx="4.8" ry="7" fill="#f4f3ee"/><ellipse class="pony-pupil" cx="9" cy="-87" rx="2.5" ry="4.5" fill="#17222c"/><ellipse class="pony-pupil" cx="24" cy="-84" rx="2" ry="4" fill="#17222c"/></g>
-      <ellipse cx="30" cy="-75" rx="1.2" ry="1.8" fill="#242c35"/><path class="pony-expression" d="M20-69Q24-66 28-69" stroke="#aeb3ba" stroke-width="1" fill="none"/>
+      <path class="pony-muzzle" d="M14-83Q31-90 39-80L35-70Q21-62 12-71Z" fill="#202125"/>
+      <g class="pony-eyes"><ellipse cx="2" cy="-94" rx="8" ry="10.5" fill="#fffdf7"/><ellipse cx="23" cy="-90" rx="7" ry="9.5" fill="#fffdf7"/><ellipse class="pony-pupil" cx="4" cy="-93" rx="3.7" ry="6" fill="#101114"/><ellipse class="pony-pupil" cx="25" cy="-89" rx="3.2" ry="5.5" fill="#101114"/></g>
+      <ellipse cx="34" cy="-78" rx="1.4" ry="1.6" fill="#0b0c0e"/><path class="pony-expression" d="M20-69Q24-66 28-69" stroke="#626169" stroke-width="1" stroke-linecap="round" fill="none"/>
+      </g>
+      <g class="pony-front-head" opacity="0">
+      <path d="M-23-104L-26-121Q-12-126-9-106M12-106L23-122Q31-121 27-102" fill="${coat}"/>
+      <path d="M-30-80Q-36-108-13-115Q14-124 29-104Q36-86 27-73Q0-53-25-72Z" fill="${coat}"/>
+      <path d="${tuft}" fill="${mane}"/>
+      <g class="pony-front-eyes"><ellipse cx="-12" cy="-94" rx="8" ry="11" fill="#fffdf7"/><ellipse cx="12" cy="-94" rx="8" ry="11" fill="#fffdf7"/><ellipse class="pony-pupil" cx="-11" cy="-93" rx="3.8" ry="6" fill="#101114"/><ellipse class="pony-pupil" cx="11" cy="-93" rx="3.8" ry="6" fill="#101114"/></g>
+      <path d="M-18-79Q0-86 19-79L18-70Q0-61-18-70Z" fill="#202125"/>
+      <ellipse cx="-10" cy="-74" rx="1.3" ry="1.7" fill="#0c0d0f"/><ellipse cx="10" cy="-74" rx="1.3" ry="1.7" fill="#0c0d0f"/>
       </g>
       <g class="pony-seated-head" opacity="0">
-      <path class="pony-back-ear" d="M-15-97L-20-115Q-9-117-5-101M9-101L16-116Q25-113 21-96" fill="${coat}"/>
-      <path d="M-23-73Q-29-96-11-104Q9-113 23-96L26-76Q22-59 1-61Q-14-61-23-73Z" fill="${coat}"/>
-      <path d="M-15-99Q-4-111 8-103L13-93L5-96L10-82L2-83L5-65L-7-63L-12-80L-18-77L-15-91L-22-89Z" fill="${mane}"/>
-      <path d="M20-85Q31-87 30-75L23-71Z" fill="#515963"/>
-      <g class="pony-back-eye"><ellipse cx="21" cy="-89" rx="3.2" ry="5.5" fill="#f4f3ee"/><ellipse cx="21.5" cy="-90.5" rx="1.4" ry="2.8" fill="#17222c"/></g>
+      <path class="pony-back-ear" d="M-20-104L-24-122Q-10-124-7-107M12-107L20-123Q32-121 26-102" fill="${coat}"/>
+      <path d="M-28-76Q-37-102-16-112Q9-125 28-103L32-80Q27-59 2-61Q-19-60-28-76Z" fill="${coat}"/>
+      <path d="${tuft}M-14-103Q-5-112 5-105L13-91L6-95L12-80L4-82L8-64L-5-62L-12-80L-20-77L-16-92L-25-89Z" fill="${mane}"/>
+      <path d="M25-89Q38-91 38-78L29-71Z" fill="#202125"/>
+      <g class="pony-back-eye"><ellipse cx="27" cy="-94" rx="4.2" ry="7" fill="#fffdf7"/><ellipse cx="28" cy="-94" rx="1.9" ry="4" fill="#101114"/></g>
       </g>
-      <path d="M-23-64Q0-55 23-64L24-56Q0-46-24-56Z" fill="${role.color}"/>
-      <path class="pony-scarf" d="M-14-54L-16-34L-5-36L-4-53Z" fill="${role.color}"/>
+      <g class="pony-collar"><path d="M-28-65Q0-57 29-65L30-54Q0-45-29-54Z" fill="${role.color}"/><path d="M-24-62Q0-56 26-62" stroke="#fff" stroke-opacity=".18" stroke-width="1.6" fill="none"/></g>
+      <g class="pony-scarf"><path d="M-18-55L-22-30L-10-27L-7-53Z" fill="${role.color}"/><path d="M-19-32L-20-26M-16-31L-17-25M-12-30L-13-24" stroke="${role.color}" stroke-width="2"/><path d="M-14-51L-17-33" stroke="#fff" stroke-opacity=".15" fill="none"/></g>
       </g>`;
   }
-  return {scale,desk,solve,arms,operation,path,smooth,markup};
+  return {scale,desk,solve,arms,operation,path,smooth,expression,legs,doorArm,markup};
 })();
 
 /* Tracks only backend-reported child steps; it never starts or calls an agent. */
@@ -1333,13 +1460,22 @@ window.PonyOffice = (() => {
   $('analysis-title').textContent = '分析工作台';
   $('analysis-title').closest('.page-head').after(office);
   $('workbench-intro').classList.add('office-welcome');
-  const svg = el('svg', {viewBox: '-65 0 1025 620', role: 'group', 'aria-label': '六个固定工位，主 Agent 与邮件小马常驻，门外设候门区'});
-  svg.innerHTML = `<defs><filter id="pony-shadow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="7"/></filter><linearGradient id="pony-desk" x2="0" y2="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#dfe2e5"/></linearGradient></defs><rect width="960" height="620" rx="12" class="office-floor"/><path d="M64 580H910" class="office-floor-line"/><text x="76" y="580" class="office-floor-caption">预测 · 证据 · 分析 · 交付</text>`;
-  const door = el('g', {transform: 'translate(0 480)'}, '<rect x="1" y="0" width="60" height="108" rx="3" class="office-door-frame"/><rect x="8" y="6" width="46" height="96" fill="#222831"/><g class="office-door-leaf"><path d="M8 6H54V102H8Z"/><circle cx="18" cy="52" r="2" fill="#c3a97a"/><circle cx="45" cy="52" r="2" fill="#c3a97a"/></g><text x="30" y="127" text-anchor="middle" class="office-floor-caption">出入口</text>');
+  const svg = el('svg', {viewBox: '-65 0 1025 620', role: 'group', 'aria-label': '六个固定工位，小马通过门洞进出办公室'});
+  svg.innerHTML = `<defs>
+    <filter id="pony-shadow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="5"/></filter>
+    <linearGradient id="pony-desk" x2="0" y2="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#eceeed"/></linearGradient>
+    <linearGradient id="pony-chair" x2="1" y2="1"><stop stop-color="#fdfdfb"/><stop offset="1" stop-color="#d8ddde"/></linearGradient>
+    <radialGradient id="pony-daylight" cx=".2" cy=".12" r="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#e9eceb"/></radialGradient>
+    <clipPath id="pony-screen-clip"><rect x="-48" y="-116" width="96" height="58" rx="2"/></clipPath>
+    <clipPath id="pony-portal-clip" clipPathUnits="userSpaceOnUse"><path d="M8 436H74V552H8ZM80 0H960V620H80Z"/></clipPath>
+    </defs><rect x="-65" width="1025" height="620" rx="12" class="office-floor"/>
+    <path d="M64 580H910" class="office-floor-line"/><text x="76" y="603" class="office-floor-caption">预测 · 证据 · 分析 · 交付</text>`;
+  const door = el('g', {transform: `translate(0 ${PonyDoor.frame.y})`}, '<ellipse cx="40" cy="128" rx="46" ry="7" fill="#58636b" opacity=".12"/><rect x="1" y="0" width="79" height="128" rx="4" class="office-door-frame"/><rect x="8" y="6" width="66" height="116" rx="1" fill="#6e7d84"/><g id="office-door-leaf" class="office-door-leaf"><path class="office-door-panel" fill="#e4e8e6"/><path class="office-door-inset" fill="#f5f6f2" stroke="#cbd2d0"/><g class="office-door-handle" data-door-side="outside"><circle r="2.5" fill="#b1996a"/><path d="M0 0H7" stroke="#9b8256" stroke-width="2.3" stroke-linecap="round"/></g><g class="office-door-handle" data-door-side="inside"><circle r="2.5" fill="#b1996a"/><path d="M0 0H-7" stroke="#9b8256" stroke-width="2.3" stroke-linecap="round"/></g></g><text x="40" y="147" text-anchor="middle" class="office-floor-caption">出入口</text>');
   svg.append(door);
-  svg.insertBefore(el('rect',{x:-65,y:465,width:65,height:140,rx:8,fill:'#465361',opacity:.12}),door);
   const world = el('g'); svg.append(world); office.querySelector('.office-stage').append(svg);
-  const desks = new Map(), ponies = new Map(), buttons = new Map(), rigs = new Map(), screens = new Map();
+  const frontDoor=el('g',{transform:`translate(0 ${PonyDoor.frame.y})`,'pointer-events':'none'},'<use class="office-door-front-leaf" href="#office-door-leaf" display="none"/><path d="M1 0H80V128H1ZM8 6V122H74V6Z" fill="#aeb9c3" fill-rule="evenodd"/>');
+  svg.append(frontDoor);
+  const desks = new Map(), chairs = new Map(), ponies = new Map(), avatars = new Map(), buttons = new Map(), rigs = new Map(), screens = new Map();
   let lastScreen = -1;
   function choose(id) {
     selected = id;
@@ -1350,30 +1486,49 @@ window.PonyOffice = (() => {
     renderUI();
   }
   for (const role of roles) {
-    const desk = el('g', {transform: `translate(${role.x} ${role.y})`}, `
-      <ellipse cx="8" cy="76" rx="109" ry="28" fill="#131820" opacity=".13" filter="url(#pony-shadow)"/>
-      <path d="M-98-28L-91 65H-85L-84-28M91-28L85 65H91L99-28" fill="#c8cdd1"/>
-      <path d="M52-22H94V57H52Z" fill="#e3e5e7"/><path d="M55-2H91M55 19H91" stroke="#cbd0d4"/>
-      <path d="M-105-13H105V12H-105Z" fill="#d3d7da"/><path d="M-105-53H105V3H-105Z" fill="url(#pony-desk)"/>
-      <g class="office-keyboard" transform="translate(-4 34)"><path d="M-40-43H30L34-31H-44Z" fill="#b8c5ce" stroke="#8f9eaa"/><path d="M-35-40H25M-37-36H27M-20-42V-33M-5-42V-33M10-42V-33" stroke="#edf4fa" stroke-width="1.5"/></g><g class="office-mouse" transform="translate(-1 34)"><ellipse cx="49" cy="-36" rx="7" ry="5" fill="#9eabb8"/><path d="M49-40V-36" stroke="#e6edf4"/></g>
-      <path d="M-8-80H8V-57H-8Z" fill="#c5cbd0"/><path d="M-25-55H25" stroke="#bec5ca" stroke-width="5"/>
-      <rect x="-53" y="-121" width="106" height="69" rx="2" fill="#cbd0d4"/>
-      <rect x="-48" y="-116" width="96" height="58" rx="1" fill="#101215" class="office-monitor"/>
-      <g class="office-screen" visibility="hidden"><rect x="-48" y="-116" width="96" height="58" fill="#79a9e0"/><path d="M-38-104H30M-38-94H20M-38-84H36M-38-74H8" stroke="#eaf4ff" stroke-width="4" opacity=".85"/></g>
-      <image class="office-chart-screen" x="-48" y="-116" width="96" height="58" visibility="hidden"/>
-      <path d="M-26 38Q0 31 26 38L29 72Q0 83-29 72Z" fill="#d7dce0"/><path d="M-29 53H29L25 64H-25Z" fill="#c8cdd1"/><path d="M0 65V99M0 94L-22 105M0 94L22 105" stroke="#bfc6cb" stroke-width="4"/>
+    const desk = el('g', {transform: `translate(${role.x} ${role.y})`, 'data-office-desk':role.id}, `
+      <ellipse cx="3" cy="68" rx="112" ry="18" fill="#58616a" opacity=".12" filter="url(#pony-shadow)"/>
+      <path d="M-99-25L-95 64H-88L-85-25M85-25L89 64H96L101-25" fill="#c9d0d1"/>
+      <path d="M-96 60H-88V65H-96M89 60H97V65H89" fill="#9da9ac"/>
+      <path d="M57-13H98V55H57Z" fill="#e2e6e5"/><path d="M57-13L64-18H101L98 55H94V-9Z" fill="#f4f5f2"/>
+      <path d="M60 11H94M60 33H94" stroke="#c8d0ce"/><path d="M73 0H82M73 22H82" stroke="#acb7b6" stroke-width="2" stroke-linecap="round"/>
+      <path d="M-110 1H110V10H-110Z" fill="#d6dddb"/><path d="M-98-53H98L110 1H-110Z" fill="url(#pony-desk)" stroke="#e3e7e5"/>
+      <path d="M-108 2H108" stroke="#fff" stroke-width="1.5"/>
+      <ellipse cx="0" cy="-25" rx="28" ry="5" fill="#a9b5b8" opacity=".15"/>
+      <path d="M-6-55H6L9-27H-9Z" fill="#c2cbcd"/><path d="M-21-28H21L27-23H-27Z" fill="#d4dbdc" stroke="#bbc6c9" stroke-width=".6"/>
+      <rect x="35" y="-13" width="28" height="20" rx="4" fill="#dce3e3" stroke="#cdd5d5" stroke-width=".6"/>
+      <g class="office-keyboard"><path d="M-44-10H27L32 4H-48Z" fill="#c6d1d5" stroke="#a6b5bc" stroke-width=".7"/>
+      <path d="M-40-7H25M-41-3H26M-42 1H27M-32-8L-34 1M-23-8L-24 1M-14-8V1M-5-8V1M4-8L5 1M13-8L15 1M21-8L23 1" stroke="#f8faf8" stroke-width="1.4"/><path d="M-25 2H11" stroke="#fdfefb" stroke-width="2"/></g>
+      <g class="office-mouse"><ellipse cx="48" cy="-1" rx="8" ry="5.7" fill="#abb9bf"/><ellipse cx="48" cy="-2" rx="7" ry="5" fill="#f6f7f3"/><path d="M48-6V-2M43-2H53" stroke="#b8c4c8" stroke-width=".7"/><path d="M48-6V-4" stroke="#73868e" stroke-width="1.5"/></g>
+      <rect x="-54" y="-122" width="108" height="71" rx="5" fill="#c3ced0"/>
+      <rect x="-52" y="-121" width="104" height="68" rx="4" fill="#f7f8f5"/>
+      <rect x="-48" y="-116" width="96" height="58" rx="2" fill="#283339" class="office-monitor"/>
+      <g class="office-screen" clip-path="url(#pony-screen-clip)" visibility="hidden"></g>
+      <image class="office-chart-screen" x="18" y="-103" width="28" height="17" clip-path="url(#pony-screen-clip)" visibility="hidden"/>
+      <circle class="office-monitor-light" cx="0" cy="-54.5" r="1" fill="#93b8a0"/>
+      <ellipse cx="0" cy="87" rx="29" ry="7" fill="#74828a" opacity=".13"/>
+      <path d="M0 63V92M0 91L-23 103M0 91L23 103M0 91V105" stroke="#aebbbf" stroke-width="4" stroke-linecap="round"/>
+      <circle cx="-23" cy="104" r="3" fill="#76898e"/><circle cx="23" cy="104" r="3" fill="#76898e"/><circle cx="0" cy="106" r="3" fill="#76898e"/>
+      <path d="M-27 37Q0 28 27 37L29 54Q0 65-29 54Z" fill="url(#pony-chair)" stroke="#c5cfcf" stroke-width=".7"/>
       <text x="0" y="-139" text-anchor="middle" class="office-desk-name">${role.name}</text><circle cx="-63" cy="-143" r="4" fill="${role.color}"/>`);
     desks.set(role.id, desk); world.append(desk);
+    const chair=el('g',{transform:`translate(${role.x} ${role.y})`,'data-office-chair':role.id},'<path d="M-24 48Q0 42 24 48L27 77Q0 86-27 77Z" fill="url(#pony-chair)" stroke="#cbd4d3" stroke-width=".8"/><path d="M-22 51Q0 47 22 51" stroke="#fff" stroke-width="1.5" fill="none"/><path d="M-27 77Q0 86 27 77" stroke="#b9c5c5" stroke-width="1.2" fill="none"/>');
+    chairs.set(role.id,chair);world.append(chair);
     if (!role.station) desk.setAttribute('display', 'none');
+    if (!role.station) chair.setAttribute('display','none');
     const pony = el('g', {role: 'button', tabindex: '0', 'aria-label': `${role.name}小马，查看工作状态`, 'data-pony': role.id});
     pony.innerHTML = PonyRig.markup(role, roles.indexOf(role));
     pony.addEventListener('click', () => choose(role.id));
     pony.addEventListener('keydown', event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); choose(role.id); } });
-    ponies.set(role.id, pony); world.append(pony);
-    rigs.set(role.id, Object.fromEntries(['eyes','head','rig','leg-left','leg-right','arm-left','arm-right','scarf','tail','ear','mane','seated-head','back-eye','back-ear'].map(part => [part, pony.querySelector('.pony-'+part)])));
+    const avatar=el('g',{'data-pony-portal':role.id});avatar.append(pony);
+    ponies.set(role.id, pony);avatars.set(role.id,avatar);world.append(avatar);
+    rigs.set(role.id, Object.fromEntries(['eyes','head','rig','leg-left','leg-right','arm-left','arm-right','scarf','tail','ear','mane','seated-head','back-eye','back-ear','front-head','front-eyes'].map(part => [part, pony.querySelector('.pony-'+part)])));
     rigs.get(role.id).pupils = [...pony.querySelectorAll('.pony-pupil')];
     const rig = rigs.get(role.id);
     rig.expression = pony.querySelector('.pony-expression');
+    rig.torso = pony.querySelector('.pony-torso');
+    rig.ground=pony.querySelector('.pony-ground');
+    rig.armsLayer=pony.querySelector('.pony-arms');
     rig.arms = Object.fromEntries(['left','right'].map(side => [side, {
       line: rig['arm-'+side].querySelector('path'), elbow:rig['arm-'+side].querySelector('circle'), hoof:rig['arm-'+side].querySelector('ellipse')
     }]));
@@ -1385,7 +1540,6 @@ window.PonyOffice = (() => {
     button.textContent = role.name; button.style.setProperty('--role-color', role.color); button.setAttribute('aria-pressed', 'false'); button.onclick = () => choose(role.id);
     buttons.set(role.id, button); office.querySelector('.office-legend').append(button);
   }
-  door.querySelector('circle').classList.add('office-door-handle');
   const portal = document.createElement('div'); portal.className = 'sidebar-office-door';
   portal.innerHTML = '<span class="sidebar-door-art" aria-hidden="true"><i></i></span><span>协作通道<small>子 Agent 由此进出</small></span>';
   office.querySelector('.office-heading').append(portal);
@@ -1408,7 +1562,7 @@ window.PonyOffice = (() => {
       const row = document.createElement('button'); row.type = 'button'; row.className = 'office-role-state'; row.dataset.officeRole = actor.id;
       row.classList.toggle('selected', selected === actor.id); row.style.setProperty('--role-color', actor.color);
       const name = document.createElement('strong'); name.textContent = actor.name;
-      const state = document.createElement('span'); state.textContent = `${captions[actor.state] || actor.state}${actor.present && !['seated', 'absent'].includes(actor.pose) ? ' · ' + ({walking: '前往工位 / 返回', waiting: '等待通行', turning: '对齐工位', sitting: '正在落座', rising: '正在离座'}[actor.pose] || actor.pose) : ''}`;
+      const state = document.createElement('span'); state.textContent = `${captions[actor.state] || actor.state}${actor.present && !['seated', 'absent'].includes(actor.pose) ? ' · ' + ({walking: '前往工位 / 返回', waiting: '等待通行', turning: '调整朝向', sitting: '正在落座', rising: '正在离座', opening:'正在开门', 'door-handle':'正在开门', 'door-close':'正在关门', idle:'观察环境'}[actor.pose] || actor.pose) : ''}`;
       const note = document.createElement('small'); note.textContent = actor.state === 'running' || floor.time < actor.feedbackUntil ? actor.last : !actor.present ? '离室 · 场景来访不会启动模型' : actor.pose === 'seated' ? '空闲 · ' + PonyScreen.games[actor.activity % 5] : '办公室活动 · 未启动模型';
       row.append(name, state, note); row.onclick = () => { if (actor.id === 'assistant') window.AnalysisInput?.open('input'); selected = actor.id; renderUI(); }; host.append(row);
     }
@@ -1417,7 +1571,10 @@ window.PonyOffice = (() => {
     taskId = id; replay = restoring; seen = new Set(); taskState = id ? 'submitted' : 'idle'; connected = true; floor.reset();
     childProgress.reset(); taskProgress.reset();
     terminalFeedback='';
-    for (const desk of desks.values()) desk.querySelector('.office-chart-screen').setAttribute('visibility', 'hidden');
+    for (const desk of desks.values()) {
+      const chart=desk.querySelector('.office-chart-screen');
+      chart.setAttribute('visibility','hidden');chart.removeAttribute('href');
+    }
     renderUI(); draw();
   }
   function sync(task, events = []) {
@@ -1482,51 +1639,63 @@ window.PonyOffice = (() => {
       }
       screen.chart.setAttribute('visibility', actor.id === 'charts' && working && screen.chart.hasAttribute('href') ? 'visible' : 'hidden');
       nodes.push({node: desk, depth: actor.deskY + 25});
-      pony.setAttribute('display', actor.present ? 'inline' : 'none'); pony.setAttribute('tabindex', actor.present ? '0' : '-1');
+      nodes.push({node: chairs.get(actor.id), depth: actor.deskY + 79});
       const seated = ['seated', 'sitting', 'rising'].includes(actor.pose);
       const motion=floor.motion(actor.id);
+      const portal=PonyDoor.portal(actor,motion,floor.door),avatar=avatars.get(actor.id);
+      pony.setAttribute('display',portal.visible?'inline':'none');pony.setAttribute('tabindex',portal.visible?'0':'-1');
+      pony.setAttribute('aria-hidden',String(!portal.visible));pony.dataset.portalState=portal.state;
+      if(portal.clipped)avatar.setAttribute('clip-path','url(#pony-portal-clip)');else avatar.removeAttribute('clip-path');
       const transition = Math.min(1, (motion?.elapsed || 0) / (actor.pose === 'rising' ? .55 : .7));
       const sit = PonyRig.smooth(actor.pose === 'seated' ? 1 : actor.pose === 'sitting' ? transition : actor.pose === 'rising' ? 1-transition : 0);
       const walking = actor.pose === 'walking' && !reduced.matches;
       const phase = actor.phase, stride = walking ? Math.sin(phase)*23 : 0;
       // Root stays at the seat anchor. Breathing and typing never drag hooves off devices.
-      const bob = reduced.matches ? 0 : walking ? Math.abs(Math.sin(phase))*1.7 : Math.sin(phase)*.4*(1-sit);
-      const origin={x:actor.x,y:actor.y-bob};
+      const action=actor.doorAction, lean=action?actor.heading*action.lean:0;
+      const bob = reduced.matches||action ? 0 : walking ? Math.abs(Math.sin(phase))*1.7 : Math.sin(phase)*.4*(1-sit);
+      const origin={x:actor.x+lean,y:actor.y-bob};
       pony.setAttribute('transform', `translate(${origin.x.toFixed(3)} ${origin.y.toFixed(3)}) scale(${PonyRig.scale})`);
       actor.visualHeading = reduced.matches ? actor.heading : (actor.visualHeading ?? actor.heading) + (actor.heading-(actor.visualHeading ?? actor.heading))*.14;
-      rig.rig.setAttribute('transform', `scale(${1*sit+actor.visualHeading*(1-sit)} 1)`);
-      rig.head.setAttribute('opacity', String(1-sit));
-      rig['seated-head'].setAttribute('opacity', String(sit));
-      const blink = !reduced.matches && actor.phase % (7.3+actor.seed*.37) > 7.05+actor.seed*.37 ? .08 : 1;
-      rig.eyes.setAttribute('visibility', actor.facing==='back' && walking ? 'hidden':'visible');
-      rig.eyes.setAttribute('transform', `translate(0 -85) scale(1 ${blink}) translate(0 85)`);
-      rig['back-eye'].setAttribute('transform',`translate(0 -89) scale(1 ${blink}) translate(0 89)`);
+      const turnWidth=Math.sign(actor.visualHeading||1)*(.78+.22*Math.abs(actor.visualHeading));
+      const scaleX=sit+turnWidth*(1-sit);
+      rig.rig.setAttribute('transform', `scale(${scaleX} 1)`);
+      rig.ground.setAttribute('transform',`translate(${-lean/PonyRig.scale} 0)`);
+      const rear=sit || (walking&&actor.facing==='back'?1:0);
+      const front=!rear&&walking&&actor.facing==='front'?1:0;
+      rig.head.setAttribute('opacity', String((1-rear)*(1-front)));
+      rig['seated-head'].setAttribute('opacity', String(rear));
+      rig['front-head'].setAttribute('opacity',String(front));
       const mode=PonyScreen.state(actor,floor.time,connected);
+      const expression=PonyRig.expression(actor,floor.time,mode,reduced.matches);
+      const blink=expression.blink;
+      screen.node.setAttribute('opacity',String(1-expression.sleep*.24));
+      rig.eyes.setAttribute('visibility', actor.facing==='back' && walking ? 'hidden':'visible');
+      rig.eyes.setAttribute('transform', `translate(0 -92) scale(1 ${blink}) translate(0 92)`);
+      rig['front-eyes'].setAttribute('transform', `translate(0 -94) scale(1 ${blink}) translate(0 94)`);
+      rig['back-eye'].setAttribute('transform',`translate(0 -94) scale(1 ${blink}) translate(0 94)`);
+      rig['back-eye'].setAttribute('opacity',String(.3+Math.max(0,expression.look)*.7));
       const joints=PonyRig.arms(actor,origin,sit,floor.time,mode,reduced.matches);
-      const focus=working ? .6 : 1.6;
-      const tilt=reduced.matches ? 0 : Math.sin(phase*.42)*focus;
+      const armAnchor=sit>.4||action?rig.head:rig.torso;
+      if(rig.armsLayer.nextSibling!==armAnchor) rig.rig.insertBefore(rig.armsLayer,armAnchor);
+      rig['arm-left'].setAttribute('opacity',String(sit>.1||['front','back'].includes(actor.facing)?1:.35));
+      const tilt=action?action.look*4:expression.tilt;
       rig.head.setAttribute('transform',`rotate(${tilt} 0 -65)`);
-      rig['seated-head'].setAttribute('transform',`rotate(${tilt*.5} 0 -65) translate(0 ${reduced.matches ? 0 : Math.sin(phase)*.35})`);
-      for(const pupil of rig.pupils) pupil.setAttribute('transform',`translate(${reduced.matches ? 0 : Math.sin(phase*.27)} ${working ? -1 : 0})`);
+      rig['front-head'].setAttribute('transform',`rotate(${tilt} 0 -65)`);
+      rig['seated-head'].setAttribute('transform',`translate(${expression.look*2} ${expression.nod+expression.breath}) rotate(${tilt*.5+expression.look*3} 0 -65)`);
+      rig.torso.setAttribute('transform',`translate(0 -42) scale(1 ${1+expression.breath*.012}) translate(0 42)`);
+      for(const pupil of rig.pupils) pupil.setAttribute('transform',`translate(${action?action.look:expression.look*1.3} ${action?action.look*2.5:working ? -1 : 0})`);
       rig.expression.setAttribute('d',working ? 'M20-69L28-69':actor.state==='failed' && floor.time<actor.feedbackUntil ? 'M20-67Q24-71 28-68':'M20-69Q24-65 28-69');
-      rig['leg-left'].setAttribute('transform',`translate(${-sit*2} ${-sit*9}) rotate(${sit*27+stride*(1-sit)} -10 -26)`);
-      rig['leg-right'].setAttribute('transform',`translate(${sit*2} ${-sit*9}) rotate(${-sit*27-stride*(1-sit)} 10 -26)`);
+      const legs=PonyRig.legs(actor,sit,reduced.matches);
+      for(const side of ['left','right']) {
+        const leg=legs[side];
+        rig['leg-'+side].setAttribute('transform',`translate(${leg.hip.x-lean/(PonyRig.scale*scaleX)} ${leg.hip.y}) rotate(${leg.angle})`);
+      }
       rig.tail.setAttribute('transform',`rotate(${reduced.matches ? 0 : Math.sin(phase*.8)*9+stride*.12} -22 -32)`);
-      for(const ear of [rig.ear,rig['back-ear']]) ear.setAttribute('transform',`rotate(${reduced.matches ? 0 : Math.sin(phase*.31)*5} 0 -101)`);
+      for(const ear of [rig.ear,rig['back-ear']]) ear.setAttribute('transform',`rotate(${expression.ear} 0 -105)`);
       rig.mane.setAttribute('transform',`rotate(${stride*.07} -8 -96)`);
       for(const side of ['left','right']) {
         let arm=joints[side];
-        const opening=actor.pose==='opening'||actor.pose==='door-handle';
-        if(opening && side==='right') {
-          // The handle contact uses the same fixed-length solver as the devices.
-          const exit=Boolean(motion?.exit);
-          const heading=exit?-1:1;
-          const contact={x:exit?45:18,y:532};
-          const goal={x:(contact.x-origin.x)/(PonyRig.scale*heading),y:(contact.y-origin.y)/PonyRig.scale};
-          const progress=exit?(motion.handleElapsed||0)/.35:(motion.elapsed-.5)/.3;
-          const reach=PonyRig.smooth(progress)*(1-PonyRig.smooth(floor.door/.45));
-          arm=PonyRig.solve({x:20,y:-54},{x:arm.hoof.x+(goal.x-arm.hoof.x)*reach,y:arm.hoof.y+(goal.y-arm.hoof.y)*reach},exit?1:-1);
-        }
+        if(action&&side==='right') arm=PonyRig.doorArm(actor,origin,scaleX,arm,floor.door);
         const nodes=rig.arms[side];
         nodes.line.setAttribute('d',PonyRig.path(arm));
         nodes.elbow.setAttribute('cx',String(arm.elbow.x)); nodes.elbow.setAttribute('cy',String(arm.elbow.y));
@@ -1534,13 +1703,29 @@ window.PonyOffice = (() => {
         nodes.hoof.setAttribute('transform',`rotate(${sit*-8} ${arm.hoof.x} ${arm.hoof.y})`);
       }
       pony.dataset.operation=actor.pose==='seated'?joints.operation.label:actor.pose;
+      if(action) {pony.dataset.doorPhase=action.phase;pony.dataset.doorSide=action.side;}
+      else {delete pony.dataset.doorPhase;delete pony.dataset.doorSide;}
+      pony.dataset.mood=expression.sleep>.5?'打瞌睡':working?'专注工作':actor.pose==='seated'?'放松':'观察环境';
       // Contact coordinates are observable for browser geometry regression checks.
       pony.dataset.contacts=JSON.stringify({left:joints.left.hoof,right:joints.right.hoof,origin,sit});
       rig.scarf.setAttribute('transform',`rotate(${walking?Math.sin(phase-.5)*4:0} -10 -54)`);
-      nodes.push({node: pony, depth: actor.y});
+      nodes.push({node: avatar, depth: actor.y});
     }
     nodes.sort((a, b) => a.depth - b.depth).forEach((item, index) => { if (world.children[index] !== item.node) world.insertBefore(item.node, world.children[index] || null); });
-    door.querySelector('.office-door-leaf').setAttribute('transform', `translate(54 0) scale(${1 - floor.door * .85} 1) translate(-54 0)`);
+    const geometry=PonyDoor.geometry(floor.door);
+    const polygon=points=>points.map(([x,y],i)=>{const p=geometry.project(x,y);return `${i?'L':'M'}${p.x} ${p.y}`;}).join('')+'Z';
+    door.querySelector('.office-door-panel').setAttribute('d',polygon([[8,6],[74,6],[74,122],[8,122]]));
+    door.querySelector('.office-door-inset').setAttribute('d',polygon([[14,14],[68,14],[68,60],[14,60]]));
+    const operator=floor.actors.find(a=>a.doorAction);
+    const visibleSide=operator?.doorAction.side||(floor.doorDirection==='enter'?'outside':'inside');
+    for(const handle of door.querySelectorAll('.office-door-handle')) {
+      const p=geometry.handle(handle.dataset.doorSide);
+      handle.setAttribute('transform',`translate(${p.x} ${p.y-PonyDoor.frame.y}) rotate(${operator?.doorAction.pressed?-12:0})`);
+      handle.setAttribute('opacity',handle.dataset.doorSide===visibleSide?'1':'0');
+    }
+    const passing=floor.actors.some(a=>PonyDoor.portal(a,floor.motion(a.id),floor.door).clipped);
+    frontDoor.setAttribute('display',passing?'inline':'none');
+    frontDoor.querySelector('use').setAttribute('display','inline');
     portal.dataset.open = String(floor.door > .2);
   }
   function frame(now) {

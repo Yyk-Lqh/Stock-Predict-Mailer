@@ -1,6 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const c=vm.createContext({});
-vm.runInContext(fs.readFileSync('src/stock_predict_mailer/control/web/modules/pony-rig.js','utf8'),c);
+for(const name of ['pony-reference','pony-rig'])vm.runInContext(fs.readFileSync(`src/stock_predict_mailer/control/web/modules/${name}.js`,'utf8'),c);
 const rig=c.PonyRig,dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 let contacts=0;
 for(let seed=0;seed<7;seed++) for(const mode of ['task','贪吃蛇','扫雷','俄罗斯方块','打砖块','绘图']) {
@@ -38,9 +38,9 @@ for(let i=0;i<47*60;i++) {
   for(const side of ['left','right']) {
     const leg=legs[side];
     assert.equal(leg.elbow,undefined,'leg has a single continuous shape without a knee');
-    assert.ok(Math.abs(dist(leg.hip,leg.hoof)-29)<1e-8,'whole leg keeps its length while swinging');
+    assert.ok(Math.abs(dist(leg.hip,leg.hoof)-34)<1e-8,'whole leg keeps its length while swinging');
     assert.ok(leg.hoof.y<=.001,'walking hoof never goes beneath the floor');
-    assert.ok(Math.abs(leg.hoof.x)<15,'walking legs stay beneath the body');
+    assert.ok(Math.abs(leg.hoof.x)<34,'reference stride has a wide, bounded foot envelope');
   }
   for(const pose of ['idle','walking']) {
     const arms=rig.arms({...actor,pose,deskX:230,deskY:160},{x:230,y:280},0,i/60,'screensaver');

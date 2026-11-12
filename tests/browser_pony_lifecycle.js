@@ -9,8 +9,9 @@
   $('try-sample').click();
   await wait(()=>!$('try-sample').disabled && $('task-data').value.includes('console-mock'));
   $('task-notify').checked = false;
+  const priorTaskId=office.snapshot().taskId;
   $('task-form').requestSubmit();
-  await wait(()=>office.snapshot().taskId);
+  await wait(()=>office.snapshot().taskId!==priorTaskId && /^[0-9a-f]{32}$/.test(office.snapshot().taskId||''));
   await wait(()=>['completed','failed','canceled'].includes(office.snapshot().taskState));
   const actual = office.snapshot();
   assert(actual.taskState==='completed','real Mock backend task completed');

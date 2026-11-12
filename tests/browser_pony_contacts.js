@@ -9,6 +9,7 @@
     const snap=window.PonyOffice.snapshot();
     for(const a of snap.actors.filter(a=>a.present&&a.pose==='seated'&&a.id!=='assistant')){
       const pony=document.querySelector(`[data-pony="${a.id}"]`);
+      if(pony.dataset.mood==='打瞌睡')continue;
       const desk=[...document.querySelectorAll('.office-stage .office-desk-name')].find(n=>n.textContent===({'main':'主 Agent','mail':'邮件投递','prediction':'预测分析','risk':'风险分析','charts':'图表生成','advice':'建议生成'}[a.id])).parentNode;
       assert(inside(center(pony.querySelector('.pony-arm-left .pony-hoof')),bounds(desk.querySelector('.office-keyboard'))),a.id+' left hoof must contact keyboard'); keyboard++;
       if(pony.dataset.operation==='操作鼠标'){

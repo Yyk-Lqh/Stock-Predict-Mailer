@@ -12,7 +12,7 @@ window.PonyOffice = (() => {
     return node;
   };
   const office = document.createElement('section'); office.className = 'pony-office'; office.setAttribute('aria-label', '小马协作办公室');
-  office.innerHTML = `<div class="office-heading"><div><span class="eyebrow">AGENT OFFICE</span><h2>小马办公室</h2></div><span id="office-live" class="hint">等待分析任务</span></div><div class="office-mobile-tabs"><button type="button" id="office-show-room" aria-pressed="true">办公室</button><button type="button" id="office-show-output" aria-pressed="false">进度与报告</button></div><div class="office-stage"></div><div class="office-legend" aria-label="角色选择"></div><p class="office-footnote">围巾标记职责 · 在室亮屏 · 游戏仅为空闲活动 · 点击小马查看真实进度</p>`;
+  office.innerHTML = `<div class="office-heading"><div><span class="eyebrow">AGENT OFFICE</span><h2>小马办公室</h2></div><span id="office-live" class="hint">等待分析任务</span></div><div class="office-mobile-tabs"><button type="button" id="office-show-room" aria-pressed="true">办公室</button><button type="button" id="office-show-output" aria-pressed="false">进度与报告</button></div><div class="office-stage"></div><div class="office-legend" aria-label="角色选择"></div><p class="office-footnote">围巾区分职责 · 游戏为空闲活动 · 点击角色查看真实进度</p>`;
   $('analysis-title').textContent = '分析工作台';
   $('analysis-title').closest('.page-head').after(office);
   $('workbench-intro').classList.add('office-welcome');
@@ -53,8 +53,8 @@ window.PonyOffice = (() => {
       <ellipse cx="0" cy="-25" rx="28" ry="5" fill="#a9b5b8" opacity=".15"/>
       <path d="M-6-55H6L9-27H-9Z" fill="#c2cbcd"/><path d="M-21-28H21L27-23H-27Z" fill="#d4dbdc" stroke="#bbc6c9" stroke-width=".6"/>
       <rect x="35" y="-13" width="28" height="20" rx="4" fill="#dce3e3" stroke="#cdd5d5" stroke-width=".6"/>
-      <g class="office-keyboard"><path d="M-44-10H27L32 4H-48Z" fill="#c6d1d5" stroke="#a6b5bc" stroke-width=".7"/>
-      <path d="M-40-7H25M-41-3H26M-42 1H27M-32-8L-34 1M-23-8L-24 1M-14-8V1M-5-8V1M4-8L5 1M13-8L15 1M21-8L23 1" stroke="#f8faf8" stroke-width="1.4"/><path d="M-25 2H11" stroke="#fdfefb" stroke-width="2"/></g>
+      <g class="office-keyboard"><path d="M-44-10H35L40 4H-48Z" fill="#c6d1d5" stroke="#a6b5bc" stroke-width=".7"/>
+      <path d="M-40-7H33M-41-3H34M-42 1H35M-32-8L-34 1M-23-8L-24 1M-14-8V1M-5-8V1M4-8L5 1M13-8L15 1M21-8L23 1M29-8L31 1" stroke="#f8faf8" stroke-width="1.4"/><path d="M-25 2H11" stroke="#fdfefb" stroke-width="2"/></g>
       <g class="office-mouse"><ellipse cx="48" cy="-1" rx="8" ry="5.7" fill="#abb9bf"/><ellipse cx="48" cy="-2" rx="7" ry="5" fill="#f6f7f3"/><path d="M48-6V-2M43-2H53" stroke="#b8c4c8" stroke-width=".7"/><path d="M48-6V-4" stroke="#73868e" stroke-width="1.5"/></g>
       <rect x="-54" y="-122" width="108" height="71" rx="5" fill="#c3ced0"/>
       <rect x="-52" y="-121" width="104" height="68" rx="4" fill="#f7f8f5"/>
@@ -68,7 +68,7 @@ window.PonyOffice = (() => {
       <path d="M-27 37Q0 28 27 37L29 54Q0 65-29 54Z" fill="url(#pony-chair)" stroke="#c5cfcf" stroke-width=".7"/>
       <text x="0" y="-139" text-anchor="middle" class="office-desk-name">${role.name}</text><circle cx="-63" cy="-143" r="4" fill="${role.color}"/>`);
     desks.set(role.id, desk); world.append(desk);
-    const chair=el('g',{transform:`translate(${role.x} ${role.y})`,'data-office-chair':role.id},'<path d="M-24 48Q0 42 24 48L27 77Q0 86-27 77Z" fill="url(#pony-chair)" stroke="#cbd4d3" stroke-width=".8"/><path d="M-22 51Q0 47 22 51" stroke="#fff" stroke-width="1.5" fill="none"/><path d="M-27 77Q0 86 27 77" stroke="#b9c5c5" stroke-width="1.2" fill="none"/>');
+    const chair=el('g',{transform:`translate(${role.x} ${role.y})`,'data-office-chair':role.id},'<path d="M-28 36Q0 32 28 36L31 77Q0 86-31 77Z" fill="url(#pony-chair)" stroke="#cbd4d3" stroke-width=".8"/><path d="M-26 40Q0 36 26 40" stroke="#fff" stroke-width="1.5" fill="none"/><path d="M-31 77Q0 86 31 77" stroke="#b9c5c5" stroke-width="1.2" fill="none"/>');
     chairs.set(role.id,chair);world.append(chair);
     if (!role.station) desk.setAttribute('display', 'none');
     if (!role.station) chair.setAttribute('display','none');
@@ -78,20 +78,11 @@ window.PonyOffice = (() => {
     pony.addEventListener('keydown', event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); choose(role.id); } });
     const avatar=el('g',{'data-pony-portal':role.id});avatar.append(pony);
     ponies.set(role.id, pony);avatars.set(role.id,avatar);world.append(avatar);
-    rigs.set(role.id, Object.fromEntries(['eyes','head','rig','leg-left','leg-right','arm-left','arm-right','scarf','tail','ear','mane','seated-head','back-eye','back-ear','front-head','front-eyes'].map(part => [part, pony.querySelector('.pony-'+part)])));
-    rigs.get(role.id).pupils = [...pony.querySelectorAll('.pony-pupil')];
-    const rig = rigs.get(role.id);
-    rig.expression = pony.querySelector('.pony-expression');
-    rig.torso = pony.querySelector('.pony-torso');
-    rig.ground=pony.querySelector('.pony-ground');
-    rig.armsLayer=pony.querySelector('.pony-arms');
-    rig.arms = Object.fromEntries(['left','right'].map(side => [side, {
-      line: rig['arm-'+side].querySelector('path'), elbow:rig['arm-'+side].querySelector('circle'), hoof:rig['arm-'+side].querySelector('ellipse')
-    }]));
+    rigs.set(role.id,PonyRig.bind(pony));
     const screen = desk.querySelector('.office-screen');
     screen.dataset.officeRole=role.id;
     screen.replaceChildren(); const screenTitle = el('title'); desk.prepend(screenTitle);
-    screens.set(role.id, {node:screen, title:screenTitle, chart:desk.querySelector('.office-chart-screen')});
+    screens.set(role.id, {node:screen, title:screenTitle, chart:desk.querySelector('.office-chart-screen'), monitor:desk.querySelector('.office-monitor')});
     const button = document.createElement('button'); button.type = 'button'; button.className = 'office-role-button';
     button.textContent = role.name; button.style.setProperty('--role-color', role.color); button.setAttribute('aria-pressed', 'false'); button.onclick = () => choose(role.id);
     buttons.set(role.id, button); office.querySelector('.office-legend').append(button);
@@ -189,7 +180,7 @@ window.PonyOffice = (() => {
       const working = connected && actor.state === 'running' && actor.pose === 'seated' && !['completed', 'failed', 'canceled'].includes(taskState);
       if (refreshScreen) {
         const display = PonyScreen.render(actor, floor.time, connected);
-        screen.node.setAttribute('visibility', display.mode === 'off' ? 'hidden' : 'visible');
+        screen.node.setAttribute('visibility', ['off','sleep'].includes(display.mode) ? 'hidden' : 'visible');
         screen.node.dataset.mode = display.mode; screen.title.textContent = actor.name + ' · ' + display.title;
         screen.node.innerHTML = display.markup;
       }
@@ -204,67 +195,30 @@ window.PonyOffice = (() => {
       if(portal.clipped)avatar.setAttribute('clip-path','url(#pony-portal-clip)');else avatar.removeAttribute('clip-path');
       const transition = Math.min(1, (motion?.elapsed || 0) / (actor.pose === 'rising' ? .55 : .7));
       const sit = PonyRig.smooth(actor.pose === 'seated' ? 1 : actor.pose === 'sitting' ? transition : actor.pose === 'rising' ? 1-transition : 0);
-      const walking = actor.pose === 'walking' && !reduced.matches;
-      const phase = actor.phase, stride = walking ? Math.sin(phase)*23 : 0;
-      // Root stays at the seat anchor. Breathing and typing never drag hooves off devices.
-      const action=actor.doorAction, lean=action?actor.heading*action.lean:0;
-      const bob = reduced.matches||action ? 0 : walking ? Math.abs(Math.sin(phase))*1.7 : Math.sin(phase)*.4*(1-sit);
-      const origin={x:actor.x+lean,y:actor.y-bob};
-      pony.setAttribute('transform', `translate(${origin.x.toFixed(3)} ${origin.y.toFixed(3)}) scale(${PonyRig.scale})`);
-      actor.visualHeading = reduced.matches ? actor.heading : (actor.visualHeading ?? actor.heading) + (actor.heading-(actor.visualHeading ?? actor.heading))*.14;
+      const action=actor.doorAction,lean=action?actor.heading*action.lean:0;
+      // Vertical motion is already present in the traced source poses.
+      const origin={x:actor.x+lean,y:actor.y};
+      pony.setAttribute('transform',`translate(${origin.x.toFixed(3)} ${origin.y.toFixed(3)}) scale(${PonyRig.scale})`);
+      actor.visualHeading=reduced.matches?actor.heading:(actor.visualHeading??actor.heading)+(actor.heading-(actor.visualHeading??actor.heading))*.14;
       const turnWidth=Math.sign(actor.visualHeading||1)*(.78+.22*Math.abs(actor.visualHeading));
       const scaleX=sit+turnWidth*(1-sit);
-      rig.rig.setAttribute('transform', `scale(${scaleX} 1)`);
+      rig.rig.setAttribute('transform',`scale(${scaleX} 1)`);
       rig.ground.setAttribute('transform',`translate(${-lean/PonyRig.scale} 0)`);
-      const rear=sit || (walking&&actor.facing==='back'?1:0);
-      const front=!rear&&walking&&actor.facing==='front'?1:0;
-      rig.head.setAttribute('opacity', String((1-rear)*(1-front)));
-      rig['seated-head'].setAttribute('opacity', String(rear));
-      rig['front-head'].setAttribute('opacity',String(front));
       const mode=PonyScreen.state(actor,floor.time,connected);
-      const expression=PonyRig.expression(actor,floor.time,mode,reduced.matches);
-      const blink=expression.blink;
-      screen.node.setAttribute('opacity',String(1-expression.sleep*.24));
-      rig.eyes.setAttribute('visibility', actor.facing==='back' && walking ? 'hidden':'visible');
-      rig.eyes.setAttribute('transform', `translate(0 -92) scale(1 ${blink}) translate(0 92)`);
-      rig['front-eyes'].setAttribute('transform', `translate(0 -94) scale(1 ${blink}) translate(0 94)`);
-      rig['back-eye'].setAttribute('transform',`translate(0 -94) scale(1 ${blink}) translate(0 94)`);
-      rig['back-eye'].setAttribute('opacity',String(.3+Math.max(0,expression.look)*.7));
-      const joints=PonyRig.arms(actor,origin,sit,floor.time,mode,reduced.matches);
-      const armAnchor=sit>.4||action?rig.head:rig.torso;
-      if(rig.armsLayer.nextSibling!==armAnchor) rig.rig.insertBefore(rig.armsLayer,armAnchor);
-      rig['arm-left'].setAttribute('opacity',String(sit>.1||['front','back'].includes(actor.facing)?1:.35));
-      const tilt=action?action.look*4:expression.tilt;
-      rig.head.setAttribute('transform',`rotate(${tilt} 0 -65)`);
-      rig['front-head'].setAttribute('transform',`rotate(${tilt} 0 -65)`);
-      rig['seated-head'].setAttribute('transform',`translate(${expression.look*2} ${expression.nod+expression.breath}) rotate(${tilt*.5+expression.look*3} 0 -65)`);
-      rig.torso.setAttribute('transform',`translate(0 -42) scale(1 ${1+expression.breath*.012}) translate(0 42)`);
-      for(const pupil of rig.pupils) pupil.setAttribute('transform',`translate(${action?action.look:expression.look*1.3} ${action?action.look*2.5:working ? -1 : 0})`);
-      rig.expression.setAttribute('d',working ? 'M20-69L28-69':actor.state==='failed' && floor.time<actor.feedbackUntil ? 'M20-67Q24-71 28-68':'M20-69Q24-65 28-69');
-      const legs=PonyRig.legs(actor,sit,reduced.matches);
-      for(const side of ['left','right']) {
-        const leg=legs[side];
-        rig['leg-'+side].setAttribute('transform',`translate(${leg.hip.x-lean/(PonyRig.scale*scaleX)} ${leg.hip.y}) rotate(${leg.angle})`);
+      const pose=PonyRig.render(rig,actor,floor.time,sit,origin,scaleX,mode,reduced.matches);
+      actor.sleeping=pose.face.sleep>.5;
+      if(actor.sleeping) {
+        screen.node.setAttribute('visibility','hidden');screen.node.dataset.mode='sleep';
+        screen.title.textContent=actor.name+' · 打瞌睡';
       }
-      rig.tail.setAttribute('transform',`rotate(${reduced.matches ? 0 : Math.sin(phase*.8)*9+stride*.12} -22 -32)`);
-      for(const ear of [rig.ear,rig['back-ear']]) ear.setAttribute('transform',`rotate(${expression.ear} 0 -105)`);
-      rig.mane.setAttribute('transform',`rotate(${stride*.07} -8 -96)`);
-      for(const side of ['left','right']) {
-        let arm=joints[side];
-        if(action&&side==='right') arm=PonyRig.doorArm(actor,origin,scaleX,arm,floor.door);
-        const nodes=rig.arms[side];
-        nodes.line.setAttribute('d',PonyRig.path(arm));
-        nodes.elbow.setAttribute('cx',String(arm.elbow.x)); nodes.elbow.setAttribute('cy',String(arm.elbow.y));
-        nodes.hoof.setAttribute('cx',String(arm.hoof.x)); nodes.hoof.setAttribute('cy',String(arm.hoof.y));
-        nodes.hoof.setAttribute('transform',`rotate(${sit*-8} ${arm.hoof.x} ${arm.hoof.y})`);
-      }
+      screen.monitor.style.fill=actor.sleeping?'#080808':'';
+      const joints=pose.joints;
       pony.dataset.operation=actor.pose==='seated'?joints.operation.label:actor.pose;
       if(action) {pony.dataset.doorPhase=action.phase;pony.dataset.doorSide=action.side;}
       else {delete pony.dataset.doorPhase;delete pony.dataset.doorSide;}
-      pony.dataset.mood=expression.sleep>.5?'打瞌睡':working?'专注工作':actor.pose==='seated'?'放松':'观察环境';
-      // Contact coordinates are observable for browser geometry regression checks.
+      pony.dataset.mood=actor.sleeping?'打瞌睡':working?'专注工作':actor.pose==='seated'?'放松':'观察环境';
+      pony.dataset.sourceFrame=pose.sourceFrame??'';
       pony.dataset.contacts=JSON.stringify({left:joints.left.hoof,right:joints.right.hoof,origin,sit});
-      rig.scarf.setAttribute('transform',`rotate(${walking?Math.sin(phase-.5)*4:0} -10 -54)`);
       nodes.push({node: avatar, depth: actor.y});
     }
     nodes.sort((a, b) => a.depth - b.depth).forEach((item, index) => { if (world.children[index] !== item.node) world.insertBefore(item.node, world.children[index] || null); });
@@ -289,7 +243,7 @@ window.PonyOffice = (() => {
     if (!active || document.hidden) { lastFrame = 0; return; }
     const dt = lastFrame ? Math.min((now - lastFrame) / 1000, .05) : 0; lastFrame = now;
     if (connected) floor.tick(dt, reduced.matches, true);
-    for (const actor of floor.actors) if (actor.present && actor.pose === 'seated' && actor.state !== 'running') {
+    for (const actor of floor.actors) if (actor.present && actor.pose === 'seated' && actor.state !== 'running' && PonyRig.expression(actor,floor.time,'idle',reduced.matches).sleep<.05) {
       actor.idleClock = (actor.idleClock || 0) + dt;
       actor.activity = (actor.seed + Math.floor(actor.idleClock/33)) % 5;
     }

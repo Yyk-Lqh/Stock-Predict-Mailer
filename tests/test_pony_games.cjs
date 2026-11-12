@@ -90,4 +90,7 @@ for(const [status,label] of [['completed','已完成'],['failed','失败'],['can
 }
 actor.state='idle'; actor.present=false;
 assert.equal(render(actor,30).mode,'off');
+actor.present=true;actor.pose='seated';actor.sleeping=true;actor.feedbackUntil=0;
+assert.equal(render(actor,30).mode,'sleep');assert.equal(render(actor,30).markup,'');
+actor.state='running';assert.equal(render(actor,30).mode,'task','real task wakes the sleeping screen');
 console.log('Idle game rules passed: deterministic seeds, coherent snake and mine boards, bounded tetromino, brick collision, growing drawing, and task-screen priority.');

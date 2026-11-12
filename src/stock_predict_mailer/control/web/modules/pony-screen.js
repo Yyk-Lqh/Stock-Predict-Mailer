@@ -8,6 +8,7 @@ globalThis.PonyScreen = (() => {
     if (actor.state === 'running') return connected ? 'task' : 'disconnected';
     if (time < actor.feedbackUntil) return 'result';
     if (!actor.present) return 'off';
+    if (actor.sleeping && actor.state === 'idle' && actor.pose === 'seated') return 'sleep';
     return actor.pose === 'seated' ? games[actor.activity % games.length] : 'screensaver';
   }
   const wrap=(n,size)=>(n%size+size)%size;
@@ -109,6 +110,7 @@ globalThis.PonyScreen = (() => {
     const mode = state(actor, time, connected), t = actor.idleClock || 0, localTime=t%33, seed = actor.seed;
     let content = '', title = mode;
     if (mode === 'off') return {mode, markup: '', title: '离室待机'};
+    if (mode === 'sleep') return {mode, markup: '', title: '打瞌睡 · 显示器休眠'};
     if (['task','disconnected','result'].includes(mode)) {
       const labels = {completed:'已完成', failed:'失败', canceled:'已取消', simulated:'模拟投递', submitted:'已提交', retry:'等待重试', uncertain:'结果待确认'};
       title = mode === 'disconnected' ? '连接中断 · 保留进度' : mode === 'result' ? labels[actor.state] || actor.state : actor.taskLabel || '执行任务';

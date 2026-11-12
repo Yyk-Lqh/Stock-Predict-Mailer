@@ -337,6 +337,8 @@ class OrchestrationTests(unittest.IsolatedAsyncioTestCase):
         result = self.result(await self.run_task("simple"))
         self.assertEqual(result["children"], [])
         self.assertEqual(result["usage"]["calls"], 1)
+        final_plan = next(event for event in self.f.store.events("test-task") if event["kind"] == "plan" and event.get("finalized"))
+        self.assertEqual([step["id"] for step in final_plan["steps"]], ["validate", "main", "charts", "report"])
 
     async def test_effort_paths_use_effective_limits(self):
         for effort, complexity, count in (("high", "complex", 0), ("extreme", "simple", 0), ("ultra", "complex", 3)):
@@ -404,6 +406,15 @@ class OrchestrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result["children"]), 3)
         self.assertEqual(result["usage"]["calls"], 5)
         self.assertTrue(all(c["status"] == "completed" and not c["tools"] for c in result["children"]))
+
+    async def test_final_progress_plan_includes_dynamic_children_and_merge(self):
+        self.result(await self.run_task())
+        events = self.f.store.events("test-task")
+        final_plan = next(event for event in events if event["kind"] == "plan" and event.get("finalized"))
+        self.assertEqual([step["id"] for step in final_plan["steps"]],
+                         ["validate", "main", "charts", "report", "prediction", "risk", "advice", "merge"])
+        first_child = next(event for event in events if event.get("step") == "prediction" and event.get("status") == "running")
+        self.assertLess(final_plan["seq"], first_child["seq"], "final denominator is published before any child starts")
 
     async def test_subagent_count_and_depth(self):
         self.f.settings["limits"]["max_subagents"] = 1

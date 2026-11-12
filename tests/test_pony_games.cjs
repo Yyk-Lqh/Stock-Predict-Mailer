@@ -76,6 +76,13 @@ for(let activity=0;activity<games.length;activity++){
 actor.activity=0;
 actor.state='running'; actor.taskLabel='财报分析';
 assert.equal(render(actor,9).mode,'task'); assert.ok(render(actor,9).markup.includes('财报分析'));
+actor.last='风险分析正在执行'; actor.completedSteps=1; actor.totalSteps=4; actor.progressPercent=25; actor.elapsed=42;
+let taskMarkup=render(actor,9).markup;
+assert.ok(taskMarkup.includes('1/4')&&taskMarkup.includes('25%')&&taskMarkup.includes('42s'),'finalized backend plan renders completed steps, percentage and elapsed time');
+actor.totalSteps=null; actor.progressPercent=null; actor.completedSteps=3; actor.elapsed=17;
+taskMarkup=render(actor,9).markup;
+assert.ok(taskMarkup.includes('风险分析正在执行')&&taskMarkup.includes('已完成 3 步')&&taskMarkup.includes('17s'),'without a finalized plan the display keeps stage, completed steps and elapsed time');
+assert.ok(!taskMarkup.includes('%'),'unknown plan totals never produce a percentage');
 assert.equal(render(actor,9,false).mode,'disconnected');
 for(const [status,label] of [['completed','已完成'],['failed','失败'],['canceled','已取消']]){
   actor.state=status; actor.feedbackUntil=20;

@@ -433,10 +433,16 @@ class Orchestrator:
             planned = []
         if len(planned) > limit["max_subagents"]:
             notes.append("SUBAGENT_LIMIT：委派数量已按上限裁剪。")
-        if planned:
+        planned_roles = planned[:limit["max_subagents"]]
+        if planned_roles:
             progress.emit("adjustment", label="复杂任务需要分工，加入 A2A 子步骤。",
-                          steps=[{"id": role, "label": role} for role in planned[:limit["max_subagents"]]])
-        for role in planned[:limit["max_subagents"]]:
+                          steps=[{"id": role, "label": role} for role in planned_roles])
+        final_plan = list(plan) + [(role, role) for role in planned_roles]
+        if planned_roles:
+            final_plan.append(("merge", "复核子 Agent 结果"))
+        progress.emit("plan", label=f"{subject} · {focus}最终执行计划", execution=execution, finalized=True,
+                      steps=[{"id": key, "label": label} for key, label in final_plan])
+        for role in planned_roles:
             budget.check()
             child_id = uuid.uuid4().hex
             if cid:

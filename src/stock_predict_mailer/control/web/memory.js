@@ -1118,10 +1118,17 @@ globalThis.PonyScreen = (() => {
       title = mode === 'disconnected' ? '连接中断 · 保留进度' : mode === 'result' ? labels[actor.state] || actor.state : actor.taskLabel || '执行任务';
       content = text(5,10,title.slice(0,15),mode === 'result' && actor.state === 'failed' ? '#ffa2a2' : '#9ee7cc');
       content += text(5,23,(actor.last || '等待下一步').slice(0,15));
-      content += text(5,35,`已完成 ${actor.completedSteps || 0} 步 · ${Math.floor(actor.elapsed || 0)}s`);
-      content += text(5,48,actor.childId ? `子任务 ${actor.childId.slice(0,9)}` : actor.taskId ? actor.taskId.slice(0,14) : '本地反馈');
-      // No fabricated percentage: the backend currently exposes phases, not a fixed total.
-      if (mode === 'task') content += rect(5,53,86,2,'#365368');
+      const planned=Number.isInteger(actor.totalSteps)&&actor.totalSteps>0&&Number.isFinite(actor.progressPercent);
+      content += planned
+        ? text(5,35,`进度 ${actor.completedSteps||0}/${actor.totalSteps} · ${actor.progressPercent}%`,'#d9edf6',5)
+        : text(5,35,`已完成 ${actor.completedSteps || 0} 步 · ${Math.floor(actor.elapsed || 0)}s`);
+      content += planned
+        ? text(5,48,`耗时 ${Math.floor(actor.elapsed||0)}s · ${actor.childId ? actor.childId.slice(0,6) : (actor.taskId||'').slice(0,8)}`,'#d9edf6',5)
+        : text(5,48,actor.childId ? `子任务 ${actor.childId.slice(0,9)}` : actor.taskId ? actor.taskId.slice(0,14) : '本地反馈');
+      if (mode === 'task'&&planned) {
+        content += rect(5,53,86,2,'#365368');
+        content += rect(5,53,86*actor.progressPercent/100,2,'#7dddb7');
+      }
     } else if (mode === 'screensaver') {
       const phase = (time + seed * 9) / 35, blend = (Math.sin(phase * Math.PI) + 1) / 2;
       content = `<g opacity="${blend.toFixed(2)}">${text(22,31,`${String(Math.floor(time/60)%24).padStart(2,'0')}:${String(Math.floor(time)%60).padStart(2,'0')}`, '#9ccadf',14)}</g>`;
@@ -1275,9 +1282,42 @@ globalThis.PonyChildren = (() => {
   return{Tracker,labels};
 })();
 
+/* Derives task progress only from the backend's finalized plan and step events. */
+globalThis.PonyTaskProgress = (() => {
+  const roles = ['prediction','risk','advice','charts','mail'];
+  class Tracker {
+    constructor(){this.reset();}
+    reset(){this.finalized=false;this.plan=new Map();this.completed=new Set();}
+    update(event){
+      if(event?.kind==='plan'&&event.finalized===true&&Array.isArray(event.steps)){
+        this.plan=new Map();
+        for(const step of event.steps)if(typeof step?.id==='string'&&step.id)this.plan.set(step.id,String(step.label||step.id));
+        this.finalized=true;
+      }else if(event?.kind==='step'&&typeof event.step==='string'){
+        if(event.status==='completed')this.completed.add(event.step);
+        else if(['running','failed','canceled'].includes(event.status))this.completed.delete(event.step);
+      }
+      return this.snapshot();
+    }
+    snapshot(){
+      const ids=this.finalized?[...this.plan.keys()]:[];
+      const completed=this.finalized?ids.filter(id=>this.completed.has(id)).length:this.completed.size;
+      const total=this.finalized?ids.length:null;
+      const percent=total?Math.round(completed*100/total):null;
+      const byRole={};
+      for(const role of roles)if(this.plan.has(role)){
+        const done=this.completed.has(role)?1:0;
+        byRole[role]={total:1,completed:done,percent:done*100};
+      }
+      return{finalized:this.finalized,total,completed,percent,byRole};
+    }
+  }
+  return{Tracker};
+})();
+
 /* Articulated SVG office; backend state is never inferred from animation. */
 window.PonyOffice = (() => {
-  const {Floor, roles} = PonyFloor, floor = new Floor(), childProgress = new PonyChildren.Tracker();
+  const {Floor, roles} = PonyFloor, floor = new Floor(), childProgress = new PonyChildren.Tracker(), taskProgress = new PonyTaskProgress.Tracker();
   const NS = 'http://www.w3.org/2000/svg';
   let taskId = null, replay = true, seen = new Set(), active = true, connected = true, taskState = 'idle', selected = 'main';
   let lastFrame = 0, raf = 0, lastUI = 0, roleSignature = '', terminalFeedback = '';
@@ -1338,6 +1378,7 @@ window.PonyOffice = (() => {
       line: rig['arm-'+side].querySelector('path'), elbow:rig['arm-'+side].querySelector('circle'), hoof:rig['arm-'+side].querySelector('ellipse')
     }]));
     const screen = desk.querySelector('.office-screen');
+    screen.dataset.officeRole=role.id;
     screen.replaceChildren(); const screenTitle = el('title'); desk.prepend(screenTitle);
     screens.set(role.id, {node:screen, title:screenTitle, chart:desk.querySelector('.office-chart-screen')});
     const button = document.createElement('button'); button.type = 'button'; button.className = 'office-role-button';
@@ -1374,7 +1415,7 @@ window.PonyOffice = (() => {
   }
   function reset(id = null, restoring = true) {
     taskId = id; replay = restoring; seen = new Set(); taskState = id ? 'submitted' : 'idle'; connected = true; floor.reset();
-    childProgress.reset();
+    childProgress.reset(); taskProgress.reset();
     terminalFeedback='';
     for (const desk of desks.values()) desk.querySelector('.office-chart-screen').setAttribute('visibility', 'hidden');
     renderUI(); draw();
@@ -1384,13 +1425,18 @@ window.PonyOffice = (() => {
     taskState = task.status.state; connected = true;
     for (const event of events || []) {
       if (seen.has(event.seq)) continue; seen.add(event.seq);
+      const progress=taskProgress.update(event), mainActor=floor.actors.find(a=>a.id==='main');
+      mainActor.completedSteps=progress.completed; mainActor.totalSteps=progress.total; mainActor.progressPercent=progress.percent;
+      for(const actor of floor.actors)if(actor.id!=='main'){
+        const roleProgress=progress.byRole[actor.id];
+        actor.completedSteps=roleProgress?.completed||0; actor.totalSteps=roleProgress?.total??null; actor.progressPercent=roleProgress?.percent??null;
+      }
       const id = ['prediction', 'risk', 'advice', 'charts', 'mail'].includes(event.step) ? event.step : 'main';
       if (event.kind === 'step') {
         const actor = floor.actors.find(a => a.id === id);
         const state = event.status === 'running' ? 'running' : event.status;
         actor.taskId = task.id; actor.taskLabel = task.metadata?.request?.subject || task.input?.subject || 'Agent 任务';
         if (event.child_id) actor.childId = event.child_id;
-        if (state === 'completed') actor.completedSteps++;
         if (state === 'running' && !actor.startedAt) actor.startedAt = event.timestamp;
         if (replay) { actor.state = state; actor.last = event.label; if (state === 'running') { actor.present = true; actor.pose = 'seated'; } }
         else floor.set(id, state, event.label);

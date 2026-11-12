@@ -114,10 +114,17 @@ globalThis.PonyScreen = (() => {
       title = mode === 'disconnected' ? '连接中断 · 保留进度' : mode === 'result' ? labels[actor.state] || actor.state : actor.taskLabel || '执行任务';
       content = text(5,10,title.slice(0,15),mode === 'result' && actor.state === 'failed' ? '#ffa2a2' : '#9ee7cc');
       content += text(5,23,(actor.last || '等待下一步').slice(0,15));
-      content += text(5,35,`已完成 ${actor.completedSteps || 0} 步 · ${Math.floor(actor.elapsed || 0)}s`);
-      content += text(5,48,actor.childId ? `子任务 ${actor.childId.slice(0,9)}` : actor.taskId ? actor.taskId.slice(0,14) : '本地反馈');
-      // No fabricated percentage: the backend currently exposes phases, not a fixed total.
-      if (mode === 'task') content += rect(5,53,86,2,'#365368');
+      const planned=Number.isInteger(actor.totalSteps)&&actor.totalSteps>0&&Number.isFinite(actor.progressPercent);
+      content += planned
+        ? text(5,35,`进度 ${actor.completedSteps||0}/${actor.totalSteps} · ${actor.progressPercent}%`,'#d9edf6',5)
+        : text(5,35,`已完成 ${actor.completedSteps || 0} 步 · ${Math.floor(actor.elapsed || 0)}s`);
+      content += planned
+        ? text(5,48,`耗时 ${Math.floor(actor.elapsed||0)}s · ${actor.childId ? actor.childId.slice(0,6) : (actor.taskId||'').slice(0,8)}`,'#d9edf6',5)
+        : text(5,48,actor.childId ? `子任务 ${actor.childId.slice(0,9)}` : actor.taskId ? actor.taskId.slice(0,14) : '本地反馈');
+      if (mode === 'task'&&planned) {
+        content += rect(5,53,86,2,'#365368');
+        content += rect(5,53,86*actor.progressPercent/100,2,'#7dddb7');
+      }
     } else if (mode === 'screensaver') {
       const phase = (time + seed * 9) / 35, blend = (Math.sin(phase * Math.PI) + 1) / 2;
       content = `<g opacity="${blend.toFixed(2)}">${text(22,31,`${String(Math.floor(time/60)%24).padStart(2,'0')}:${String(Math.floor(time)%60).padStart(2,'0')}`, '#9ccadf',14)}</g>`;

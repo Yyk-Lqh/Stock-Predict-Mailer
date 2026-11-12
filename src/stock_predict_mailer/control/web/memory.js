@@ -1249,9 +1249,35 @@ globalThis.PonyRig = (() => {
   return {scale,desk,solve,arms,operation,path,smooth,markup};
 })();
 
+/* Tracks only backend-reported child steps; it never starts or calls an agent. */
+globalThis.PonyChildren = (() => {
+  const labels={prediction:'预测分析',risk:'风险分析',advice:'建议生成'};
+  const terminals=new Set(['completed','failed','canceled']);
+  class Tracker {
+    constructor(){this.reset();}
+    reset(){this.pending=new Map();this.outcomes=new Map();}
+    snapshot(){return [...this.pending].map(([role,childId])=>({role,childId}));}
+    update(role,childId,status){
+      if(!Object.hasOwn(labels,role))return null;
+      if(status==='running'){this.pending.set(role,childId||null);this.outcomes.delete(role);}
+      else if(terminals.has(status)){this.pending.delete(role);this.outcomes.set(role,status);}
+      else return null;
+      const pending=this.snapshot();
+      const failed=[...this.outcomes].filter(([,result])=>result==='failed').map(([childRole])=>labels[childRole]);
+      const canceled=[...this.outcomes].filter(([,result])=>result==='canceled').map(([childRole])=>labels[childRole]);
+      const result=[failed.length?`${failed.join('、')}失败`:null,canceled.length?`${canceled.join('、')}已取消`:null].filter(Boolean).join('，');
+      const message=pending.length
+        ? `等待 ${pending.map(child=>labels[child.role]).join('、')} 返回${result?` · ${result}`:''}`
+        : failed.length||canceled.length?`${result} · 主 Agent 继续`:'子 Agent 已返回 · 汇总结果';
+      return{pending,message};
+    }
+  }
+  return{Tracker,labels};
+})();
+
 /* Articulated SVG office; backend state is never inferred from animation. */
 window.PonyOffice = (() => {
-  const {Floor, roles} = PonyFloor, floor = new Floor();
+  const {Floor, roles} = PonyFloor, floor = new Floor(), childProgress = new PonyChildren.Tracker();
   const NS = 'http://www.w3.org/2000/svg';
   let taskId = null, replay = true, seen = new Set(), active = true, connected = true, taskState = 'idle', selected = 'main';
   let lastFrame = 0, raf = 0, lastUI = 0, roleSignature = '', terminalFeedback = '';
@@ -1348,6 +1374,7 @@ window.PonyOffice = (() => {
   }
   function reset(id = null, restoring = true) {
     taskId = id; replay = restoring; seen = new Set(); taskState = id ? 'submitted' : 'idle'; connected = true; floor.reset();
+    childProgress.reset();
     terminalFeedback='';
     for (const desk of desks.values()) desk.querySelector('.office-chart-screen').setAttribute('visibility', 'hidden');
     renderUI(); draw();
@@ -1376,7 +1403,8 @@ window.PonyOffice = (() => {
       if (event.kind === 'step' && ['prediction','risk','advice'].includes(id)) {
         const main = floor.actors.find(a => a.id === 'main');
         main.taskId = task.id;
-        if (event.status === 'running') floor.set('main','running','等待 ' + (floor.actors.find(a => a.id === id).name) + ' 返回');
+        const progress=childProgress.update(id,event.child_id,event.status);
+        if (progress && (event.status==='running' || main.state==='running')) floor.set('main','running',progress.message);
       }
       if (event.kind === 'mail') floor.set('mail', event.status, event.label);
       if (event.kind === 'chart' && event.svg) {

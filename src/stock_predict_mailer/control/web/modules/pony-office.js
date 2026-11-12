@@ -1,6 +1,6 @@
 /* Articulated SVG office; backend state is never inferred from animation. */
 window.PonyOffice = (() => {
-  const {Floor, roles} = PonyFloor, floor = new Floor();
+  const {Floor, roles} = PonyFloor, floor = new Floor(), childProgress = new PonyChildren.Tracker();
   const NS = 'http://www.w3.org/2000/svg';
   let taskId = null, replay = true, seen = new Set(), active = true, connected = true, taskState = 'idle', selected = 'main';
   let lastFrame = 0, raf = 0, lastUI = 0, roleSignature = '', terminalFeedback = '';
@@ -97,6 +97,7 @@ window.PonyOffice = (() => {
   }
   function reset(id = null, restoring = true) {
     taskId = id; replay = restoring; seen = new Set(); taskState = id ? 'submitted' : 'idle'; connected = true; floor.reset();
+    childProgress.reset();
     terminalFeedback='';
     for (const desk of desks.values()) desk.querySelector('.office-chart-screen').setAttribute('visibility', 'hidden');
     renderUI(); draw();
@@ -125,7 +126,8 @@ window.PonyOffice = (() => {
       if (event.kind === 'step' && ['prediction','risk','advice'].includes(id)) {
         const main = floor.actors.find(a => a.id === 'main');
         main.taskId = task.id;
-        if (event.status === 'running') floor.set('main','running','等待 ' + (floor.actors.find(a => a.id === id).name) + ' 返回');
+        const progress=childProgress.update(id,event.child_id,event.status);
+        if (progress && (event.status==='running' || main.state==='running')) floor.set('main','running',progress.message);
       }
       if (event.kind === 'mail') floor.set('mail', event.status, event.label);
       if (event.kind === 'chart' && event.svg) {

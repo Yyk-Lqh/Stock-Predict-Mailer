@@ -1,6 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const context=vm.createContext({});
-for(const name of ['pony-door','pony-model','pony-rig']) vm.runInContext(fs.readFileSync(`src/stock_predict_mailer/control/web/modules/${name}.js`,'utf8'),context);
+for(const name of ['pony-door','pony-model','pony-reference','pony-rig']) vm.runInContext(fs.readFileSync(`src/stock_predict_mailer/control/web/modules/${name}.js`,'utf8'),context);
 const {PonyDoor:door,PonyRig:rig}=context;
 const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 let contacts=0;
@@ -57,9 +57,9 @@ for(const stage of ['open','close']) {
   const actor={present:true,x:-30,y:550};
   assert.equal(door.portal(actor,{stage,entry:stage==='open',exit:stage==='close'},1).visible,false,'outside body and shadow are hidden');
 }
-for(const stage of ['enter','cross'])for(let x=-30;x<=door.frame.insideX;x+=1){
+for(const stage of ['enter','cross'])for(let x=door.frame.outsideWalkX;x<=door.frame.insideX;x+=1){
   const actor={present:true,x,y:550},view=door.portal(actor,{stage},1);
   assert.equal(view.clipped,true,'the whole threshold transit uses the aperture mask');
-  if(x+39*.88<=door.frame.left)assert.equal(view.visible,false,'nothing appears to the left of the aperture');
+  if(x+door.frame.bodyHalfWidth<=door.frame.left)assert.equal(view.visible,false,'nothing appears to the left of the aperture');
   assert.equal(door.portal(actor,{stage},0).visible,false,'closed door never reveals a crossing pony');
 }

@@ -762,7 +762,7 @@ window.KnowledgeUI = (() => {
 globalThis.PonyDoor = (() => {
   const clamp = x => Math.max(0,Math.min(1,x));
   const ease = x => { x=clamp(x); return x*x*x*(x*(x*6-15)+10); };
-  const frame=Object.freeze({y:430,width:80,height:128,left:8,right:74,top:436,bottom:552,insideX:115});
+  const frame=Object.freeze({y:430,width:80,height:128,left:8,right:74,top:436,bottom:552,insideX:115,outsideWalkX:-52,bodyHalfWidth:56*.88});
   function geometry(open) {
     const angle=clamp(open)*1.23;
     const width=Math.cos(angle), depth=Math.sin(angle)*10;
@@ -789,7 +789,7 @@ globalThis.PonyDoor = (() => {
     }
     const crossing=['enter','cross'].includes(motion?.stage) ||
       (motion?.exit&&motion.stage==='walk'&&actor.x<=frame.insideX&&actor.y>=549.99&&open===1);
-    if(crossing) return {visible:open===1&&actor.x+39*.88>frame.left,clipped:true,state:'threshold'};
+    if(crossing) return {visible:open===1&&actor.x+frame.bodyHalfWidth>frame.left,clipped:true,state:'threshold'};
     return {visible:true,clipped:false,state:'room'};
   }
   return {ease,geometry,sample,portal,frame};
@@ -798,12 +798,12 @@ globalThis.PonyDoor = (() => {
 /* Deterministic floor navigation; independent of DOM and backend timing. */
 globalThis.PonyFloor = (() => {
   const roles = [
-    ['main', '主 Agent', '#df5353', 230, 160, true],
-    ['prediction', '预测分析', '#4eac70', 515, 160, false],
-    ['risk', '风险分析', '#9570d6', 800, 160, false],
-    ['mail', '邮件投递', '#4098df', 230, 410, true],
-    ['charts', '图表生成', '#23afb0', 515, 410, false],
-    ['advice', '建议生成', '#dab32b', 800, 410, false],
+    ['main', '主 Agent', '#dc092a', 230, 160, true],
+    ['prediction', '预测分析', '#74bc6d', 515, 160, false],
+    ['risk', '风险分析', '#6900f1', 800, 160, false],
+    ['mail', '邮件投递', '#1698eb', 230, 410, true],
+    ['charts', '图表生成', '#19d8c4', 515, 410, false],
+    ['advice', '建议生成', '#f0d415', 800, 410, false],
     ['assistant', '分析助理', '#e58b36', 900, 500, true]
   ].map(([id, name, color, x, y, resident]) => ({id, name, color, x, y, resident, station: id !== 'assistant'}));
   const gate = {x: 35, y: 550}, radius = 30;
@@ -844,7 +844,7 @@ globalThis.PonyFloor = (() => {
       return actor.randomState/4294967296;
     }
     blocked(point, actor, dock = false) {
-      const portal = (this.motion(actor.id)?.stage === 'open' && point.x >= -65 && point.x <= 0) || (this.door === 1 && ['enter', 'cross'].includes(this.motion(actor.id)?.stage) && point.x >= -30 && point.x <= PonyDoor.frame.insideX);
+      const portal = (this.motion(actor.id)?.stage === 'open' && point.x >= -65 && point.x <= 0) || (this.door === 1 && ['enter', 'cross'].includes(this.motion(actor.id)?.stage) && point.x >= PonyDoor.frame.outsideWalkX && point.x <= PonyDoor.frame.insideX);
       if (portal && Math.abs(point.y-gate.y)<1) return this.actors.some(other=>other!==actor && other.present && distance(point,other)<radius*2+3);
       if (point.x < 25 || point.x > 935 || point.y < 30 || point.y > 590) return true;
       for (const role of roles) {
@@ -902,7 +902,9 @@ globalThis.PonyFloor = (() => {
       }
       for (const actor of this.actors) {
         if (['completed','failed','canceled','simulated','submitted'].includes(actor.state) && this.time>actor.feedbackUntil) { actor.lastResult={state:actor.state,label:actor.last,taskId:actor.taskId}; actor.state='idle'; }
-        actor.phase += dt * (actor.pose === 'walking' ? actor.speed / 16 : 1.2 + actor.seed * .07);
+        // Advance source gait by distance, including its measured root translation.
+        const stride=(globalThis.PonyReference?.strideDistance||143)*.88;
+        if(actor.pose === 'walking') actor.phase += dt * actor.speed * Math.PI * 2 / stride;
         if (actor.state === 'running') actor.elapsed += dt;
         if (idle && !reduced && !actor.resident && !actor.present && this.time > actor.nextVisit && !this.queue.some(j => j.id === actor.id) && !this.jobs.has(actor.id)) {
           this.queue.push({id: actor.id, visit: true}); actor.nextVisit = this.time + 70 + this.random(actor)*50;
@@ -964,7 +966,7 @@ globalThis.PonyFloor = (() => {
         }
         actor.x = -30;
         if ((this.door===1&&!job.doorAction)||this.operateDoor(job,actor,dt,reduced)) {
-          actor.present = true; actor.x = -30; actor.y = gate.y; actor.pose = 'walking';
+          actor.present = true; actor.x = PonyDoor.frame.outsideWalkX; actor.y = gate.y; actor.pose = 'walking';
           job.path = [{x: PonyDoor.frame.insideX, y: gate.y}]; transition('enter');
         }
       } else if (job.stage==='exit-open') {
@@ -994,6 +996,7 @@ globalThis.PonyFloor = (() => {
       } else if (job.stage === 'close' || job.stage === 'latch') {
         // The last pony in a batch remains beside the handle until the door closes.
         const entering=job.stage==='latch';
+        if(!entering)actor.x=-30; // Reposition only after the whole body is hidden outside.
         if (this.operateDoor(job,actor,dt,reduced,true)) {
           this.doorDirection=null;this.doorHoldUntil=0;
           if(entering) {
@@ -1029,14 +1032,14 @@ globalThis.PonyFloor = (() => {
               this.gateOwner=null; this.doorDirection='exit'; this.doorHoldUntil=this.time+2;
               if(actor.state==='running')this.queue.unshift({id:actor.id,exit:false});
               this.transit=null;
-            } else { actor.pose='door-close'; transition('close'); }
+            } else { actor.x=-30; actor.pose='door-close'; transition('close'); }
           }
           else if (job.stage === 'stroll') { actor.pose = 'idle'; transition('linger'); }
           else if (job.stage === 'return' && !actor.station) { actor.pose = 'idle'; this.transit = null; }
           else if (job.exit) {
             this.doorDirection='exit';
             actor.pose = 'waiting';
-            if (this.door === 1) { job.path = [{x: -30, y: gate.y}]; transition('cross'); }
+            if (this.door === 1) { job.path = [{x: PonyDoor.frame.outsideWalkX, y: gate.y}]; transition('cross'); }
           } else if (job.stage === 'dock') { actor.pose = 'sitting'; transition('sit'); }
           else { actor.pose = 'turning'; transition('turn'); }
           return;

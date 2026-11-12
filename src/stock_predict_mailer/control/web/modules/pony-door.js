@@ -2,7 +2,7 @@
 globalThis.PonyDoor = (() => {
   const clamp = x => Math.max(0,Math.min(1,x));
   const ease = x => { x=clamp(x); return x*x*x*(x*(x*6-15)+10); };
-  const frame=Object.freeze({y:430,width:80,height:128,left:8,right:74,top:436,bottom:552,insideX:115});
+  const frame=Object.freeze({y:430,width:80,height:128,left:8,right:74,top:436,bottom:552,insideX:115,outsideWalkX:-52,bodyHalfWidth:56*.88});
   function geometry(open) {
     const angle=clamp(open)*1.23;
     const width=Math.cos(angle), depth=Math.sin(angle)*10;
@@ -29,7 +29,7 @@ globalThis.PonyDoor = (() => {
     }
     const crossing=['enter','cross'].includes(motion?.stage) ||
       (motion?.exit&&motion.stage==='walk'&&actor.x<=frame.insideX&&actor.y>=549.99&&open===1);
-    if(crossing) return {visible:open===1&&actor.x+39*.88>frame.left,clipped:true,state:'threshold'};
+    if(crossing) return {visible:open===1&&actor.x+frame.bodyHalfWidth>frame.left,clipped:true,state:'threshold'};
     return {visible:true,clipped:false,state:'room'};
   }
   return {ease,geometry,sample,portal,frame};

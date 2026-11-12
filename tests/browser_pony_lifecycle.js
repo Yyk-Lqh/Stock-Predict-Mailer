@@ -17,6 +17,7 @@
   assert(actual.actors.some(a=>a.taskId===actual.taskId),'real task identity bound to actor');
   checks.push({realBackend:actual.taskId,state:actual.taskState});
   office.reset('visual-fixture',false);
+  assert([...document.querySelectorAll('.office-chart-screen')].every(node=>!node.hasAttribute('href')),'new task clears the previous task chart');
   office.sync({id:'visual-fixture',status:{state:'working'}},[
     {seq:1,kind:'plan',finalized:false,steps:[{id:'validate',label:'校验数据'}]},
     {seq:2,kind:'step',step:'validate',status:'completed',label:'数据校验完成'},

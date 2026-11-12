@@ -113,7 +113,7 @@ globalThis.PonyScreen = (() => {
       const labels = {completed:'已完成', failed:'失败', canceled:'已取消', simulated:'模拟投递', submitted:'已提交', retry:'等待重试', uncertain:'结果待确认'};
       title = mode === 'disconnected' ? '连接中断 · 保留进度' : mode === 'result' ? labels[actor.state] || actor.state : actor.taskLabel || '执行任务';
       content = text(5,10,title.slice(0,15),mode === 'result' && actor.state === 'failed' ? '#ffa2a2' : '#9ee7cc');
-      content += text(5,23,(actor.last || '等待下一步').slice(0,15));
+      content += text(5,23,(actor.last || '等待下一步').slice(0,actor.id==='charts'?9:15));
       const planned=Number.isInteger(actor.totalSteps)&&actor.totalSteps>0&&Number.isFinite(actor.progressPercent);
       content += planned
         ? text(5,35,`进度 ${actor.completedSteps||0}/${actor.totalSteps} · ${actor.progressPercent}%`,'#d9edf6',5)

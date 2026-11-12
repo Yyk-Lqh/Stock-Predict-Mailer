@@ -89,7 +89,15 @@ window.AnalysisInput = (() => {
     $('inspector-actions').hidden = id !== 'report';
     window.Workbench.inspector(true); update();
   }
-  function layout() { document.documentElement.style.setProperty('--composer-height', dock.offsetHeight + 'px'); viewport(); }
+  function layout() {
+    const root=document.documentElement, stage=document.querySelector('.office-stage');
+    root.style.setProperty('--composer-height',dock.offsetHeight+'px');
+    if(stage && document.body.dataset.view==='analysis') {
+      const top=stage.getBoundingClientRect().top+window.scrollY;
+      root.style.setProperty('--office-height',Math.max(280,innerHeight-dock.offsetHeight-top-16)+'px');
+    }
+    viewport();
+  }
   function observe(task) {
     const prediction = task.artifacts?.[0]?.parts?.[0]?.data?.analysis?.prediction;
     if (prediction) lastPrediction = prediction;
@@ -110,7 +118,9 @@ window.AnalysisInput = (() => {
   document.querySelector('[data-view-pane="analysis"] .page-head').hidden = true;
   document.querySelector('.inspector-launch').hidden = true;
   $('inspector-actions').hidden = true;
-  new ResizeObserver(layout).observe(dock); window.addEventListener('resize', layout);
+  const layoutObserver=new ResizeObserver(layout);
+  layoutObserver.observe(dock);layoutObserver.observe($('tasks'));
+  window.addEventListener('resize', layout);
   document.body.classList.toggle('analysis-composer-visible', document.body.dataset.view === 'analysis');
   update();
   return {open, validate, observe, reset, update, layout};

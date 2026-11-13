@@ -1702,6 +1702,162 @@ globalThis.PonyTaskProgress = (() => {
   return{Tracker};
 })();
 
+/* Validated presentation data. Demo prices never become task or live-market input. */
+globalThis.PonyHallData=(()=>{
+  const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const finite=v=>typeof v==='number'&&Number.isFinite(v)&&Math.abs(v)<=1e12;
+  const units={trading_days:'交易日',calendar_days:'自然日',hours:'小时'};
+  const horizon=p=>p&&Number.isFinite(p.value)?`${p.value} ${units[p.unit]||p.unit||''}`:'未提供周期';
+  const number=value=>finite(value)?value.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2}):'—';
+  const demo=()=>({demo:true,source:'内置静态示例',as_of:null,timezone:null,quotes:[
+    {symbol:'DEMO.SH',name:'沪市综合 · DEMO',last:3268.42,change_pct:.68},
+    {symbol:'DEMO.SZ',name:'深市综合 · DEMO',last:10482.16,change_pct:-.42},
+    {symbol:'DEMO.GROW',name:'成长板块 · DEMO',last:2186.75,change_pct:1.26},
+    {symbol:'DEMO.WATCH',name:'自选组合 · DEMO',last:1286.30,change_pct:.35}
+  ],history:[3228,3235,3231,3247,3240,3255,3248,3251,3241,3259,3254,3261,3258,3270,3264,3268.42].map((value,i)=>({at:new Date(Date.UTC(2026,0,5+i)).toISOString(),value})),candles:[]});
+  function normalize(raw){
+    if(!raw||typeof raw.source!=='string'||!raw.source.trim()||!Number.isFinite(Date.parse(raw.as_of)))throw Error('行情必须提供来源与有效更新时间');
+    if(!Array.isArray(raw.quotes)||raw.quotes.length<1||raw.quotes.length>50)throw Error('行情须包含1至50个标的');
+    const quotes=raw.quotes.map(q=>{
+      if(!q||typeof q.symbol!=='string'||typeof q.name!=='string'||!finite(q.last)||q.last<0||!finite(q.change_pct))throw Error('行情价格或涨跌幅无效');
+      return{symbol:q.symbol.slice(0,40),name:q.name.slice(0,60),last:q.last,change_pct:q.change_pct,...typeof q.industry==='string'?{industry:q.industry.slice(0,60)}:{}};
+    });
+    if(new Set(quotes.map(q=>q.symbol)).size!==quotes.length)throw Error('行情标的重复');
+    const history=(raw.history||[]).map(p=>{if(!finite(p.value)||!Number.isFinite(Date.parse(p.at)))throw Error('历史价格序列无效');return{at:new Date(p.at).toISOString(),value:p.value};}).sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
+    const candles=(raw.candles||[]).map(p=>{
+      if(!Number.isFinite(Date.parse(p.at))||![p.open,p.high,p.low,p.close].every(finite)||p.low>Math.min(p.open,p.close)||p.high<Math.max(p.open,p.close)||p.low>p.high||p.volume!=null&&(!finite(p.volume)||p.volume<0))throw Error('K线须有有效开高低收数据');
+      return{at:new Date(p.at).toISOString(),open:p.open,high:p.high,low:p.low,close:p.close,...p.volume!=null?{volume:p.volume}:{}};
+    }).sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
+    if(history.length>500||candles.length>500)throw Error('单次图表最多500个点');
+    if(raw.timezone){try{new Intl.DateTimeFormat('zh-CN',{timeZone:raw.timezone});}catch{throw Error('行情时区无效');}}
+    return{demo:false,source:raw.source.trim().slice(0,100),as_of:new Date(raw.as_of).toISOString(),timezone:raw.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone,quotes,history,candles};
+  }
+  class Feed{
+    constructor(){this.market=demo();this.connection='demo';this.resetTask();}
+    receive(raw){const snapshot=normalize(raw);this.market=snapshot;this.connection='connected';this.receivedAt=Date.now();return snapshot;}
+    disconnect(){if(!this.market.demo)this.connection='disconnected';}
+    status(now=Date.now()){return this.connection==='connected'&&now-this.receivedAt>90000?'stale':this.connection;}
+    resetTask(){this.task=null;this.analysis=null;this.preview={};this.stage='等待分析任务';this.chart=null;this.mail=null;}
+    sync(task,events=[]){
+      if(this.task?.id!==task.id)this.resetTask();this.task=task;
+      const data=task.artifacts?.[0]?.parts?.[0]?.data;
+      if(data?.analysis)this.analysis=data.analysis;if(data?.mail)this.mail=data.mail;
+      for(const event of events||[]){
+        if(event.kind==='step'&&event.status==='running')this.stage=event.label||event.step;
+        if(event.preview)this.preview={...this.preview,...event.preview};
+        if(event.kind==='chart'&&typeof event.svg==='string'&&event.svg.length<500000)this.chart=event.svg;
+        if(event.kind==='mail')this.mail={status:event.status,label:event.label};
+      }
+      if(['completed','failed','canceled'].includes(task.status.state))this.stage={completed:'分析完成',failed:'分析失败',canceled:'任务已取消'}[task.status.state];
+    }
+    summary(actors=[]){
+      const meta=this.task?.metadata?.request||{},p=this.analysis?.prediction||this.task?.input?.prediction||meta;
+      const main=actors.find(a=>a.id==='main'),planned=main&&Number.isInteger(main.totalSteps)&&main.totalSteps>0&&Number.isFinite(main.progressPercent);
+      const subject=p.subject||meta.subject||'尚未选择分析标的',quote=this.market.quotes.find(q=>q.symbol===subject);
+      return{subject,displaySubject:quote&&(!this.market.demo||p.synthetic)?subject+' · '+quote.name:subject,industry:quote?.industry||p.industry||'行业未提供',prediction:p,horizon:horizon(p.horizon||meta.horizon),stage:this.stage,
+        progress:planned?`${main.completedSteps||0}/${main.totalSteps} · ${main.progressPercent}%`:this.task?'阶段信息 · 不估算百分比':'尚未开始',
+        pending:actors.filter(a=>['prediction','risk','advice'].includes(a.id)&&a.state==='running').map(a=>a.name),
+        risks:this.analysis?.risks||this.preview.risks||[],limitations:this.analysis?.limitations||this.preview.limitations||[],
+        inferences:this.analysis?.inferences||this.preview.inferences||[],mail:this.mail,notify:meta.notify===true};
+    }
+  }
+  function seat(actor,summary,mode){
+    const p=summary.prediction,elapsed=`${Math.floor(actor.elapsed||0)}s`,progress=Number.isInteger(actor.totalSteps)&&actor.totalSteps>0&&Number.isFinite(actor.progressPercent)?`${actor.completedSteps||0}/${actor.totalSteps} · ${actor.progressPercent}%`:`当前步骤 · ${elapsed}`;
+    const states={completed:'已完成',failed:'失败',canceled:'已取消',submitted:'已提交',simulated:'模拟投递',uncertain:'结果待确认',retry:'等待重试',not_requested:'未请求发送'};
+    const role={main:['执行计划',summary.pending.length?'等待 '+summary.pending.join('、'):'协调与汇总',progress],
+      prediction:['模型预测',`${{up:'↑ 看涨',down:'↓ 看跌',flat:'→ 持平'}[p.direction]||'方向待返回'}${finite(p.value)?' '+number(p.value)+' '+(p.value_unit||''):''}`,summary.horizon,finite(p.confidence)?`模型置信 ${Math.round(p.confidence*100)}%`:'模型未提供置信信息'],
+      risk:['风险核对',summary.risks[0]||'风险项待核对',summary.limitations[0]||'缺失与冲突待返回'],
+      charts:['图表产出','历史实线 / 预测虚线',progress],
+      advice:['分析要点',summary.inferences[0]?.statement||summary.inferences[0]?.text||'分析要点待汇总','适用条件与限制见报告'],
+      mail:['报告交付',summary.mail?.label||states[summary.mail?.status]||(summary.notify?'等待报告准备':'本轮未请求发送'),summary.notify?'仍须通过收件授权':'仅生成分析报告']}[actor.id]||['资料接待','点击打开分析资料'];
+    const lines=actor.id==='prediction'&&mode!=='disconnected'?role:[role[0],mode==='disconnected'?'连接中断 · 保留进度':states[actor.state]||actor.last||role[1],...role.slice(1)];
+    return lines.slice(0,4).map((line,i)=>{const full=String(line),limit=i?14:12,label=full.length>limit?full.slice(0,limit-1)+'…':full;return `<text x="5" y="${10+i*12}" fill="${i?'#d6e5eb':'#8ddbd5'}" font-size="${i?6:7}" font-family="sans-serif">${escape(label)}<title>${escape(full)}</title></text>`;}).join('');
+  }
+  return{Feed,normalize,demo,escape,number,horizon,seat};
+})();
+
+/* Desktop trading hall. Market transport may call receive(); no automatic feed. */
+globalThis.PonyHall=(()=>{
+  function mount(office,choose){
+    const data=new PonyHallData.Feed(),wall=document.createElement('section'),prices=new Map();
+    wall.className='market-wall';wall.setAttribute('aria-label','证券行情与当前分析任务');
+    wall.innerHTML=`<div class="market-wall-head"><div><strong>小马证券分析大厅</strong><span class="market-mode">演示行情</span><small class="market-provenance"></small></div><div class="market-wall-actions"><button type="button" class="market-palette">红涨绿跌</button><button type="button" class="market-ticker-toggle" aria-pressed="false">暂停信息带</button></div></div><div class="market-quotes"></div><div class="market-wall-body"><div class="market-chart"><div class="market-chart-head"><label>走势 <select aria-label="大盘墙走势图"><option value="overview">市场概览 · 演示</option><option value="subject">当前分析标的</option></select></label><span class="market-chart-note"></span></div><div class="market-chart-image"></div></div><button type="button" class="market-task" aria-label="查看当前任务详情"><span class="market-task-label">当前分析</span><strong class="market-subject"></strong><span class="market-context"></span><span class="market-stage"></span><span class="market-progress"></span></button></div><div class="market-ticker" tabindex="0" aria-label="自选标的信息带，悬停或聚焦可暂停"><div class="market-ticker-track"></div></div>`;
+    office.prepend(wall);
+    const find=s=>wall.querySelector(s);let actors=[],last=0,paused=false,palette='cn',marketDirty=true,taskConnected=true,lastChart='',pendingInput=null;
+    try{palette=localStorage.getItem('stock_predict_mailer.market.palette')||'cn';}catch{}
+    const paintPalette=()=>{office.dataset.marketPalette=palette;find('.market-palette').textContent=palette==='cn'?'红涨绿跌':'绿涨红跌';};paintPalette();
+    find('.market-palette').onclick=()=>{palette=palette==='cn'?'international':'cn';paintPalette();try{localStorage.setItem('stock_predict_mailer.market.palette',palette);}catch{}};
+    find('.market-ticker-toggle').onclick=()=>{paused=!paused;wall.classList.toggle('ticker-paused',paused);find('.market-ticker-toggle').setAttribute('aria-pressed',String(paused));find('.market-ticker-toggle').textContent=paused?'继续信息带':'暂停信息带';};
+    find('.market-task').onclick=()=>choose('main');
+    find('select').onchange=()=>{lastChart='';renderChart();};
+    const signed=value=>`${value>0?'↑ +':value<0?'↓ ': '→ '}${value.toFixed(2)}%`;
+    const trend=value=>value>0?'market-up':value<0?'market-down':'market-flat';
+    function renderMarket(){
+      const snapshot=data.market,status=data.status();find('.market-mode').textContent=snapshot.demo?'演示行情':status==='connected'?'行情已接入':status==='stale'?'行情暂未更新':'行情连接中断';
+      wall.dataset.marketState=status;
+      const stamp=snapshot.as_of?new Date(snapshot.as_of).toLocaleString('zh-CN',{hour12:false,timeZone:snapshot.timezone}):'静态示例 · 未连接行情服务';
+      find('.market-provenance').textContent=`${snapshot.source} · ${stamp}${snapshot.timezone?' · '+snapshot.timezone:''}`;
+      const quotes=find('.market-quotes');quotes.replaceChildren();
+      for(const q of snapshot.quotes.slice(0,5)){
+        const card=document.createElement('div');card.className='market-quote '+trend(q.change_pct);
+        const name=document.createElement('span');name.textContent=q.name;const value=document.createElement('strong');value.textContent=PonyHallData.number(q.last);
+        if(prices.has(q.symbol)&&prices.get(q.symbol)!==q.last)value.className='market-value-changed';prices.set(q.symbol,q.last);
+        const change=document.createElement('small');change.textContent=signed(q.change_pct);card.append(name,value,change);quotes.append(card);
+      }
+      const track=find('.market-ticker-track');track.replaceChildren();
+      for(let copy=0;copy<2;copy++){
+        const group=document.createElement('div');group.className='market-ticker-group';if(copy)group.setAttribute('aria-hidden','true');
+        for(const q of snapshot.quotes){const span=document.createElement('span');span.className=trend(q.change_pct);span.textContent=`${q.name}  ${PonyHallData.number(q.last)}  ${signed(q.change_pct)}`;group.append(span);}track.append(group);
+      }
+      marketDirty=false;lastChart='';renderChart();
+    }
+    function renderChart(){
+      const summary=data.summary(actors),subject=find('select').value==='subject',target=find('.market-chart-image');
+      const key=[subject,data.market.as_of,data.connection,data.task?.id,data.chart,summary.subject].join('|');if(key===lastChart)return;lastChart=key;target.replaceChildren();
+      find('select option[value=overview]').textContent=data.market.demo?'市场概览 · 演示':'市场概览';
+      if(subject&&data.chart){const image=new Image();image.alt=summary.subject+' · 任务图表';image.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(data.chart);target.append(image);find('.market-chart-note').textContent='任务图表 · 历史与预测按产出标注';return;}
+      let observed=subject?data.task?.input?.chart_data?.series?.observed?.points:data.market.history;
+      const forecast=subject?data.task?.input?.chart_data?.series?.forecast?.points:[];
+      const candles=!subject?data.market.candles:[];
+      observed=(observed||[]).filter(p=>Number.isFinite(p.value)&&Number.isFinite(Date.parse(p.at)));
+      const predicted=(forecast||[]).filter(p=>Number.isFinite(p.value)&&Number.isFinite(Date.parse(p.at)));
+      const all=[...observed,...predicted,...predicted.flatMap(p=>[p.lower,p.upper].filter(Number.isFinite).map(value=>({at:p.at,value}))),...candles.flatMap(p=>[{at:p.at,value:p.low},{at:p.at,value:p.high}])];
+      if(all.length<2){const empty=document.createElement('span');empty.className='market-chart-empty';empty.textContent=subject?'当前标的暂无历史序列，等待上游图表；不使用演示曲线替代。':'未提供价格序列';target.append(empty);find('.market-chart-note').textContent=subject?summary.subject:'等待行情序列';return;}
+      const low=Math.min(...all.map(p=>p.value)),high=Math.max(...all.map(p=>p.value)),first=Math.min(...all.map(p=>Date.parse(p.at))),lastTime=Math.max(...all.map(p=>Date.parse(p.at)));
+      const x=p=>16+(Date.parse(p.at)-first)/(lastTime-first||1)*658,y=v=>62-(v-low)/(high-low||1)*48;
+      const line=points=>points.map((p,i)=>`${i?'L':'M'}${x(p).toFixed(2)} ${y(p.value).toFixed(2)}`).join('');
+      let paths='<path d="M16 14H674M16 38H674M16 62H674" stroke="#28424f" fill="none"/>';
+      if(candles.length){const maxVolume=Math.max(1,...candles.map(p=>p.volume||0));for(const p of candles){const color=p.close>=p.open?'var(--market-up)':'var(--market-down)',xx=x(p);paths+=`<path d="M${xx} ${y(p.high)}V${y(p.low)}" stroke="${color}"/><rect x="${xx-2}" y="${Math.min(y(p.open),y(p.close))}" width="4" height="${Math.max(1,Math.abs(y(p.open)-y(p.close)))}" fill="${color}"/>`;if(p.volume!=null)paths+=`<rect x="${xx-2}" y="${75-p.volume/maxVolume*9}" width="4" height="${p.volume/maxVolume*9}" fill="${color}" opacity=".45"/>`;}}
+      else paths+=`<path d="${line(observed)}" fill="none" stroke="#9adbe8" stroke-width="1.8"/>`;
+      if(predicted.length){const interval=predicted.filter(p=>Number.isFinite(p.lower)&&Number.isFinite(p.upper));if(interval.length>1)paths+=`<path d="${line(interval.map(p=>({...p,value:p.upper})))} ${line(interval.slice().reverse().map(p=>({...p,value:p.lower}))).replace(/^M/,'L')}Z" fill="#bda26d" opacity=".15"/>`;paths+=`<path d="${line(predicted)}" fill="none" stroke="#e3bd79" stroke-dasharray="5 4" stroke-width="1.8"/>`;}
+      const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 690 76');svg.setAttribute('role','img');svg.setAttribute('aria-label',subject?'上游历史实线与预测虚线':data.market.demo?'演示走势，非真实行情':'来源提供的历史行情');svg.innerHTML=paths;target.append(svg);
+      find('.market-chart-note').textContent=subject?'历史实线 · 预测虚线 · 区间仅取上游数据':data.market.demo?'演示走势 · 非实时行情':candles.length?'K线 · 来源提供的OHLC':'历史观测 · '+data.market.source;
+    }
+    function tick(now,force=false){
+      if(!force&&now-last<1000)return;last=now;
+      if(marketDirty||wall.dataset.marketState!==data.status())renderMarket();
+      const summary=data.summary(actors);find('.market-subject').textContent=summary.displaySubject;
+      find('.market-context').textContent=`${summary.horizon} · ${summary.industry}`;
+      find('.market-stage').textContent=taskConnected?summary.stage:'任务连接中断 · 保留最后进度';
+      find('.market-progress').textContent=summary.pending.length?'待返回：'+summary.pending.join(' / '):summary.progress;
+      renderChart();
+    }
+    function receive(raw){data.receive(raw);marketDirty=true;tick(performance.now(),true);}
+    function disconnect(){data.disconnect();marketDirty=true;tick(performance.now(),true);}
+    window.addEventListener('pony-market-snapshot',event=>{try{receive(event.detail);}catch(error){wall.dataset.marketError=error.message;}});
+    window.addEventListener('pony-market-disconnected',disconnect);window.addEventListener('offline',disconnect);
+    document.addEventListener('visibilitychange',()=>{wall.classList.toggle('ticker-hidden',document.hidden);if(!document.hidden)tick(performance.now(),true);});
+    tick(performance.now(),true);
+    return{wall,data,receive,disconnect,tick,capture:input=>{pendingInput=structuredClone(input);},reset:()=>{data.resetTask();lastChart='';tick(performance.now(),true);},
+      sync(task,events,allActors){actors=allActors;taskConnected=true;const input=data.task?.id===task.id?data.task.input:pendingInput;
+        const subject=task.metadata?.request?.subject;if(input?.prediction?.subject===subject){task={...task,input};pendingInput=null;}data.sync(task,events);tick(performance.now(),true);},
+      disconnected(){taskConnected=false;tick(performance.now(),true);},
+      screen(actor,mode){return PonyHallData.seat(actor,data.summary(actors),mode);},
+      aux(actor){const states={running:'执行中',completed:'完成',failed:'失败',idle:'待命',pending:'等待',canceled:'取消'};return `${actor.name.slice(0,4)} · ${states[actor.state]||actor.state}`;}};
+  }
+  return{mount};
+})();
+
 /* Articulated SVG office; backend state is never inferred from animation. */
 window.PonyOffice = (() => {
   const {Floor, roles} = PonyFloor, floor = new Floor(), childProgress = new PonyChildren.Tracker(), taskProgress = new PonyTaskProgress.Tracker();
@@ -1716,11 +1872,14 @@ window.PonyOffice = (() => {
     return node;
   };
   const office = document.createElement('section'); office.className = 'pony-office'; office.setAttribute('aria-label', '小马协作办公室');
+  const hallMode=PonyFloor.hall;let hall=null;
+  if(hallMode){office.classList.add('securities-hall');document.body.classList.add('securities-hall-view');office.setAttribute('aria-label','小马证券分析大厅');}
   office.innerHTML = `<div class="office-heading"><div><span class="eyebrow">AGENT OFFICE</span><h2>小马办公室</h2></div><span id="office-live" class="hint">等待分析任务</span></div><div class="office-mobile-tabs"><button type="button" id="office-show-room" aria-pressed="true">办公室</button><button type="button" id="office-show-output" aria-pressed="false">进度与报告</button></div><div class="office-stage"></div><div class="office-legend" aria-label="角色选择"></div><p class="office-footnote">围巾区分职责 · 游戏为空闲活动 · 点击角色查看真实进度</p>`;
   $('analysis-title').textContent = '分析工作台';
   $('analysis-title').closest('.page-head').after(office);
   $('workbench-intro').classList.add('office-welcome');
-  const svg = el('svg', {viewBox: '-65 0 1025 620', role: 'group', 'aria-label': '六个固定工位，小马通过门洞进出办公室'});
+  const svg = el('svg', {viewBox: '-65 0 1025 700', role: 'group', 'aria-label': '六个固定工位，小马通过门洞进出办公室'});
+  if(hallMode)svg.setAttribute('viewBox','-125 0 1180 700');
   svg.innerHTML = `<defs>
     <filter id="pony-shadow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="5"/></filter>
     <linearGradient id="pony-desk" x2="0" y2="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#eceeed"/></linearGradient>
@@ -1728,7 +1887,7 @@ window.PonyOffice = (() => {
     <radialGradient id="pony-daylight" cx=".2" cy=".12" r="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#e9eceb"/></radialGradient>
     <clipPath id="pony-screen-clip"><rect x="-48" y="-116" width="96" height="58" rx="2"/></clipPath>
     <clipPath id="pony-portal-clip" clipPathUnits="userSpaceOnUse"><path d="M8 436H74V552H8ZM80 0H960V620H80Z"/></clipPath>
-    </defs><rect x="-65" width="1025" height="620" rx="12" class="office-floor"/>
+    </defs><rect x="-65" width="1025" height="700" rx="12" class="office-floor"/>
     <path d="M64 580H910" class="office-floor-line"/><text x="76" y="603" class="office-floor-caption">预测 · 证据 · 分析 · 交付</text>`;
   const door = el('g', {transform: `translate(0 ${PonyDoor.frame.y})`}, '<ellipse cx="40" cy="128" rx="46" ry="7" fill="#58636b" opacity=".12"/><rect x="1" y="0" width="79" height="128" rx="4" class="office-door-frame"/><rect x="8" y="6" width="66" height="116" rx="1" fill="#6e7d84"/><g id="office-door-leaf" class="office-door-leaf"><path class="office-door-panel" fill="#e4e8e6"/><path class="office-door-inset" fill="#f5f6f2" stroke="#cbd2d0"/><g class="office-door-handle" data-door-side="outside"><circle r="2.5" fill="#b1996a"/><path d="M0 0H7" stroke="#9b8256" stroke-width="2.3" stroke-linecap="round"/></g><g class="office-door-handle" data-door-side="inside"><circle r="2.5" fill="#b1996a"/><path d="M0 0H-7" stroke="#9b8256" stroke-width="2.3" stroke-linecap="round"/></g></g><text x="40" y="147" text-anchor="middle" class="office-floor-caption">出入口</text>');
   svg.append(door);
@@ -1741,12 +1900,14 @@ window.PonyOffice = (() => {
     selected = id;
     if (id === 'assistant') { window.AnalysisInput?.open('input'); return; }
     for (const [key, button] of buttons) button.setAttribute('aria-pressed', String(key === id));
+    if(hallMode)window.AnalysisInput?.open('progress');
     window.Workbench.inspector(true);
     $('office-roles').querySelector(`[data-office-role="${id}"]`)?.scrollIntoView({block: 'nearest'});
     renderUI();
   }
   for (const role of roles) {
     const desk = el('g', {transform: `translate(${role.x} ${role.y})`, 'data-office-desk':role.id}, `
+      <g class="office-table" transform="scale(${PonyFloor.furniture.scaleX} ${PonyFloor.furniture.scaleY})">
       <ellipse cx="3" cy="68" rx="112" ry="18" fill="#58616a" opacity=".12" filter="url(#pony-shadow)"/>
       <path d="M-99-25L-95 64H-88L-85-25M85-25L89 64H96L101-25" fill="#c9d0d1"/>
       <path d="M-96 60H-88V65H-96M89 60H97V65H89" fill="#9da9ac"/>
@@ -1754,7 +1915,7 @@ window.PonyOffice = (() => {
       <path d="M60 11H94M60 33H94" stroke="#c8d0ce"/><path d="M73 0H82M73 22H82" stroke="#acb7b6" stroke-width="2" stroke-linecap="round"/>
       <path d="M-110 1H110V10H-110Z" fill="#d6dddb"/><path d="M-98-53H98L110 1H-110Z" fill="url(#pony-desk)" stroke="#e3e7e5"/>
       <path d="M-108 2H108" stroke="#fff" stroke-width="1.5"/>
-      <ellipse cx="0" cy="-25" rx="28" ry="5" fill="#a9b5b8" opacity=".15"/>
+      </g><ellipse cx="0" cy="-25" rx="28" ry="5" fill="#a9b5b8" opacity=".15"/>
       <path d="M-6-55H6L9-27H-9Z" fill="#c2cbcd"/><path d="M-21-28H21L27-23H-27Z" fill="#d4dbdc" stroke="#bbc6c9" stroke-width=".6"/>
       <rect x="35" y="-13" width="28" height="20" rx="4" fill="#dce3e3" stroke="#cdd5d5" stroke-width=".6"/>
       <g class="office-keyboard"><path d="M-44-10H35L40 4H-48Z" fill="#c6d1d5" stroke="#a6b5bc" stroke-width=".7"/>
@@ -1770,8 +1931,14 @@ window.PonyOffice = (() => {
       <path d="M0 63V92M0 91L-23 103M0 91L23 103M0 91V105" stroke="#aebbbf" stroke-width="4" stroke-linecap="round"/>
       <circle cx="-23" cy="104" r="3" fill="#76898e"/><circle cx="23" cy="104" r="3" fill="#76898e"/><circle cx="0" cy="106" r="3" fill="#76898e"/>
       <path d="M-27 37Q0 28 27 37L29 54Q0 65-29 54Z" fill="url(#pony-chair)" stroke="#c5cfcf" stroke-width=".7"/>
-      <text x="0" y="-139" text-anchor="middle" class="office-desk-name">${role.name}</text><circle cx="-63" cy="-143" r="4" fill="${role.color}"/>`);
+      <text x="0" y="-143" text-anchor="middle" class="office-desk-name">${role.name}</text><circle cx="-63" cy="-146" r="4" fill="${role.color}"/>`);
     desks.set(role.id, desk); world.append(desk);
+    if(hallMode&&role.station){
+      const aux=el('g',{'class':'hall-aux-screen',transform:'translate(-82 -47)'},'<path d="M10 20V28H2H22" stroke="#9daeb2" fill="none"/><rect width="24" height="24" rx="2" fill="#9cabb0"/><rect class="office-monitor" x="1" y="1" width="22" height="21" rx="1" fill="#10232f"/><text x="3" y="9" fill="#9adbe8" font-size="4.5">状态</text><text class="hall-aux-value" x="3" y="17" fill="#d5e5ea" font-size="4.5">待命</text>');desk.append(aux);
+      desk.setAttribute('role','button');desk.setAttribute('tabindex','0');desk.setAttribute('aria-label',role.name+'交易席位，查看任务详情');
+      desk.addEventListener('click',()=>choose(role.id));desk.addEventListener('keydown',event=>{if(['Enter',' '].includes(event.key)){event.preventDefault();choose(role.id);}});
+      const plate=el('g',{'class':'hall-seat-plate',transform:'translate(-54 18)'},`<rect width="108" height="15" rx="2" fill="#f1f5f5"/><circle cx="7" cy="7.5" r="2" fill="${role.color}"/><text x="15" y="10" font-size="6.5" fill="#51636b">${role.name}</text><text class="hall-seat-state" x="101" y="10" text-anchor="end" font-size="5.5" fill="#667b85">待命</text>`);desk.append(plate);
+    }
     const chair=el('g',{transform:`translate(${role.x} ${role.y})`,'data-office-chair':role.id},'<path d="M-28 36Q0 32 28 36L31 77Q0 86-31 77Z" fill="url(#pony-chair)" stroke="#cbd4d3" stroke-width=".8"/><path d="M-26 40Q0 36 26 40" stroke="#fff" stroke-width="1.5" fill="none"/><path d="M-31 77Q0 86 31 77" stroke="#b9c5c5" stroke-width="1.2" fill="none"/>');
     chairs.set(role.id,chair);world.append(chair);
     if (!role.station) desk.setAttribute('display', 'none');
@@ -1787,9 +1954,16 @@ window.PonyOffice = (() => {
     screen.dataset.officeRole=role.id;
     screen.replaceChildren(); const screenTitle = el('title'); desk.prepend(screenTitle);
     screens.set(role.id, {node:screen, title:screenTitle, chart:desk.querySelector('.office-chart-screen'), monitor:desk.querySelector('.office-monitor')});
+    if(hallMode&&role.id==='charts'){const chart=desk.querySelector('.office-chart-screen');for(const [key,value]of Object.entries({x:-44,y:-104,width:88,height:36}))chart.setAttribute(key,value);}
     const button = document.createElement('button'); button.type = 'button'; button.className = 'office-role-button';
     button.textContent = role.name; button.style.setProperty('--role-color', role.color); button.setAttribute('aria-pressed', 'false'); button.onclick = () => choose(role.id);
     buttons.set(role.id, button); office.querySelector('.office-legend').append(button);
+  }
+  if(hallMode){
+    const assistant=roles.find(r=>r.id==='assistant');
+    const reception=el('g',{transform:`translate(${assistant.x} ${assistant.y+70})`,'class':'hall-reception',role:'button',tabindex:'0','aria-label':'资料接待，打开分析输入'},'<ellipse cx="0" cy="12" rx="34" ry="7" fill="#708286" opacity=".1"/><path d="M-28-22H28V10H-28Z" fill="#e1e9e9"/><path d="M-32-24H32V-19H-32Z" fill="#fdfefd"/><text x="0" y="-5" text-anchor="middle" font-size="7" fill="#536d77">资料接待</text>');
+    reception.addEventListener('click',()=>choose('assistant'));reception.addEventListener('keydown',event=>{if(['Enter',' '].includes(event.key))choose('assistant');});svg.insertBefore(reception,world);
+    hall=PonyHall.mount(office,choose);
   }
   const portal = document.createElement('div'); portal.className = 'sidebar-office-door';
   portal.innerHTML = '<span class="sidebar-door-art" aria-hidden="true"><i></i></span><span>协作通道<small>子 Agent 由此进出</small></span>';
@@ -1821,7 +1995,7 @@ window.PonyOffice = (() => {
   function reset(id = null, restoring = true) {
     taskId = id; replay = restoring; seen = new Set(); taskState = id ? 'submitted' : 'idle'; connected = true; floor.reset();
     childProgress.reset(); taskProgress.reset();
-    terminalFeedback='';
+    terminalFeedback='';hall?.reset();
     for (const desk of desks.values()) {
       const chart=desk.querySelector('.office-chart-screen');
       chart.setAttribute('visibility','hidden');chart.removeAttribute('href');
@@ -1872,23 +2046,28 @@ window.PonyOffice = (() => {
     }
     if (replay) for (const actor of floor.actors) if (!actor.resident && actor.state !== 'running') { actor.present = false; actor.pose = 'absent'; }
     if (events && events.length < 100) replay = false;
+    hall?.sync(task,events||[],floor.actors);
     renderUI(); draw(true);
   }
   function draw(force = false) {
     const refreshScreen = force || floor.time - lastScreen > .16 || lastScreen > floor.time;
     if (refreshScreen) lastScreen = floor.time;
-    const nodes = [];
+    const nodes = [],screenNow=new Date();
     for (const actor of floor.actors) {
       if (actor.state === 'running' && actor.startedAt && Number.isFinite(Date.parse(actor.startedAt))) actor.elapsed = Math.max(0,(Date.now()-Date.parse(actor.startedAt))/1000);
       const desk = desks.get(actor.id), pony = ponies.get(actor.id), rig = rigs.get(actor.id), screen = screens.get(actor.id);
       const working = connected && actor.state === 'running' && actor.pose === 'seated' && !['completed', 'failed', 'canceled'].includes(taskState);
+      const chartActive=hall?['task','result'].includes(PonyScreen.state(actor,floor.time,connected)):working;
       if (refreshScreen) {
-        const display = PonyScreen.render(actor, floor.time, connected);
+        const display = PonyScreen.render(actor, floor.time, connected,screenNow);
+        if(hall&&['task','disconnected','result'].includes(display.mode)&&hall.data.task){display.markup=`<g transform="translate(-48 -116)"><rect width="96" height="58" rx="2" fill="#10232f"/>${hall.screen(actor,display.mode)}</g>`;}
+        if(hall&&actor.id==='charts'&&chartActive&&screen.chart.hasAttribute('href'))display.markup='<g transform="translate(-48 -116)"><rect width="96" height="58" rx="2" fill="#10232f"/><text x="5" y="9" fill="#9adbe8" font-size="7">图表生成 · 任务产出</text><text x="5" y="55" fill="#cbdce5" font-size="5">完整图表与数据来源见报告</text></g>';
         screen.node.setAttribute('visibility', ['off','sleep'].includes(display.mode) ? 'hidden' : 'visible');
         screen.node.dataset.mode = display.mode; screen.title.textContent = actor.name + ' · ' + display.title;
         screen.node.innerHTML = display.markup;
+        if(hall){const states={running:'执行中',completed:'已完成',failed:'失败',idle:'待命',pending:'等待',canceled:'取消'};const label=states[actor.state]||actor.state;desk.querySelector('.hall-aux-value')?.replaceChildren(document.createTextNode(label));desk.querySelector('.hall-seat-state')?.replaceChildren(document.createTextNode(label));}
       }
-      screen.chart.setAttribute('visibility', actor.id === 'charts' && working && screen.chart.hasAttribute('href') ? 'visible' : 'hidden');
+      screen.chart.setAttribute('visibility', actor.id === 'charts' && chartActive && screen.chart.hasAttribute('href') ? 'visible' : 'hidden');
       nodes.push({node: desk, depth: actor.deskY + 25});
       nodes.push({node: chairs.get(actor.id), depth: actor.deskY + 79});
       const seated = ['seated', 'sitting', 'rising'].includes(actor.pose);
@@ -1896,6 +2075,7 @@ window.PonyOffice = (() => {
       const portal=PonyDoor.portal(actor,motion,floor.door),avatar=avatars.get(actor.id);
       pony.setAttribute('display',portal.visible?'inline':'none');pony.setAttribute('tabindex',portal.visible?'0':'-1');
       pony.setAttribute('aria-hidden',String(!portal.visible));pony.dataset.portalState=portal.state;
+      if(!actor.present){nodes.push({node:avatar,depth:actor.y});continue;}
       if(portal.clipped)avatar.setAttribute('clip-path','url(#pony-portal-clip)');else avatar.removeAttribute('clip-path');
       const transition = Math.min(1, (motion?.elapsed || 0) / (actor.pose === 'rising' ? .55 : .7));
       const sit = PonyRig.smooth(actor.pose === 'seated' ? 1 : actor.pose === 'sitting' ? transition : actor.pose === 'rising' ? 1-transition : 0);
@@ -1934,7 +2114,7 @@ window.PonyOffice = (() => {
     const visibleSide=operator?.doorAction.side||(floor.doorDirection==='enter'?'outside':'inside');
     for(const handle of door.querySelectorAll('.office-door-handle')) {
       const p=geometry.handle(handle.dataset.doorSide);
-      handle.setAttribute('transform',`translate(${p.x} ${p.y-PonyDoor.frame.y}) rotate(${operator?.doorAction.pressed?-12:0})`);
+      handle.setAttribute('transform',`translate(${p.x-PonyDoor.frame.x} ${p.y-PonyDoor.frame.y}) rotate(${operator?.doorAction.pressed?-12:0})`);
       handle.setAttribute('opacity',handle.dataset.doorSide===visibleSide?'1':'0');
     }
     const passing=floor.actors.some(a=>PonyDoor.portal(a,floor.motion(a.id),floor.door).clipped);
@@ -1956,17 +2136,32 @@ window.PonyOffice = (() => {
       const value=actor.deviceBlend||0, delta=target-value;
       actor.deviceBlend=value+Math.sign(delta)*Math.min(Math.abs(delta),dt*1.25);
     }
-    draw(); if (now - lastUI > 450) { renderUI(); lastUI = now; }
+    draw();hall?.tick(now); if (now - lastUI > 450) { renderUI(); lastUI = now; }
     raf = requestAnimationFrame(frame);
   }
-  function view(name) { active = name === 'analysis'; if (active && !raf) raf = requestAnimationFrame(frame); }
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && active) { lastFrame = 0; if (taskId) poll(taskId); if (!raf) raf = requestAnimationFrame(frame); } });
+  function layout(){
+    if(document.body.dataset.view!=='analysis')return;
+    const matrix=svg.getScreenCTM();if(!matrix||matrix.a<=0||matrix.d<=0)return;
+    const left=innerWidth<=760?12:16,bottom=innerWidth<=760?8:20;
+    const edge=document.getElementById('analysis-composer')?.getBoundingClientRect().bottom||innerHeight-bottom;
+    const x=(left-matrix.e)/matrix.a,y=(edge-matrix.f)/matrix.d-PonyDoor.frame.height;
+    floor.relocateDoor(x,y);
+    const transform=`translate(${x} ${y})`;door.setAttribute('transform',transform);frontDoor.setAttribute('transform',transform);
+    svg.querySelector('#pony-portal-clip path').setAttribute('d',`M${x+8} ${y+6}H${x+74}V${y+122}H${x+8}ZM${x+80} 0H960V${Math.max(700,y+128)}H${x+80}Z`);
+    const gutter=left+(115+56)*matrix.a+16+'px',root=document.documentElement;
+    if(root.style.getPropertyValue('--door-gutter')!==gutter)root.style.setProperty('--door-gutter',gutter);
+  }
+  let layoutFrame=0;
+  office.querySelector('.office-stage').addEventListener('scroll',()=>{if(!layoutFrame)layoutFrame=requestAnimationFrame(()=>{layoutFrame=0;layout();});},{passive:true});
+  function view(name) { active = name === 'analysis'; if(active){queueMicrotask(layout);lastFrame=0;draw(true);} if (active && !raf) raf = requestAnimationFrame(frame); }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && active) { lastFrame = 0; draw(true);if (taskId) poll(taskId); if (!raf) raf = requestAnimationFrame(frame); } });
   $('office-show-output').onclick = () => window.Workbench.inspector(true);
   $('office-show-room').onclick = () => window.Workbench.inspector(false);
   window.addEventListener('pagehide', () => { if (raf) cancelAnimationFrame(raf); raf = 0; });
-  window.addEventListener('pageshow', () => { lastFrame = 0; if (active && !raf) raf = requestAnimationFrame(frame); });
+  window.addEventListener('pageshow', () => { lastFrame = 0;if(active)draw(true); if (active && !raf) raf = requestAnimationFrame(frame); });
+  window.addEventListener('focus',()=>{if(active&&!document.hidden)draw(true);});
   reset(); view(document.body.dataset.view || 'analysis');
-  return {reset, sync, view, disconnected: () => { connected = false; renderUI(); draw(true); }, snapshot: () => ({taskId, taskState, door: floor.door, actors: floor.actors.map(a => ({id: a.id, present: a.present, pose: a.pose, state: a.state, x: a.x, y: a.y, screen: PonyScreen.state(a, floor.time, connected), taskId: a.taskId, childId:a.childId, activity:a.activity}))})};
+  return {reset, sync, view, layout, hall, disconnected: () => { connected = false;hall?.disconnected(); renderUI(); draw(true); }, snapshot: () => ({taskId, taskState, door: floor.door, actors: floor.actors.map(a => ({id: a.id, present: a.present, pose: a.pose, state: a.state, x: a.x, y: a.y, screen: PonyScreen.state(a, floor.time, connected), taskId: a.taskId, childId:a.childId, activity:a.activity}))})};
 })();
 
 /* One structured request: a persistent composer and three inspector tabs. */
@@ -2001,7 +2196,8 @@ window.AnalysisInput = (() => {
   controls.append(data, session);
   const send = bar.querySelector('[type=submit]'); send.id = 'analysis-send'; send.textContent = '发送'; send.setAttribute('form', form.id);
   controls.append($('task-cancel'), send);
-  dock.append(composer, controls); document.body.append(dock);
+  dock.append($('conversation-thread'), composer, controls);
+  document.querySelector('.pony-office').append(dock);
   new MutationObserver(() => { dock.inert = form.inert; }).observe(form, {attributes:true, attributeFilter:['inert']});
   bar.remove();
   // Keep a form-owned submit target for native form semantics and existing automation.
@@ -2016,7 +2212,9 @@ window.AnalysisInput = (() => {
   });
   function viewport() {
     const view = window.visualViewport;
-    dock.style.bottom = Math.max(0, view ? innerHeight - view.height - view.offsetTop : 0) + 'px';
+    const inset = innerWidth <= 760 ? 8 : 20;
+    dock.style.bottom = Math.max(0, view ? innerHeight - view.height - view.offsetTop : 0) + inset + 'px';
+    window.PonyOffice?.layout();
   }
   window.visualViewport?.addEventListener('resize', viewport); window.visualViewport?.addEventListener('scroll', viewport);
   const invalid = (id, message) => {
@@ -2041,6 +2239,7 @@ window.AnalysisInput = (() => {
     }
     if ($('task-notify').checked && !$('task-recipient').checkValidity()) return invalid('task-recipient', '请填写有效的收件地址。');
     lastPrediction = prediction;
+    window.PonyOffice?.hall?.capture(input);
   }
   function update() {
     let prediction;
@@ -2049,6 +2248,7 @@ window.AnalysisInput = (() => {
     const label = ready ? '资料已准备' : prediction?.subject ? '有信息需要修正' : '填写分析资料';
     data.textContent = label; status.textContent = ready ? '已填写 · 可随时修改，发送时会再次校验。' : prediction?.subject ? '待修正 · 请核对预测与有效期。' : '未配置 · 首次分析需要填写预测信息。';
     session.textContent = $('conversation-id').value ? '当前分析会话' : '新分析会话';
+    window.ComposerControls?.update();
     autoSize();
   }
   function open(id = 'input') {
@@ -2064,8 +2264,8 @@ window.AnalysisInput = (() => {
     const root=document.documentElement, stage=document.querySelector('.office-stage');
     root.style.setProperty('--composer-height',dock.offsetHeight+'px');
     if(stage && document.body.dataset.view==='analysis') {
-      const top=stage.getBoundingClientRect().top+window.scrollY;
-      root.style.setProperty('--office-height',Math.max(280,innerHeight-dock.offsetHeight-top-16)+'px');
+      const top=stage.getBoundingClientRect().top;
+      root.style.setProperty('--office-height',Math.max(0,innerHeight-top)+'px');
     }
     viewport();
   }
@@ -2095,4 +2295,121 @@ window.AnalysisInput = (() => {
   document.body.classList.toggle('analysis-composer-visible', document.body.dataset.view === 'analysis');
   update();
   return {open, validate, observe, reset, update, layout};
+})();
+
+/* Composer tools use existing model, execution and mail authorization contracts. */
+window.ComposerControls = (() => {
+  const dock=$('analysis-composer'),toolbar=dock.querySelector('.analysis-composer-controls'),send=$('analysis-send'),message=$('conversation-message');
+  const icons={plus:'M12 5v14M5 12h14',shield:'M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6ZM9 12l2 2 4-4',mic:'M9 5a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0ZM5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8',arrow:'M12 19V5m-6 6 6-6 6 6',stop:'M6 6h12v12H6Z',chevron:'m8 10 4 4 4-4'};
+  const icon=name=>`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${icons[name]}"/></svg>`;
+  const button=(id,label,markup)=>{const b=document.createElement('button');b.id=id;b.type='button';b.className='composer-tool';b.setAttribute('aria-label',label);b.title=label;b.innerHTML=markup;return b;};
+  const left=document.createElement('div'),right=document.createElement('div');left.className='composer-tools-left';right.className='composer-tools-right';
+  const plus=$('analysis-data-open');plus.className='composer-tool composer-add';plus.onclick=null;
+  const permission=button('composer-permission','操作权限',icon('shield')+'<span></span>');
+  const model=button('composer-model','选择工作台默认模型','<span></span>'+icon('chevron'));
+  const effort=button('composer-effort','调整推理强度','<span></span>');
+  const voice=button('composer-voice','语音输入',icon('mic'));
+  voice.setAttribute('aria-pressed','false');
+  send.innerHTML=icon('arrow');send.className='composer-send';send.setAttribute('aria-label','发送消息');send.title='发送消息 · Enter';
+  const cancel=$('task-cancel');cancel.innerHTML=icon('stop');cancel.className='composer-tool';cancel.setAttribute('aria-label','停止任务');cancel.title='停止任务';
+  $('analysis-session-label').hidden=true;
+  left.append(plus,permission);right.append(model,effort,voice,cancel,send);toolbar.prepend(left);toolbar.append(right);
+  let active=null,trigger=null,saving=false,recognition=null,listening=false,flushEffort=null;
+  const panel=document.createElement('div');panel.className='composer-popover';panel.hidden=true;panel.id='composer-popover';panel.setAttribute('role','dialog');dock.append(panel);
+  const levels=['light','medium','high','extreme','ultra'],labels=['轻度','中','高','极高','Ultra'];
+  const effective=()=>$('task-effort').value||settings?.default_reasoning_effort||'high';
+  function close(focus=false){flushEffort?.();flushEffort=null;panel.hidden=true;trigger?.setAttribute('aria-expanded','false');if(focus)trigger?.focus();active=null;}
+  function row(label,callback,selected=false){const b=document.createElement('button');b.type='button';b.className='composer-menu-row';b.textContent=label;b.onclick=callback;if(selected){b.classList.add('selected');b.setAttribute('aria-current','true');}panel.append(b);return b;}
+  function title(text){const h=document.createElement('h3');h.textContent=text;panel.append(h);panel.setAttribute('aria-label',text);}
+  function note(text){const p=document.createElement('p');p.className='hint';p.textContent=text;panel.append(p);}
+  function show(kind,source){
+    if(active===kind){close();return;}
+    close();active=kind;trigger=source;panel.replaceChildren();panel.hidden=false;
+    panel.classList.toggle('composer-popover-left',kind==='add'||kind==='permission');
+    source.setAttribute('aria-expanded','true');
+    if(kind==='add'){
+      title('添加分析资料');
+      row('填写预测与客观事实',()=>{close();AnalysisInput.open('input');});
+      row('导入预测 JSON',()=>{close();AnalysisInput.open('input');$('prediction-import').click();});
+    }else if(kind==='permission'){
+      title('操作权限');
+      row('仅分析与生成报告',()=>{$('task-notify').checked=false;changed($('task-notify'));showPermission();},!$('task-notify').checked);
+      row('完成后发送授权邮件',()=>{$('task-notify').checked=true;changed($('task-notify'));showPermission();},$('task-notify').checked);
+      const label=document.createElement('label');label.className='field';label.textContent='收件地址';
+      const input=document.createElement('input');input.type='email';input.value=$('task-recipient').value;input.placeholder='授权清单内的邮箱';input.setAttribute('aria-label','授权收件地址');
+      input.oninput=()=>{$('task-recipient').value=input.value;changed($('task-recipient'));};label.append(input);panel.append(label);
+      note('邮件仅向设置中的授权地址投递，未授权地址不会发送。');
+    }else if(kind==='models'){
+      title('选择模型');note('更改工作台默认模型，用于后续分析。');
+      for(const p of profiles.filter(p=>p.enabled))row(p.name,()=>pickModel(p.id),p.id===settings?.default_model_id);
+      if(!profiles.some(p=>p.enabled))note('尚无已启用模型，请先配置模型。');
+      row('管理模型…',()=>{close();showView('settings');showPanel('models');});
+    }else{
+      title('推理强度');
+      const value=document.createElement('output');value.className='composer-effort-value';panel.append(value);
+      const slider=document.createElement('input');slider.type='range';slider.min='0';slider.max='4';slider.step='.001';slider.value=String(Math.max(0,levels.indexOf(effective())));slider.setAttribute('aria-label','推理强度');
+      let frame=0,dirty=false;
+      const index=()=>Math.round(Number(slider.value));
+      const paint=()=>{frame=0;value.textContent=labels[index()];slider.setAttribute('aria-valuetext',value.textContent);slider.style.setProperty('--effort-fill',Number(slider.value)*25+'%');};
+      const commit=()=>{
+        if(!dirty)return;dirty=false;
+        if(frame){cancelAnimationFrame(frame);frame=0;}
+        slider.value=String(index());paint();
+        const field=$('task-effort'),next=levels[index()];
+        if(field.value!==next){field.value=next;changed(field);}
+      };
+      // Native thumb movement remains continuous. Avoid form events, draft
+      // serialization and textarea layout while the pointer is moving.
+      slider.oninput=()=>{dirty=true;if(!frame)frame=requestAnimationFrame(paint);};
+      slider.onchange=commit;flushEffort=commit;
+      slider.onkeydown=event=>{
+        const direction={ArrowLeft:-1,ArrowDown:-1,PageDown:-1,ArrowRight:1,ArrowUp:1,PageUp:1}[event.key];
+        if(!direction&&!['Home','End'].includes(event.key))return;
+        event.preventDefault();slider.value=String(event.key==='Home'?0:event.key==='End'?4:Math.max(0,Math.min(4,index()+direction)));
+        dirty=true;commit();
+      };
+      paint();panel.append(slider);
+      const ticks=document.createElement('div');ticks.className='composer-effort-ticks';for(const text of labels){const span=document.createElement('span');span.textContent=text;ticks.append(span);}panel.append(ticks);
+      row('恢复默认档位',()=>{dirty=false;if(frame)cancelAnimationFrame(frame);flushEffort=null;$('task-effort').value='';changed($('task-effort'));close();});
+      note('强度影响分析步骤、调用预算与超时；模型原生推理由已配置映射决定。');
+    }
+    panel.querySelector('button, input')?.focus();
+  }
+  function showPermission(){active=null;show('permission',permission);}
+  function changed(field){field.dispatchEvent(new Event('input',{bubbles:true}));field.dispatchEvent(new Event('change',{bubbles:true}));update();}
+  async function pickModel(id){
+    if(saving)return;saving=true;const wasDisabled=send.disabled;send.disabled=true;
+    panel.querySelectorAll('button').forEach(b=>{b.disabled=true;});
+    try{const latest=await api('settings');await api('settings','PUT',{...latest,default_model_id:id});await refresh();close();}
+    catch(error){notice(error.message,true);panel.querySelectorAll('button').forEach(b=>{b.disabled=false;});}
+    finally{saving=false;send.disabled=wasDisabled;update();}
+  }
+  for(const [node,kind]of [[plus,'add'],[permission,'permission'],[model,'models'],[effort,'effort']]){
+    node.setAttribute('aria-haspopup','dialog');node.setAttribute('aria-controls',panel.id);node.setAttribute('aria-expanded','false');node.onclick=()=>show(kind,node);
+  }
+  document.addEventListener('pointerdown',event=>{if(active&&!panel.contains(event.target)&&!trigger?.contains(event.target))close();});
+  dock.addEventListener('keydown',event=>{if(event.key==='Escape'&&active){event.preventDefault();close(true);}});
+  const Speech=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!Speech){voice.disabled=true;voice.title='当前浏览器不支持语音输入';voice.setAttribute('aria-label',voice.title);}
+  else voice.onclick=()=>{
+    if(listening){recognition?.stop();return;}
+    const base=message.value;recognition=new Speech();recognition.lang='zh-CN';recognition.interimResults=true;
+    recognition.onstart=()=>{listening=true;voice.classList.add('listening');voice.setAttribute('aria-pressed','true');voice.title='停止语音输入';};
+    recognition.onresult=event=>{message.value=base+Array.from(event.results,result=>result[0].transcript).join('');message.dispatchEvent(new Event('input',{bubbles:true}));};
+    recognition.onerror=event=>notice(event.error==='not-allowed'?'请允许麦克风权限后重试。':'语音输入未完成，请重试或直接输入文字。',true);
+    recognition.onend=()=>{listening=false;voice.classList.remove('listening');voice.setAttribute('aria-pressed','false');voice.title='语音输入';};
+    try{recognition.start();}catch(error){notice('无法启动语音输入，请检查麦克风权限。',true);}
+  };
+  $('task-form').addEventListener('submit',()=>recognition?.stop(),true);
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)recognition?.stop();});
+  function update(){
+    plus.innerHTML=icon('plus');plus.setAttribute('aria-label','添加分析资料');plus.title=$('analysis-data-status').textContent;
+    permission.querySelector('span').textContent=$('task-notify').checked?'授权邮件':'仅分析';
+    const selected=profiles.find(p=>p.id===settings?.default_model_id);
+    model.querySelector('span').textContent=selected?.name||'选择模型';model.title=selected?`默认模型：${selected.name}`:'选择或配置分析模型';
+    effort.querySelector('span').textContent=labels[levels.indexOf(effective())]||'默认';
+    effort.title=`推理强度：${effort.textContent.trim()}`;
+  }
+  new MutationObserver(()=>{if(!document.body.classList.contains('analysis-composer-visible'))close();}).observe(document.body,{attributes:true,attributeFilter:['class']});
+  update();return {update,close};
 })();

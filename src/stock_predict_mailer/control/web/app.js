@@ -488,6 +488,7 @@ function renderDiscovery(data, s) {
 
 /* ---------- settings ---------- */
 function renderSettings() {
+  window.ComposerControls?.update();
   options($('default-model'), profiles, settings.default_model_id, '请选择默认模型');
   $('global-temperature').value = settings.global_temperature;
   $('default-effort').value = settings.default_reasoning_effort;
@@ -1922,6 +1923,9 @@ $('try-sample').onclick = async () => {
 /* ---------- boot ---------- */
 (async () => {
   try {
+    // The following bundle installs the workbench and composer. A fast local
+    // API must not finish boot before those scripts have executed.
+    if (document.readyState === 'loading') await new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, {once:true}));
     const initial = location.hash.replace('#', '');
     csrf = (await api('session')).csrf_token;
     await refresh();

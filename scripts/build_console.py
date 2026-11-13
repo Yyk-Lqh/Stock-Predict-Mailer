@@ -2,7 +2,7 @@
 from pathlib import Path
 
 WEB = Path(__file__).resolve().parents[1] / "src" / "stock_predict_mailer" / "control" / "web"
-MODULES = ("memory", "workspace", "knowledge", "pony-door", "pony-model", "pony-screen", "pony-reference", "pony-rig", "pony-children", "pony-progress", "pony-office", "analysis-input")
+MODULES = ("memory", "workspace", "knowledge", "pony-door", "pony-model", "pony-screen", "pony-reference", "pony-rig", "pony-children", "pony-progress", "hall-data", "hall-wall", "pony-office", "analysis-input", "composer-controls")
 
 
 def build():

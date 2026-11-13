@@ -12,11 +12,14 @@ window.PonyOffice = (() => {
     return node;
   };
   const office = document.createElement('section'); office.className = 'pony-office'; office.setAttribute('aria-label', '小马协作办公室');
+  const hallMode=PonyFloor.hall;let hall=null;
+  if(hallMode){office.classList.add('securities-hall');document.body.classList.add('securities-hall-view');office.setAttribute('aria-label','小马证券分析大厅');}
   office.innerHTML = `<div class="office-heading"><div><span class="eyebrow">AGENT OFFICE</span><h2>小马办公室</h2></div><span id="office-live" class="hint">等待分析任务</span></div><div class="office-mobile-tabs"><button type="button" id="office-show-room" aria-pressed="true">办公室</button><button type="button" id="office-show-output" aria-pressed="false">进度与报告</button></div><div class="office-stage"></div><div class="office-legend" aria-label="角色选择"></div><p class="office-footnote">围巾区分职责 · 游戏为空闲活动 · 点击角色查看真实进度</p>`;
   $('analysis-title').textContent = '分析工作台';
   $('analysis-title').closest('.page-head').after(office);
   $('workbench-intro').classList.add('office-welcome');
-  const svg = el('svg', {viewBox: '-65 0 1025 620', role: 'group', 'aria-label': '六个固定工位，小马通过门洞进出办公室'});
+  const svg = el('svg', {viewBox: '-65 0 1025 700', role: 'group', 'aria-label': '六个固定工位，小马通过门洞进出办公室'});
+  if(hallMode)svg.setAttribute('viewBox','-125 0 1180 700');
   svg.innerHTML = `<defs>
     <filter id="pony-shadow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="5"/></filter>
     <linearGradient id="pony-desk" x2="0" y2="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#eceeed"/></linearGradient>
@@ -24,7 +27,7 @@ window.PonyOffice = (() => {
     <radialGradient id="pony-daylight" cx=".2" cy=".12" r="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#e9eceb"/></radialGradient>
     <clipPath id="pony-screen-clip"><rect x="-48" y="-116" width="96" height="58" rx="2"/></clipPath>
     <clipPath id="pony-portal-clip" clipPathUnits="userSpaceOnUse"><path d="M8 436H74V552H8ZM80 0H960V620H80Z"/></clipPath>
-    </defs><rect x="-65" width="1025" height="620" rx="12" class="office-floor"/>
+    </defs><rect x="-65" width="1025" height="700" rx="12" class="office-floor"/>
     <path d="M64 580H910" class="office-floor-line"/><text x="76" y="603" class="office-floor-caption">预测 · 证据 · 分析 · 交付</text>`;
   const door = el('g', {transform: `translate(0 ${PonyDoor.frame.y})`}, '<ellipse cx="40" cy="128" rx="46" ry="7" fill="#58636b" opacity=".12"/><rect x="1" y="0" width="79" height="128" rx="4" class="office-door-frame"/><rect x="8" y="6" width="66" height="116" rx="1" fill="#6e7d84"/><g id="office-door-leaf" class="office-door-leaf"><path class="office-door-panel" fill="#e4e8e6"/><path class="office-door-inset" fill="#f5f6f2" stroke="#cbd2d0"/><g class="office-door-handle" data-door-side="outside"><circle r="2.5" fill="#b1996a"/><path d="M0 0H7" stroke="#9b8256" stroke-width="2.3" stroke-linecap="round"/></g><g class="office-door-handle" data-door-side="inside"><circle r="2.5" fill="#b1996a"/><path d="M0 0H-7" stroke="#9b8256" stroke-width="2.3" stroke-linecap="round"/></g></g><text x="40" y="147" text-anchor="middle" class="office-floor-caption">出入口</text>');
   svg.append(door);
@@ -37,12 +40,14 @@ window.PonyOffice = (() => {
     selected = id;
     if (id === 'assistant') { window.AnalysisInput?.open('input'); return; }
     for (const [key, button] of buttons) button.setAttribute('aria-pressed', String(key === id));
+    if(hallMode)window.AnalysisInput?.open('progress');
     window.Workbench.inspector(true);
     $('office-roles').querySelector(`[data-office-role="${id}"]`)?.scrollIntoView({block: 'nearest'});
     renderUI();
   }
   for (const role of roles) {
     const desk = el('g', {transform: `translate(${role.x} ${role.y})`, 'data-office-desk':role.id}, `
+      <g class="office-table" transform="scale(${PonyFloor.furniture.scaleX} ${PonyFloor.furniture.scaleY})">
       <ellipse cx="3" cy="68" rx="112" ry="18" fill="#58616a" opacity=".12" filter="url(#pony-shadow)"/>
       <path d="M-99-25L-95 64H-88L-85-25M85-25L89 64H96L101-25" fill="#c9d0d1"/>
       <path d="M-96 60H-88V65H-96M89 60H97V65H89" fill="#9da9ac"/>
@@ -50,7 +55,7 @@ window.PonyOffice = (() => {
       <path d="M60 11H94M60 33H94" stroke="#c8d0ce"/><path d="M73 0H82M73 22H82" stroke="#acb7b6" stroke-width="2" stroke-linecap="round"/>
       <path d="M-110 1H110V10H-110Z" fill="#d6dddb"/><path d="M-98-53H98L110 1H-110Z" fill="url(#pony-desk)" stroke="#e3e7e5"/>
       <path d="M-108 2H108" stroke="#fff" stroke-width="1.5"/>
-      <ellipse cx="0" cy="-25" rx="28" ry="5" fill="#a9b5b8" opacity=".15"/>
+      </g><ellipse cx="0" cy="-25" rx="28" ry="5" fill="#a9b5b8" opacity=".15"/>
       <path d="M-6-55H6L9-27H-9Z" fill="#c2cbcd"/><path d="M-21-28H21L27-23H-27Z" fill="#d4dbdc" stroke="#bbc6c9" stroke-width=".6"/>
       <rect x="35" y="-13" width="28" height="20" rx="4" fill="#dce3e3" stroke="#cdd5d5" stroke-width=".6"/>
       <g class="office-keyboard"><path d="M-44-10H35L40 4H-48Z" fill="#c6d1d5" stroke="#a6b5bc" stroke-width=".7"/>
@@ -66,8 +71,14 @@ window.PonyOffice = (() => {
       <path d="M0 63V92M0 91L-23 103M0 91L23 103M0 91V105" stroke="#aebbbf" stroke-width="4" stroke-linecap="round"/>
       <circle cx="-23" cy="104" r="3" fill="#76898e"/><circle cx="23" cy="104" r="3" fill="#76898e"/><circle cx="0" cy="106" r="3" fill="#76898e"/>
       <path d="M-27 37Q0 28 27 37L29 54Q0 65-29 54Z" fill="url(#pony-chair)" stroke="#c5cfcf" stroke-width=".7"/>
-      <text x="0" y="-139" text-anchor="middle" class="office-desk-name">${role.name}</text><circle cx="-63" cy="-143" r="4" fill="${role.color}"/>`);
+      <text x="0" y="-143" text-anchor="middle" class="office-desk-name">${role.name}</text><circle cx="-63" cy="-146" r="4" fill="${role.color}"/>`);
     desks.set(role.id, desk); world.append(desk);
+    if(hallMode&&role.station){
+      const aux=el('g',{'class':'hall-aux-screen',transform:'translate(-82 -47)'},'<path d="M10 20V28H2H22" stroke="#9daeb2" fill="none"/><rect width="24" height="24" rx="2" fill="#9cabb0"/><rect class="office-monitor" x="1" y="1" width="22" height="21" rx="1" fill="#10232f"/><text x="3" y="9" fill="#9adbe8" font-size="4.5">状态</text><text class="hall-aux-value" x="3" y="17" fill="#d5e5ea" font-size="4.5">待命</text>');desk.append(aux);
+      desk.setAttribute('role','button');desk.setAttribute('tabindex','0');desk.setAttribute('aria-label',role.name+'交易席位，查看任务详情');
+      desk.addEventListener('click',()=>choose(role.id));desk.addEventListener('keydown',event=>{if(['Enter',' '].includes(event.key)){event.preventDefault();choose(role.id);}});
+      const plate=el('g',{'class':'hall-seat-plate',transform:'translate(-54 18)'},`<rect width="108" height="15" rx="2" fill="#f1f5f5"/><circle cx="7" cy="7.5" r="2" fill="${role.color}"/><text x="15" y="10" font-size="6.5" fill="#51636b">${role.name}</text><text class="hall-seat-state" x="101" y="10" text-anchor="end" font-size="5.5" fill="#667b85">待命</text>`);desk.append(plate);
+    }
     const chair=el('g',{transform:`translate(${role.x} ${role.y})`,'data-office-chair':role.id},'<path d="M-28 36Q0 32 28 36L31 77Q0 86-31 77Z" fill="url(#pony-chair)" stroke="#cbd4d3" stroke-width=".8"/><path d="M-26 40Q0 36 26 40" stroke="#fff" stroke-width="1.5" fill="none"/><path d="M-31 77Q0 86 31 77" stroke="#b9c5c5" stroke-width="1.2" fill="none"/>');
     chairs.set(role.id,chair);world.append(chair);
     if (!role.station) desk.setAttribute('display', 'none');
@@ -83,9 +94,16 @@ window.PonyOffice = (() => {
     screen.dataset.officeRole=role.id;
     screen.replaceChildren(); const screenTitle = el('title'); desk.prepend(screenTitle);
     screens.set(role.id, {node:screen, title:screenTitle, chart:desk.querySelector('.office-chart-screen'), monitor:desk.querySelector('.office-monitor')});
+    if(hallMode&&role.id==='charts'){const chart=desk.querySelector('.office-chart-screen');for(const [key,value]of Object.entries({x:-44,y:-104,width:88,height:36}))chart.setAttribute(key,value);}
     const button = document.createElement('button'); button.type = 'button'; button.className = 'office-role-button';
     button.textContent = role.name; button.style.setProperty('--role-color', role.color); button.setAttribute('aria-pressed', 'false'); button.onclick = () => choose(role.id);
     buttons.set(role.id, button); office.querySelector('.office-legend').append(button);
+  }
+  if(hallMode){
+    const assistant=roles.find(r=>r.id==='assistant');
+    const reception=el('g',{transform:`translate(${assistant.x} ${assistant.y+70})`,'class':'hall-reception',role:'button',tabindex:'0','aria-label':'资料接待，打开分析输入'},'<ellipse cx="0" cy="12" rx="34" ry="7" fill="#708286" opacity=".1"/><path d="M-28-22H28V10H-28Z" fill="#e1e9e9"/><path d="M-32-24H32V-19H-32Z" fill="#fdfefd"/><text x="0" y="-5" text-anchor="middle" font-size="7" fill="#536d77">资料接待</text>');
+    reception.addEventListener('click',()=>choose('assistant'));reception.addEventListener('keydown',event=>{if(['Enter',' '].includes(event.key))choose('assistant');});svg.insertBefore(reception,world);
+    hall=PonyHall.mount(office,choose);
   }
   const portal = document.createElement('div'); portal.className = 'sidebar-office-door';
   portal.innerHTML = '<span class="sidebar-door-art" aria-hidden="true"><i></i></span><span>协作通道<small>子 Agent 由此进出</small></span>';
@@ -117,7 +135,7 @@ window.PonyOffice = (() => {
   function reset(id = null, restoring = true) {
     taskId = id; replay = restoring; seen = new Set(); taskState = id ? 'submitted' : 'idle'; connected = true; floor.reset();
     childProgress.reset(); taskProgress.reset();
-    terminalFeedback='';
+    terminalFeedback='';hall?.reset();
     for (const desk of desks.values()) {
       const chart=desk.querySelector('.office-chart-screen');
       chart.setAttribute('visibility','hidden');chart.removeAttribute('href');
@@ -168,23 +186,28 @@ window.PonyOffice = (() => {
     }
     if (replay) for (const actor of floor.actors) if (!actor.resident && actor.state !== 'running') { actor.present = false; actor.pose = 'absent'; }
     if (events && events.length < 100) replay = false;
+    hall?.sync(task,events||[],floor.actors);
     renderUI(); draw(true);
   }
   function draw(force = false) {
     const refreshScreen = force || floor.time - lastScreen > .16 || lastScreen > floor.time;
     if (refreshScreen) lastScreen = floor.time;
-    const nodes = [];
+    const nodes = [],screenNow=new Date();
     for (const actor of floor.actors) {
       if (actor.state === 'running' && actor.startedAt && Number.isFinite(Date.parse(actor.startedAt))) actor.elapsed = Math.max(0,(Date.now()-Date.parse(actor.startedAt))/1000);
       const desk = desks.get(actor.id), pony = ponies.get(actor.id), rig = rigs.get(actor.id), screen = screens.get(actor.id);
       const working = connected && actor.state === 'running' && actor.pose === 'seated' && !['completed', 'failed', 'canceled'].includes(taskState);
+      const chartActive=hall?['task','result'].includes(PonyScreen.state(actor,floor.time,connected)):working;
       if (refreshScreen) {
-        const display = PonyScreen.render(actor, floor.time, connected);
+        const display = PonyScreen.render(actor, floor.time, connected,screenNow);
+        if(hall&&['task','disconnected','result'].includes(display.mode)&&hall.data.task){display.markup=`<g transform="translate(-48 -116)"><rect width="96" height="58" rx="2" fill="#10232f"/>${hall.screen(actor,display.mode)}</g>`;}
+        if(hall&&actor.id==='charts'&&chartActive&&screen.chart.hasAttribute('href'))display.markup='<g transform="translate(-48 -116)"><rect width="96" height="58" rx="2" fill="#10232f"/><text x="5" y="9" fill="#9adbe8" font-size="7">图表生成 · 任务产出</text><text x="5" y="55" fill="#cbdce5" font-size="5">完整图表与数据来源见报告</text></g>';
         screen.node.setAttribute('visibility', ['off','sleep'].includes(display.mode) ? 'hidden' : 'visible');
         screen.node.dataset.mode = display.mode; screen.title.textContent = actor.name + ' · ' + display.title;
         screen.node.innerHTML = display.markup;
+        if(hall){const states={running:'执行中',completed:'已完成',failed:'失败',idle:'待命',pending:'等待',canceled:'取消'};const label=states[actor.state]||actor.state;desk.querySelector('.hall-aux-value')?.replaceChildren(document.createTextNode(label));desk.querySelector('.hall-seat-state')?.replaceChildren(document.createTextNode(label));}
       }
-      screen.chart.setAttribute('visibility', actor.id === 'charts' && working && screen.chart.hasAttribute('href') ? 'visible' : 'hidden');
+      screen.chart.setAttribute('visibility', actor.id === 'charts' && chartActive && screen.chart.hasAttribute('href') ? 'visible' : 'hidden');
       nodes.push({node: desk, depth: actor.deskY + 25});
       nodes.push({node: chairs.get(actor.id), depth: actor.deskY + 79});
       const seated = ['seated', 'sitting', 'rising'].includes(actor.pose);
@@ -192,6 +215,7 @@ window.PonyOffice = (() => {
       const portal=PonyDoor.portal(actor,motion,floor.door),avatar=avatars.get(actor.id);
       pony.setAttribute('display',portal.visible?'inline':'none');pony.setAttribute('tabindex',portal.visible?'0':'-1');
       pony.setAttribute('aria-hidden',String(!portal.visible));pony.dataset.portalState=portal.state;
+      if(!actor.present){nodes.push({node:avatar,depth:actor.y});continue;}
       if(portal.clipped)avatar.setAttribute('clip-path','url(#pony-portal-clip)');else avatar.removeAttribute('clip-path');
       const transition = Math.min(1, (motion?.elapsed || 0) / (actor.pose === 'rising' ? .55 : .7));
       const sit = PonyRig.smooth(actor.pose === 'seated' ? 1 : actor.pose === 'sitting' ? transition : actor.pose === 'rising' ? 1-transition : 0);
@@ -230,7 +254,7 @@ window.PonyOffice = (() => {
     const visibleSide=operator?.doorAction.side||(floor.doorDirection==='enter'?'outside':'inside');
     for(const handle of door.querySelectorAll('.office-door-handle')) {
       const p=geometry.handle(handle.dataset.doorSide);
-      handle.setAttribute('transform',`translate(${p.x} ${p.y-PonyDoor.frame.y}) rotate(${operator?.doorAction.pressed?-12:0})`);
+      handle.setAttribute('transform',`translate(${p.x-PonyDoor.frame.x} ${p.y-PonyDoor.frame.y}) rotate(${operator?.doorAction.pressed?-12:0})`);
       handle.setAttribute('opacity',handle.dataset.doorSide===visibleSide?'1':'0');
     }
     const passing=floor.actors.some(a=>PonyDoor.portal(a,floor.motion(a.id),floor.door).clipped);
@@ -252,15 +276,30 @@ window.PonyOffice = (() => {
       const value=actor.deviceBlend||0, delta=target-value;
       actor.deviceBlend=value+Math.sign(delta)*Math.min(Math.abs(delta),dt*1.25);
     }
-    draw(); if (now - lastUI > 450) { renderUI(); lastUI = now; }
+    draw();hall?.tick(now); if (now - lastUI > 450) { renderUI(); lastUI = now; }
     raf = requestAnimationFrame(frame);
   }
-  function view(name) { active = name === 'analysis'; if (active && !raf) raf = requestAnimationFrame(frame); }
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && active) { lastFrame = 0; if (taskId) poll(taskId); if (!raf) raf = requestAnimationFrame(frame); } });
+  function layout(){
+    if(document.body.dataset.view!=='analysis')return;
+    const matrix=svg.getScreenCTM();if(!matrix||matrix.a<=0||matrix.d<=0)return;
+    const left=innerWidth<=760?12:16,bottom=innerWidth<=760?8:20;
+    const edge=document.getElementById('analysis-composer')?.getBoundingClientRect().bottom||innerHeight-bottom;
+    const x=(left-matrix.e)/matrix.a,y=(edge-matrix.f)/matrix.d-PonyDoor.frame.height;
+    floor.relocateDoor(x,y);
+    const transform=`translate(${x} ${y})`;door.setAttribute('transform',transform);frontDoor.setAttribute('transform',transform);
+    svg.querySelector('#pony-portal-clip path').setAttribute('d',`M${x+8} ${y+6}H${x+74}V${y+122}H${x+8}ZM${x+80} 0H960V${Math.max(700,y+128)}H${x+80}Z`);
+    const gutter=left+(115+56)*matrix.a+16+'px',root=document.documentElement;
+    if(root.style.getPropertyValue('--door-gutter')!==gutter)root.style.setProperty('--door-gutter',gutter);
+  }
+  let layoutFrame=0;
+  office.querySelector('.office-stage').addEventListener('scroll',()=>{if(!layoutFrame)layoutFrame=requestAnimationFrame(()=>{layoutFrame=0;layout();});},{passive:true});
+  function view(name) { active = name === 'analysis'; if(active){queueMicrotask(layout);lastFrame=0;draw(true);} if (active && !raf) raf = requestAnimationFrame(frame); }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && active) { lastFrame = 0; draw(true);if (taskId) poll(taskId); if (!raf) raf = requestAnimationFrame(frame); } });
   $('office-show-output').onclick = () => window.Workbench.inspector(true);
   $('office-show-room').onclick = () => window.Workbench.inspector(false);
   window.addEventListener('pagehide', () => { if (raf) cancelAnimationFrame(raf); raf = 0; });
-  window.addEventListener('pageshow', () => { lastFrame = 0; if (active && !raf) raf = requestAnimationFrame(frame); });
+  window.addEventListener('pageshow', () => { lastFrame = 0;if(active)draw(true); if (active && !raf) raf = requestAnimationFrame(frame); });
+  window.addEventListener('focus',()=>{if(active&&!document.hidden)draw(true);});
   reset(); view(document.body.dataset.view || 'analysis');
-  return {reset, sync, view, disconnected: () => { connected = false; renderUI(); draw(true); }, snapshot: () => ({taskId, taskState, door: floor.door, actors: floor.actors.map(a => ({id: a.id, present: a.present, pose: a.pose, state: a.state, x: a.x, y: a.y, screen: PonyScreen.state(a, floor.time, connected), taskId: a.taskId, childId:a.childId, activity:a.activity}))})};
+  return {reset, sync, view, layout, hall, disconnected: () => { connected = false;hall?.disconnected(); renderUI(); draw(true); }, snapshot: () => ({taskId, taskState, door: floor.door, actors: floor.actors.map(a => ({id: a.id, present: a.present, pose: a.pose, state: a.state, x: a.x, y: a.y, screen: PonyScreen.state(a, floor.time, connected), taskId: a.taskId, childId:a.childId, activity:a.activity}))})};
 })();

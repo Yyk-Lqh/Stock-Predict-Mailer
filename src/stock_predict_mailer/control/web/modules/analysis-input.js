@@ -30,7 +30,8 @@ window.AnalysisInput = (() => {
   controls.append(data, session);
   const send = bar.querySelector('[type=submit]'); send.id = 'analysis-send'; send.textContent = '发送'; send.setAttribute('form', form.id);
   controls.append($('task-cancel'), send);
-  dock.append(composer, controls); document.body.append(dock);
+  dock.append($('conversation-thread'), composer, controls);
+  document.querySelector('.pony-office').append(dock);
   new MutationObserver(() => { dock.inert = form.inert; }).observe(form, {attributes:true, attributeFilter:['inert']});
   bar.remove();
   // Keep a form-owned submit target for native form semantics and existing automation.
@@ -45,7 +46,9 @@ window.AnalysisInput = (() => {
   });
   function viewport() {
     const view = window.visualViewport;
-    dock.style.bottom = Math.max(0, view ? innerHeight - view.height - view.offsetTop : 0) + 'px';
+    const inset = innerWidth <= 760 ? 8 : 20;
+    dock.style.bottom = Math.max(0, view ? innerHeight - view.height - view.offsetTop : 0) + inset + 'px';
+    window.PonyOffice?.layout();
   }
   window.visualViewport?.addEventListener('resize', viewport); window.visualViewport?.addEventListener('scroll', viewport);
   const invalid = (id, message) => {
@@ -70,6 +73,7 @@ window.AnalysisInput = (() => {
     }
     if ($('task-notify').checked && !$('task-recipient').checkValidity()) return invalid('task-recipient', '请填写有效的收件地址。');
     lastPrediction = prediction;
+    window.PonyOffice?.hall?.capture(input);
   }
   function update() {
     let prediction;
@@ -78,6 +82,7 @@ window.AnalysisInput = (() => {
     const label = ready ? '资料已准备' : prediction?.subject ? '有信息需要修正' : '填写分析资料';
     data.textContent = label; status.textContent = ready ? '已填写 · 可随时修改，发送时会再次校验。' : prediction?.subject ? '待修正 · 请核对预测与有效期。' : '未配置 · 首次分析需要填写预测信息。';
     session.textContent = $('conversation-id').value ? '当前分析会话' : '新分析会话';
+    window.ComposerControls?.update();
     autoSize();
   }
   function open(id = 'input') {
@@ -93,8 +98,8 @@ window.AnalysisInput = (() => {
     const root=document.documentElement, stage=document.querySelector('.office-stage');
     root.style.setProperty('--composer-height',dock.offsetHeight+'px');
     if(stage && document.body.dataset.view==='analysis') {
-      const top=stage.getBoundingClientRect().top+window.scrollY;
-      root.style.setProperty('--office-height',Math.max(280,innerHeight-dock.offsetHeight-top-16)+'px');
+      const top=stage.getBoundingClientRect().top;
+      root.style.setProperty('--office-height',Math.max(0,innerHeight-top)+'px');
     }
     viewport();
   }

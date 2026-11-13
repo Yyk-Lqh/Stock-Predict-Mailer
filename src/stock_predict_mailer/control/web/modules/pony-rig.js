@@ -74,8 +74,10 @@ globalThis.PonyRig = (() => {
       return [name,{hip,angle,length:34,hoof:{x:hip.x-Math.sin(radians)*34,y:hip.y+Math.cos(radians)*34}}];
     }));
   }
+  const contourCache=new WeakMap();
   function contour(points) {
     if(!points?.length)return '';
+    if(contourCache.has(points))return contourCache.get(points);
     const count=points.length/2,at=i=>{i=(i+count)%count;return{x:points[i*2],y:points[i*2+1]};};
     const pair=p=>`${p.x.toFixed(2)} ${p.y.toFixed(2)}`;
     let d=`M${pair(at(0))}`;
@@ -83,7 +85,7 @@ globalThis.PonyRig = (() => {
       const a=at(i-1),b=at(i),c=at(i+1),e=at(i+2);
       d+=`C${pair({x:b.x+(c.x-a.x)*.12,y:b.y+(c.y-a.y)*.12})} ${pair({x:c.x-(e.x-b.x)*.12,y:c.y-(e.y-b.y)*.12})} ${pair(c)}`;
     }
-    return d+'Z';
+    const path=d+'Z';contourCache.set(points,path);return path;
   }
   const compound = shapes => (shapes||[]).map(contour).join('');
   const tween = (a,b,t) => a.length===b.length?a.map((n,i)=>mix(n,b[i],t)):(t<.5?a:b);
@@ -127,7 +129,6 @@ globalThis.PonyRig = (() => {
     return `<title>${role.name}</title><defs>
       <linearGradient id="${key}-cloth" x1="0" y1="0" x2=".15" y2="1"><stop stop-color="${shade(role.color,.12)}"/><stop offset=".35" stop-color="${role.color}"/><stop offset="1" stop-color="${shade(role.color,-.18)}"/></linearGradient>
       <pattern id="${key}-weave" width=".6" height=".7" patternUnits="userSpaceOnUse"><path d="M0 .12H.6M.16 0V.7" stroke="#fff" stroke-opacity=".08" stroke-width=".1"/><path d="M0 .45H.6M.46 0V.7" stroke="#000" stroke-opacity=".09" stroke-width=".1"/></pattern>
-      <filter id="${key}-fabric" x="-5%" y="-5%" width="110%" height="110%" color-interpolation-filters="sRGB"><feTurbulence type="fractalNoise" baseFrequency="1.2" numOctaves="3" seed="7" result="grain"/><feColorMatrix in="grain" type="saturate" values="0"/><feComponentTransfer result="fiber"><feFuncR type="linear" slope=".6" intercept=".65"/><feFuncG type="linear" slope=".6" intercept=".65"/><feFuncB type="linear" slope=".6" intercept=".65"/><feFuncA type="table" tableValues="1 1"/></feComponentTransfer><feBlend in="SourceGraphic" in2="fiber" mode="multiply"/><feComposite in2="SourceGraphic" operator="in"/></filter>
       <mask id="${key}-cloth-mask" maskUnits="userSpaceOnUse" x="-90" y="-160" width="180" height="180"><path class="pony-cloth-mask" fill="#fff" stroke="#fff" stroke-width=".5"/><path class="pony-fringe-cuts" fill="#000"/></mask>
       <mask id="${key}-neck-mask" maskUnits="userSpaceOnUse" x="-90" y="-160" width="180" height="180"><rect x="-20" y="-82" width="40" height="34" fill="#fff"/><path class="pony-neck-anatomy" fill="#fff" stroke="#fff" stroke-width="3.2" stroke-linejoin="round"/></mask>
       <clipPath id="${key}-eye-clip"><path class="pony-eye-clip"/></clipPath>
@@ -142,7 +143,8 @@ globalThis.PonyRig = (() => {
         <g class="pony-front-head" opacity="0" transform="scale(.9 1)"><path class="pony-front-profile" fill="#000"/><g class="pony-front-eyes"><path class="pony-front-white" fill="#fff"/><path class="pony-front-pupil" fill="#000" clip-path="url(#${key}-eye-clip)"/></g></g>
         <g class="pony-seated-head" opacity="0"><path class="pony-seated-profile" fill="#000"/><path class="pony-sleep-lids" fill="#fff"/></g>
         <path class="pony-fringe-backing" fill="#050505" stroke="#050505" stroke-width=".2"/>
-        <g class="pony-collar" filter="url(#${key}-fabric)" mask="url(#${key}-cloth-mask)"><path class="pony-cloth-shape" fill="url(#${key}-cloth)" stroke="${role.color}" stroke-width=".5" stroke-linejoin="round"/><path class="pony-cloth-weave" fill="url(#${key}-weave)"/></g>
+        <!-- One role color under a neutral weave; no luminance/noise color filter. -->
+        <g class="pony-collar" mask="url(#${key}-cloth-mask)"><path class="pony-cloth-shape" fill="${role.color}" stroke="${role.color}" stroke-width=".5" stroke-linejoin="round"/><path class="pony-cloth-weave" fill="url(#${key}-weave)"/></g>
         <g class="pony-sleep-symbols" opacity="0" fill="#515151" font-family="sans-serif"><text x="32" y="-106" font-size="7">z</text><text x="40" y="-111" font-size="9">Z</text><text x="50" y="-117" font-size="11">Z</text></g>
       </g>`;
   }
@@ -156,7 +158,7 @@ globalThis.PonyRig = (() => {
     }]));
     return rig;
   }
-  const attr=(node,name,value)=>node.setAttribute(name,String(value));
+  const attr=(node,name,value)=>{value=String(value);if(node.getAttribute(name)!==value)node.setAttribute(name,value);};
   function paintPose(rig,pose) {
     // Reconstruct the neck hidden by the scarf. Constrain overlap to nearby
     // anatomy so cloth edges against open background retain their silhouette.

@@ -14,7 +14,7 @@ for(let i=0;i<60*seconds;i++) {
     if(a.present && a.pose==='seated') { a.idleClock=(a.idleClock||0)+1/60; a.activity=(a.seed+Math.floor(a.idleClock/32))%5; }
     modes.add(screen.state(a,floor.time));
     if(a.present) assert.notEqual(screen.state(a,floor.time),'off','inside monitor stays on');
-    if(a.present && a.x>-30 && a.x<25) { assert.equal(floor.door,1,'full-body threshold passage needs open door'); crossings++; }
+    if(a.present && context.PonyDoor.portal(a,floor.motion(a.id),floor.door).clipped) { assert.equal(floor.door,1,'full-body threshold passage needs open door'); crossings++; }
   }
   const visible=floor.actors.filter(a=>a.present);
   for(let x=0;x<visible.length;x++) for(let y=x+1;y<visible.length;y++) assert.ok(distance(visible[x],visible[y])>=radius*2+2.9,'no overlap during idle visits');

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
+from stock_predict_mailer.control.market_feed import MarketFeed
 from stock_predict_mailer.control.server import make_server
 from test_cleaning_agent import RELATION, FakeCleaner, candidate
 
@@ -21,7 +22,7 @@ def main():
     args = parser.parse_args()
     stopped = threading.Event()
     with tempfile.TemporaryDirectory(prefix="console-browser-") as folder:
-        server = make_server(Path(folder), args.port, Fernet.generate_key())
+        server = make_server(Path(folder), args.port, Fernet.generate_key(), MarketFeed(fetchers=()))
         server.engine.knowledge.cleaner = FakeCleaner([candidate(RELATION, valid_from="2026-01-01")])
 
         def worker():

@@ -1140,6 +1140,14 @@ body[data-view="analysis"].inspector-visible #analysis-composer { left: var(--do
 
 /* Desktop securities hall: a single panoramic terminal over ordered seats. */
 @media (min-width: 761px) {
+  .mail-recipients-dialog { width: min(560px, calc(100vw - 48px)); max-height: 80dvh; overflow: auto; padding: 28px; border: 0; border-radius: 18px; background: var(--surface-2); color: var(--ink); box-shadow: 0 18px 90px #0004; }
+  .mail-recipients-dialog::backdrop { background: #14232f55; backdrop-filter: blur(3px); }
+  .mail-recipients-dialog h2 { margin: 0 0 12px; font-size: 21px; }
+  .mail-recipient-row { display: flex; gap: 10px; align-items: center; margin-block: 10px; }
+  .mail-recipient-row input { flex: 1; min-width: 0; background: var(--surface); color: var(--ink); padding: 10px 12px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--rule-strong); }
+  #mail-recipients-count { color: var(--ink-3); font-size: 12px; }
+}
+@media (min-width: 761px) {
   .securities-hall { --hall-wall-height: 218px; --market-up: #ee7a7e; --market-down: #64c5a2; }
   .securities-hall[data-market-palette="international"] { --market-up: #64c5a2; --market-down: #ee7a7e; }
   body[data-view="analysis"] .securities-hall .office-stage { padding-top: calc(var(--hall-wall-height) + 30px); }

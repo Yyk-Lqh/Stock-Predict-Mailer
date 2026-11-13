@@ -55,7 +55,7 @@ const roles = {main: '主 Agent', prediction: '预测分析', risk: '风险分�
 const TASK_STATE = {submitted: '已提交', working: '运行中', completed: '已完成', failed: '失败', canceled: '已取消'};
 const MAIL_STATE = {
   not_requested: '未请求通知', simulated: '模拟投递', submitted: '已提交服务器', retry: '等待重试',
-  not_due: '等待到期', failed: '投递失败', uncertain: '结果未知', pending: '待发送', sending: '发送中'
+  not_due: '等待到期', failed: '投递失败', uncertain: '结果未知', pending: '待发送', sending: '发送中', partial: '部分投递完成，查看逐邮箱结果'
 };
 /* 失败任务的解释表：先说人话，再说下一步可点的动作，最后才给错误码。
    宁可少写几条，也不要为了覆盖全部错误码而编造不确定的原因。 */
@@ -157,6 +157,7 @@ const ERROR_HELP = {
   }
 };
 const MAIL_NOTE = {
+  partial: '各邮箱结果不同，请查看下方逐地址回执；结果未知的邮件不会自动重发。',
   simulated: '文件写入本地目录，不代表对方收到。',
   submitted: '邮件服务器或工具已接受，不保证最终送达。',
   retry: '会在到期后重试；失败次数耗尽才会转为失败。',
@@ -1416,7 +1417,7 @@ function renderReport(task) {
     kv3.className = 'kv';
     for (const [key, value] of [
       ['状态', `${MAIL_STATE[result.mail.status] || result.mail.status}（${result.mail.status}）`],
-      ['收件人', result.mail.recipient || taskBrief(task).recipient || '—'],
+      ['收件人', result.mail.recipients?.join('、') || result.mail.recipient || taskBrief(task).recipient || '—'],
       ['尝试次数', String(result.mail.attempts ?? '—')],
       ['下一步', MAIL_NOTE[result.mail.status] || '未知状态，按原始状态码处理，不要假定成功。']
     ]) {
@@ -1424,7 +1425,8 @@ function renderReport(task) {
       text(kv3, 'dd', value);
     }
     mail.append(kv3);
-    if (result.mail.status === 'uncertain') {
+    for(const delivery of result.mail.deliveries||[])text(mail,'p',`${delivery.recipient}：${MAIL_STATE[delivery.status]||delivery.status}${delivery.error?' · '+delivery.error:''}`,'small');
+    if (result.mail.status === 'uncertain' && !result.mail.deliveries) {
       text(mail, 'p', '确认后只更新回执状态，不会触发重发；要重发请重新提交一次任务。', 'hint mt-10');
       const actions = document.createElement('div');
       actions.className = 'actions mt-10';
@@ -1678,7 +1680,8 @@ $('task-form').onsubmit = async event => {
       if (remember.length) request.remember = remember;
     }
     if (window.KnowledgeUI) Object.assign(request, window.KnowledgeUI.selection());
-    const task = await api('tasks', 'POST', {...request, notify: $('task-notify').checked, recipient: $('task-recipient').value || null});
+    const recipients=window.MailRecipients?.values();
+    const task = await api('tasks', 'POST', {...request, notify: $('task-notify').checked, recipient: recipients?.[0] || $('task-recipient').value || null, ...(recipients?.length>1?{recipients}:{})});
     if (conversationId !== $('conversation-id').value) { notice('任务已提交，可从对应会话查看。'); return; }
     currentTask = task.id;
     window.AnalysisInput?.open('progress');
@@ -1732,7 +1735,7 @@ function taskBrief(task) {
     direction: meta.direction || p.direction || '',
     horizon: meta.horizon || p.horizon || null,
     notify: meta.notify ?? Boolean(data?.mail),
-    recipient: meta.recipient || '',
+    recipient: meta.recipients?.join(', ') || meta.recipient || '',
     conversation_id: meta.conversation_id || '',
     mail: data?.mail || null
   };

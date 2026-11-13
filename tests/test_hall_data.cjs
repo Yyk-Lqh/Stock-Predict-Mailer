@@ -6,6 +6,11 @@ const live={source:'Authorized fixture feed',as_of:'2026-11-13T02:03:04Z',timezo
 for(const invalid of [{...live,source:''},{...live,as_of:'invalid'},{...live,quotes:[{...live.quotes[0],last:NaN}]},{...live,quotes:[live.quotes[0],live.quotes[0]]},{...live,candles:[{...live.candles[0],high:9}]},{...live,timezone:'not-a-zone'}])assert.throws(()=>normalize(invalid));
 feed.receive(live);const snapshot=feed.market;assert.equal(feed.connection,'connected');assert.equal(snapshot.demo,false);assert.equal(snapshot.candles[0].volume,123);
 assert.equal(feed.status(feed.receivedAt+91000),'stale','no new snapshot eventually reports inactivity');assert.equal(feed.market,snapshot,'staleness does not discard last data');
+const relayed={...live,session:'delayed',omitted:2},relayFeed=new Feed();relayFeed.receive(relayed);
+assert.equal(relayFeed.market.session,'delayed','relay session reaches the wall');assert.equal(relayFeed.market.omitted,2);
+const relaySnapshot=relayFeed.market;relayFeed.stale();assert.equal(relayFeed.status(),'stale','relay silence is visible');assert.equal(relayFeed.market,relaySnapshot,'stale keeps the last snapshot');
+assert.equal(new Feed().market.session,undefined,'demo never claims a live session');
+assert.equal(normalize({...live,session:'invented'}).session,undefined,'unknown session values are dropped');
 feed.disconnect();assert.equal(feed.connection,'disconnected');assert.equal(feed.market,snapshot,'disconnect retains exact last quote snapshot and time');
 assert.throws(()=>feed.receive({...live,source:''}));assert.equal(feed.market,snapshot,'invalid update cannot replace last data');
 const task={id:'task1',metadata:{request:{subject:'FIXTURE',horizon:{value:5,unit:'trading_days'},direction:'up',value:11,confidence:.7}},status:{state:'working'}};

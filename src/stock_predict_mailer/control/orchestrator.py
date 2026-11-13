@@ -16,6 +16,7 @@ from ..agent_service.charts import build_charts, chart_data, chart_svg
 from ..agent_service.contracts import ServiceError, context, prediction, utcnow
 from ..agent_service.mail import MailService
 from ..agent_service.reporting import render, save_report
+from ..delivery import address
 from ..private_knowledge.service import Knowledge
 from .a2a import A2AClient
 from .execution import DEFAULT_EFFORT, LABELS, Effort, Progress, envelope
@@ -34,6 +35,7 @@ class TaskRequest(Closed):
     complexity: Literal["auto", "simple", "complex"] = "auto"
     notify: bool = False
     recipient: str | None = None
+    recipients: list[str] = Field(default_factory=list, max_length=50)
     depth: int = Field(default=0, ge=0, le=3)
     reasoning_effort: Effort | None = None
     chart_data: dict | None = None
@@ -90,7 +92,7 @@ def task_brief(request):
     return {"subject": p.get("subject"), "direction": p.get("direction"),
             "horizon": p.get("horizon"), "confidence": p.get("confidence"),
             "synthetic": p.get("synthetic"), "notify": bool(request.get("notify")),
-            "recipient": request.get("recipient"), "goal": request.get("goal"),
+            "recipient": request.get("recipient"), "recipients": request.get("recipients", []), "goal": request.get("goal"),
             "conversation_id": request.get("conversation_id")}
 
 
@@ -163,7 +165,15 @@ class Orchestrator:
                                 content=json.dumps(p, ensure_ascii=False)[:800])
         if request["notify"]:
             policy = self.store.settings()["mail"]
-            if request["recipient"] not in policy["recipient_allowlist"]:
+            try:
+                request["recipients"] = list(dict.fromkeys(address(item) for item in
+                    (request["recipients"] or ([request["recipient"]] if request["recipient"] else []))))
+            except ValueError:
+                raise ServiceError("INVALID_INPUT", "收件邮箱格式无效") from None
+            if not request["recipients"]:
+                raise ServiceError("INVALID_INPUT", "请至少填写一个收件邮箱")
+            request["recipient"] = request["recipients"][0]
+            if any(item not in policy["recipient_allowlist"] for item in request["recipients"]):
                 raise ServiceError("PERMISSION_DENIED", "收件人不在预授权范围内")
             if request["prediction"]["synthetic"] and not policy["allow_synthetic"]:
                 raise ServiceError("PERMISSION_DENIED", "未授权合成报告邮件投递")
@@ -541,13 +551,28 @@ class Orchestrator:
         if request["notify"]:
             try:
                 with progress.step("mail", "交付已授权的邮件报告"):
-                    mail = await self.notify(analysis, request["recipient"], budget, progress)
+                    mail = await self.notify_many(analysis, request["recipients"], budget, progress)
                 progress.emit("mail", step="mail", label=f"邮件状态：{mail['status']}", status=mail["status"])
             except ServiceError as exc:
                 mail = {"status": "uncertain" if exc.code == "MAIL_UNCERTAIN" else "failed", "error": exc.code}
                 progress.emit("mail", step="mail", label=exc.message, status=mail["status"], code=exc.code)
         return {"analysis": analysis, "children": children, "conflicts": conflicts, "usage": budget.snapshot(),
                 "execution": execution, "mail": mail, "report_path": str(folder / "report.html"), "knowledge": knowledge_result}
+
+    async def notify_many(self, analysis, recipients, budget, progress):
+        if len(recipients) == 1:
+            return await self.notify(analysis, recipients[0], budget, progress)
+        deliveries = []
+        for recipient in recipients:
+            try:
+                result = await self.notify(analysis, recipient, budget, progress)
+            except ServiceError as exc:
+                result = {"status": "uncertain" if exc.code == "MAIL_UNCERTAIN" else "failed", "error": exc.code}
+            deliveries.append({**result, "recipient": recipient})
+            progress.emit("mail_recipient", step="mail", recipient=recipient, status=result["status"], label="邮箱投递状态")
+        statuses = {item["status"] for item in deliveries}
+        return {"status": next(iter(statuses)) if len(statuses) == 1 else "partial",
+                "recipients": recipients, "deliveries": deliveries}
 
     async def notify(self, analysis, recipient, budget, progress):
         # Always reload authorization immediately before the external effect.
@@ -556,8 +581,8 @@ class Orchestrator:
             raise ServiceError("PERMISSION_DENIED", "邮件授权已撤销或收件人未授权")
         if policy["transport"] != "mcp":
             service = MailService(self.store.root, policy)
-            queued = service.enqueue(analysis, recipient)
             budget.reserve()
+            queued = service.enqueue(analysis, recipient)
             return await asyncio.to_thread(service.deliver, queued["id"])
         key = identity([analysis["analysis_id"], recipient, policy["sender"], policy["mcp_server_id"], policy["mcp_tool"]])
         # Durable MCP mail marker. Ambiguous tool errors must never be retried automatically.

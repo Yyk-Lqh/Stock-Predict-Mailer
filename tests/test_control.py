@@ -505,6 +505,42 @@ class OrchestrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["mail"]["status"], "simulated")
         self.assertEqual(result["mail"]["attempts"], 1)
 
+    async def test_multiple_mail_recipients_deduplicate_and_deliver(self):
+        emails = ["one@example.invalid", "two@example.invalid"]
+        self.f.settings["mail"].update(recipient_allowlist=emails, allow_synthetic=True)
+        self.f.store.save_settings(self.f.settings)
+        result = self.result(await self.run_task("simple", notify=True, recipients=[*emails, emails[0]]))
+        self.assertEqual(result["mail"]["status"], "simulated")
+        self.assertEqual(result["mail"]["recipients"], emails)
+        self.assertEqual([d["recipient"] for d in result["mail"]["deliveries"]], emails)
+        self.assertEqual(len({d["id"] for d in result["mail"]["deliveries"]}), 2)
+
+    async def test_multiple_mail_preflight_rejects_entire_unauthorized_list(self):
+        self.f.settings["mail"].update(recipient_allowlist=["one@example.invalid"], allow_synthetic=True)
+        self.f.store.save_settings(self.f.settings)
+        with patch.object(self.engine, "notify") as send:
+            for recipients in [[], ["bad-address"], ["one@example.invalid", "other@example.invalid"],
+                               ["one@example.invalid"] * 51]:
+                with self.assertRaises(ServiceError):
+                    await self.run_task("simple", notify=True, recipients=recipients)
+            send.assert_not_called()
+
+    async def test_multiple_mail_keeps_individual_failure_and_continues(self):
+        emails = ["one@example.invalid", "two@example.invalid"]
+        self.f.settings["mail"].update(recipient_allowlist=emails, allow_synthetic=True)
+        self.f.store.save_settings(self.f.settings)
+        original = self.engine.notify
+
+        async def send(analysis, recipient, budget, progress):
+            if recipient == emails[0]:
+                raise ServiceError("MAIL_UNCERTAIN", "Unknown transport result")
+            return await original(analysis, recipient, budget, progress)
+
+        with patch.object(self.engine, "notify", side_effect=send):
+            result = self.result(await self.run_task("simple", notify=True, recipients=emails))
+        self.assertEqual(result["mail"]["status"], "partial")
+        self.assertEqual([d["status"] for d in result["mail"]["deliveries"]], ["uncertain", "simulated"])
+
     async def test_a2a_inline_wire_errors(self):
         service = A2AService(self.engine)
         rpc = {"jsonrpc": "2.0", "id": "1", "method": "message/send", "params": {"message": message({"prediction": MockPredictionAdapter().fetch(), "facts": [], "depth": 1})}}

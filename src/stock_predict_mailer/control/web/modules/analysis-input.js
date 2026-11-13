@@ -71,7 +71,7 @@ window.AnalysisInput = (() => {
     for (const fact of input.context?.facts || []) if (!fact.source?.trim() || !Number.isFinite(Date.parse(fact.observed_at))) {
       $('facts-editor').open = true; open('input'); throw new Error('每条客观事实都需要来源和有效的观测时间。');
     }
-    if ($('task-notify').checked && !$('task-recipient').checkValidity()) return invalid('task-recipient', '请填写有效的收件地址。');
+    if ($('task-notify').checked && (!$('task-recipient').value.trim() || !$('task-recipient').checkValidity())) return invalid('task-recipient', $('task-recipient').multiple?'请填写有效的收件地址，多个邮箱用逗号分隔。':'请填写有效的收件地址。');
     lastPrediction = prediction;
     window.PonyOffice?.hall?.capture(input);
   }

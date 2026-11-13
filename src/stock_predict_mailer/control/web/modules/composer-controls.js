@@ -37,7 +37,7 @@ window.ComposerControls = (() => {
       row('仅分析与生成报告',()=>{$('task-notify').checked=false;changed($('task-notify'));showPermission();},!$('task-notify').checked);
       row('完成后发送授权邮件',()=>{$('task-notify').checked=true;changed($('task-notify'));showPermission();},$('task-notify').checked);
       const label=document.createElement('label');label.className='field';label.textContent='收件地址';
-      const input=document.createElement('input');input.type='email';input.value=$('task-recipient').value;input.placeholder='授权清单内的邮箱';input.setAttribute('aria-label','授权收件地址');
+      const input=document.createElement('input');input.type='email';input.multiple=$('task-recipient').multiple;input.value=$('task-recipient').value;input.placeholder=input.multiple?'授权清单内的邮箱，多个用逗号分隔':'授权清单内的邮箱';input.setAttribute('aria-label','授权收件地址');
       input.oninput=()=>{$('task-recipient').value=input.value;changed($('task-recipient'));};label.append(input);panel.append(label);
       note('邮件仅向设置中的授权地址投递，未授权地址不会发送。');
     }else if(kind==='models'){

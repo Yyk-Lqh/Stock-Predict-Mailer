@@ -17,15 +17,17 @@ from ..agent_service.mail import MailService
 from ..agent_service.reporting import render
 from ..naming import env
 from .a2a import SESSION_COOKIE, A2AService, card
+from .market_feed import MarketFeed
 from .orchestrator import Orchestrator
 from .store import Store
 
 STATIC = Path(__file__).with_name("web")
 
 
-def make_server(root, port=8767, master_key=None):
+def make_server(root, port=8767, master_key=None, market=None):
     store = Store(root, master_key)
     engine = Orchestrator(store)
+    market = MarketFeed(store.root) if market is None else market
     session, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
 
     class Handler(BaseHTTPRequestHandler):
@@ -332,6 +334,12 @@ def make_server(root, port=8767, master_key=None):
                         self.output(engine.cancel(parts[2]))
                     else:
                         raise ServiceError("NOT_FOUND", "任务接口不存在")
+                    return
+                if kind == "market":
+                    if method == "GET" and parts[2:] == ["snapshot"]:
+                        self.output(market.payload())
+                    else:
+                        raise ServiceError("NOT_FOUND", "行情接口不存在")
                     return
                 if kind not in ("models", "mcp", "agents"):
                     raise ServiceError("NOT_FOUND", "配置集合不存在")

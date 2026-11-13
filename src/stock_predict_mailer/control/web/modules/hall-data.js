@@ -26,12 +26,15 @@ globalThis.PonyHallData=(()=>{
     }).sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
     if(history.length>500||candles.length>500)throw Error('单次图表最多500个点');
     if(raw.timezone){try{new Intl.DateTimeFormat('zh-CN',{timeZone:raw.timezone});}catch{throw Error('行情时区无效');}}
-    return{demo:false,source:raw.source.trim().slice(0,100),as_of:new Date(raw.as_of).toISOString(),timezone:raw.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone,quotes,history,candles};
+    const session=['live','delayed'].includes(raw.session)?raw.session:null;
+    const omitted=Number.isInteger(raw.omitted)&&raw.omitted>0?Math.min(raw.omitted,50):0;
+    return{demo:false,source:raw.source.trim().slice(0,100),as_of:new Date(raw.as_of).toISOString(),timezone:raw.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone,quotes,history,candles,...session?{session}:{},...omitted?{omitted}:{}};
   }
   class Feed{
     constructor(){this.market=demo();this.connection='demo';this.resetTask();}
     receive(raw){const snapshot=normalize(raw);this.market=snapshot;this.connection='connected';this.receivedAt=Date.now();return snapshot;}
     disconnect(){if(!this.market.demo)this.connection='disconnected';}
+    stale(){if(this.connection==='connected')this.connection='stale';}
     status(now=Date.now()){return this.connection==='connected'&&now-this.receivedAt>90000?'stale':this.connection;}
     resetTask(){this.task=null;this.analysis=null;this.preview={};this.stage='等待分析任务';this.chart=null;this.mail=null;}
     sync(task,events=[]){

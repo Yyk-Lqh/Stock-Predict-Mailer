@@ -976,14 +976,16 @@ globalThis.PonyFloor = (() => {
       }
       return [...prefix,...smooth,...suffix];
     }
-    yieldRoute(actor,other,job){
+    yieldRoute(actor,other,job,doorPriority=false){
       const otherJob=this.motion(other.id);
-      if(!otherJob||actor.seed<other.seed)return false;
+      if(!otherJob||!doorPriority&&actor.seed<other.seed)return false;
       const goal=job.resumeGoal||job.path?.at(-1)||job.goal;if(!goal)return false;
       const dx=goal.x-actor.x,dy=goal.y-actor.y,d=Math.hypot(dx,dy)||1;
       const candidates=[1,-1].map(side=>({x:actor.x-dy/d*90*side,y:actor.y+dx/d*90*side}));
+      if(doorPriority)candidates.push({x:actor.x+100,y:actor.y});
       for(const x of hall?[50,115,372.5,677.5,990]:[115,372.5,677.5,930])for(const side of [-1,1])candidates.push({x,y:actor.y+side*85});
-      candidates.sort((a,b)=>distance(a,actor)-distance(b,actor));
+      const cost=point=>distance(point,actor)-(doorPriority&&point.x>=actor.x+90?200:0);
+      candidates.sort((a,b)=>cost(a)-cost(b));
       for(const point of candidates){
         if(this.blocked(point,actor)||distance(point,other)<85)continue;
         const route=this.path(actor,point,actor);if(!route)continue;
@@ -1062,8 +1064,13 @@ globalThis.PonyFloor = (() => {
       const job = this.transit, actor = this.actors.find(a => a.id === job.id);
       job.elapsed += dt;
       if (job.exit && actor.x < PonyDoor.frame.insideX+40 && actor.y > gate.y-35) {
-        if(this.gateOwner && this.gateOwner!==actor.id) { actor.pose='waiting'; actor.speed=0; return; }
-        this.gateOwner=actor.id;
+        if(this.gateOwner && this.gateOwner!==actor.id) {
+          if(!job.resumeGoal){
+            const owner=this.actors.find(a=>a.id===this.gateOwner);
+            if(owner&&distance(actor,owner)<180)this.yieldRoute(actor,owner,job,true);
+            actor.pose='waiting'; actor.speed=0; return;
+          }
+        } else this.gateOwner=actor.id;
       }
       const transition = stage => { job.stage = stage; job.elapsed = 0;job.goal=null; };
       if (job.roam && ['stroll','linger'].includes(job.stage) && (job.waitTotal || 0) > 3) {
@@ -1117,7 +1124,6 @@ globalThis.PonyFloor = (() => {
         if (this.operateDoor(job,actor,dt,reduced,true)) {
           this.doorDirection=null;this.doorHoldUntil=0;
           if(entering) {
-            this.gateOwner=null;
             actor.pose='waiting';
             job.path=this.path(actor,{x:actor.deskX,y:actor.deskY+(actor.station?furniture.approach:furniture.seat)},actor);transition('walk');
           } else {
@@ -1190,6 +1196,10 @@ globalThis.PonyFloor = (() => {
         if (this.blocked(next, actor, docking)||!portal&&!this.clear(actor,next,actor,docking)) {
           actor.pose='waiting';actor.speed=0;job.waitTotal=(job.waitTotal||0)+dt;job.blockedFor=(job.blockedFor||0)+dt;
           const other=this.actors.find(a=>a!==actor&&a.present&&distance(next,a)<radius*2+3);
+          if(other&&this.gateOwner===actor.id&&['enter','cross'].includes(job.stage)){
+            const blockedJob=this.motion(other.id);
+            if(blockedJob&&!blockedJob.resumeGoal&&!['open','enter','cross','close','latch','exit-open'].includes(blockedJob.stage))this.yieldRoute(other,actor,blockedJob,true);
+          }
           // Stagger replanning so two ponies do not repeatedly choose mirrored detours.
           if(other&&job.blockedFor>.35&&!job.resumeGoal&&!docking&&!portal&&this.yieldRoute(actor,other,job))return;
           const patience=other&&this.motion(other.id)?1.8:.8;
@@ -1204,7 +1214,7 @@ globalThis.PonyFloor = (() => {
         actor.facing = target.y < actor.y - .1 ? 'back' : target.y > actor.y + .1 ? 'front' : 'side';
         actor.x = next.x; actor.y = next.y; actor.speed = speed; actor.pose = 'walking';
         if (d <= travel + .01) job.path.shift();
-        if (distance(actor,gate)>85 && !job.exit && job.stage!=='enter' && this.gateOwner===actor.id) {
+        if (distance(actor,gate)>85 && distance(actor,{x:PonyDoor.frame.insideX,y:gate.y})>radius*2+3 && !job.exit && job.stage!=='enter' && this.gateOwner===actor.id) {
           this.gateOwner=null;
           if(this.doorDirection==='enter')this.doorHoldUntil=Math.max(this.doorHoldUntil,this.time+2);
         }
@@ -1730,12 +1740,15 @@ globalThis.PonyHallData=(()=>{
     }).sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
     if(history.length>500||candles.length>500)throw Error('单次图表最多500个点');
     if(raw.timezone){try{new Intl.DateTimeFormat('zh-CN',{timeZone:raw.timezone});}catch{throw Error('行情时区无效');}}
-    return{demo:false,source:raw.source.trim().slice(0,100),as_of:new Date(raw.as_of).toISOString(),timezone:raw.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone,quotes,history,candles};
+    const session=['live','delayed'].includes(raw.session)?raw.session:null;
+    const omitted=Number.isInteger(raw.omitted)&&raw.omitted>0?Math.min(raw.omitted,50):0;
+    return{demo:false,source:raw.source.trim().slice(0,100),as_of:new Date(raw.as_of).toISOString(),timezone:raw.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone,quotes,history,candles,...session?{session}:{},...omitted?{omitted}:{}};
   }
   class Feed{
     constructor(){this.market=demo();this.connection='demo';this.resetTask();}
     receive(raw){const snapshot=normalize(raw);this.market=snapshot;this.connection='connected';this.receivedAt=Date.now();return snapshot;}
     disconnect(){if(!this.market.demo)this.connection='disconnected';}
+    stale(){if(this.connection==='connected')this.connection='stale';}
     status(now=Date.now()){return this.connection==='connected'&&now-this.receivedAt>90000?'stale':this.connection;}
     resetTask(){this.task=null;this.analysis=null;this.preview={};this.stage='等待分析任务';this.chart=null;this.mail=null;}
     sync(task,events=[]){
@@ -1793,10 +1806,12 @@ globalThis.PonyHall=(()=>{
     const signed=value=>`${value>0?'↑ +':value<0?'↓ ': '→ '}${value.toFixed(2)}%`;
     const trend=value=>value>0?'market-up':value<0?'market-down':'market-flat';
     function renderMarket(){
-      const snapshot=data.market,status=data.status();find('.market-mode').textContent=snapshot.demo?'演示行情':status==='connected'?'行情已接入':status==='stale'?'行情暂未更新':'行情连接中断';
+      const snapshot=data.market,status=data.status();
+      const mode=snapshot.demo?'演示行情':status==='connected'?(snapshot.session==='live'?'实时行情':'最近快照'):status==='stale'?'行情暂未更新':'行情连接中断';
+      find('.market-mode').textContent=mode;
       wall.dataset.marketState=status;
       const stamp=snapshot.as_of?new Date(snapshot.as_of).toLocaleString('zh-CN',{hour12:false,timeZone:snapshot.timezone}):'静态示例 · 未连接行情服务';
-      find('.market-provenance').textContent=`${snapshot.source} · ${stamp}${snapshot.timezone?' · '+snapshot.timezone:''}`;
+      find('.market-provenance').textContent=`${snapshot.source} · ${stamp}${snapshot.timezone?' · '+snapshot.timezone:''}${snapshot.omitted?' · '+snapshot.omitted+' 个标的未返回':''}`;
       const quotes=find('.market-quotes');quotes.replaceChildren();
       for(const q of snapshot.quotes.slice(0,5)){
         const card=document.createElement('div');card.className='market-quote '+trend(q.change_pct);
@@ -1818,7 +1833,8 @@ globalThis.PonyHall=(()=>{
       if(subject&&data.chart){const image=new Image();image.alt=summary.subject+' · 任务图表';image.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(data.chart);target.append(image);find('.market-chart-note').textContent='任务图表 · 历史与预测按产出标注';return;}
       let observed=subject?data.task?.input?.chart_data?.series?.observed?.points:data.market.history;
       const forecast=subject?data.task?.input?.chart_data?.series?.forecast?.points:[];
-      const candles=!subject?data.market.candles:[];
+      /* A 76px strip cannot resolve dozens of bars, so a dense series is drawn as its close line. */
+      const candles=!subject&&data.market.candles.length<=20?data.market.candles:[];
       observed=(observed||[]).filter(p=>Number.isFinite(p.value)&&Number.isFinite(Date.parse(p.at)));
       const predicted=(forecast||[]).filter(p=>Number.isFinite(p.value)&&Number.isFinite(Date.parse(p.at)));
       const all=[...observed,...predicted,...predicted.flatMap(p=>[p.lower,p.upper].filter(Number.isFinite).map(value=>({at:p.at,value}))),...candles.flatMap(p=>[{at:p.at,value:p.low},{at:p.at,value:p.high}])];
@@ -1831,7 +1847,7 @@ globalThis.PonyHall=(()=>{
       else paths+=`<path d="${line(observed)}" fill="none" stroke="#9adbe8" stroke-width="1.8"/>`;
       if(predicted.length){const interval=predicted.filter(p=>Number.isFinite(p.lower)&&Number.isFinite(p.upper));if(interval.length>1)paths+=`<path d="${line(interval.map(p=>({...p,value:p.upper})))} ${line(interval.slice().reverse().map(p=>({...p,value:p.lower}))).replace(/^M/,'L')}Z" fill="#bda26d" opacity=".15"/>`;paths+=`<path d="${line(predicted)}" fill="none" stroke="#e3bd79" stroke-dasharray="5 4" stroke-width="1.8"/>`;}
       const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 690 76');svg.setAttribute('role','img');svg.setAttribute('aria-label',subject?'上游历史实线与预测虚线':data.market.demo?'演示走势，非真实行情':'来源提供的历史行情');svg.innerHTML=paths;target.append(svg);
-      find('.market-chart-note').textContent=subject?'历史实线 · 预测虚线 · 区间仅取上游数据':data.market.demo?'演示走势 · 非实时行情':candles.length?'K线 · 来源提供的OHLC':'历史观测 · '+data.market.source;
+      find('.market-chart-note').textContent=subject?'历史实线 · 预测虚线 · 区间仅取上游数据':data.market.demo?'演示走势 · 非实时行情':candles.length?`K线 · ${data.market.source} 日线`:`历史收盘 · ${data.market.source}`;
     }
     function tick(now,force=false){
       if(!force&&now-last<1000)return;last=now;
@@ -1848,6 +1864,9 @@ globalThis.PonyHall=(()=>{
     window.addEventListener('pony-market-disconnected',disconnect);window.addEventListener('offline',disconnect);
     document.addEventListener('visibilitychange',()=>{wall.classList.toggle('ticker-hidden',document.hidden);if(!document.hidden)tick(performance.now(),true);});
     tick(performance.now(),true);
+    const relay=globalThis.PonyMarketFeed;
+    if(relay)relay.attach({snapshot:value=>{try{receive(value);}catch(error){wall.dataset.marketError=error.message;}},
+      stale:()=>{data.stale();marketDirty=true;tick(performance.now(),true);},down:disconnect});
     return{wall,data,receive,disconnect,tick,capture:input=>{pendingInput=structuredClone(input);},reset:()=>{data.resetTask();lastChart='';tick(performance.now(),true);},
       sync(task,events,allActors){actors=allActors;taskConnected=true;const input=data.task?.id===task.id?data.task.input:pendingInput;
         const subject=task.metadata?.request?.subject;if(input?.prediction?.subject===subject){task={...task,input};pendingInput=null;}data.sync(task,events);tick(performance.now(),true);},
@@ -1856,6 +1875,42 @@ globalThis.PonyHall=(()=>{
       aux(actor){const states={running:'执行中',completed:'完成',failed:'失败',idle:'待命',pending:'等待',canceled:'取消'};return `${actor.name.slice(0,4)} · ${states[actor.state]||actor.state}`;}};
   }
   return{mount};
+})();
+
+/* Loopback market relay client. Display only: no quote here reaches a task, a
+   prediction or a model, and nothing is invented when the relay stays silent. */
+globalThis.PonyMarketFeed=(()=>{
+  const subscribers=new Set();let latest=null,timer=null,busy=false,failures=0,interval=10000,state='idle',enabled=true;
+  const emit=(kind,value)=>{for(const handler of [...subscribers]){const fn=handler[kind];if(typeof fn!=='function')continue;try{fn(value);}catch{}};};
+  const schedule=()=>{if(!enabled||document.hidden)return;clearTimeout(timer);timer=setTimeout(pull,interval);};
+  async function pull(){
+    if(busy||!enabled)return;
+    busy=true;const control=new AbortController(),expiry=setTimeout(()=>control.abort(),8000);
+    try{
+      const response=await fetch('/api/market/snapshot',{signal:control.signal,cache:'no-store',credentials:'same-origin',headers:{Accept:'application/json'}});
+      if(response.status===404||response.status===403){enabled=false;clearTimeout(timer);return;}
+      if(!response.ok)throw new Error(String(response.status));
+      const body=await response.json();
+      if(Number.isFinite(body.refresh_seconds))interval=Math.min(60000,Math.max(5000,body.refresh_seconds*1000));
+      failures=0;
+      if(body.status==='unavailable'||!body.snapshot){state='unavailable';emit('down');return;}
+      latest=body.snapshot;
+      if(body.status==='stale'){state='stale';emit('stale',typeof body.detail==='string'?body.detail:'');return;}
+      state=body.status==='live'?'live':'delayed';emit('snapshot',latest);
+    }catch{
+      failures+=1;if(failures>=2){state='down';emit('down');}
+    }finally{clearTimeout(expiry);busy=false;if(enabled)schedule();}
+  }
+  function attach(handler){
+    subscribers.add(handler);
+    if(latest&&(state==='live'||state==='delayed')){try{handler.snapshot?.(latest);}catch{}}
+    else if(state==='stale'||state==='down'){try{handler.stale?.();}catch{}}
+    return()=>subscribers.delete(handler);
+  }
+  window.addEventListener('offline',()=>{state='down';emit('down');});
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(timer);else pull();});
+  pull();
+  return{attach,pull,current:()=>({snapshot:latest,status:state,interval})};
 })();
 
 /* Articulated SVG office; backend state is never inferred from animation. */
@@ -1898,6 +1953,7 @@ window.PonyOffice = (() => {
   let lastScreen = -1;
   function choose(id) {
     selected = id;
+    if(id==='mail'&&hallMode&&window.MailRecipients){window.MailRecipients.open();return;}
     if (id === 'assistant') { window.AnalysisInput?.open('input'); return; }
     for (const [key, button] of buttons) button.setAttribute('aria-pressed', String(key === id));
     if(hallMode)window.AnalysisInput?.open('progress');
@@ -2237,7 +2293,7 @@ window.AnalysisInput = (() => {
     for (const fact of input.context?.facts || []) if (!fact.source?.trim() || !Number.isFinite(Date.parse(fact.observed_at))) {
       $('facts-editor').open = true; open('input'); throw new Error('每条客观事实都需要来源和有效的观测时间。');
     }
-    if ($('task-notify').checked && !$('task-recipient').checkValidity()) return invalid('task-recipient', '请填写有效的收件地址。');
+    if ($('task-notify').checked && (!$('task-recipient').value.trim() || !$('task-recipient').checkValidity())) return invalid('task-recipient', $('task-recipient').multiple?'请填写有效的收件地址，多个邮箱用逗号分隔。':'请填写有效的收件地址。');
     lastPrediction = prediction;
     window.PonyOffice?.hall?.capture(input);
   }
@@ -2297,6 +2353,52 @@ window.AnalysisInput = (() => {
   return {open, validate, observe, reset, update, layout};
 })();
 
+/* Desktop mail-seat editor. Saving preferences never sends a message. */
+window.MailRecipients=(()=>{
+  if(!PonyFloor.hall)return null;
+  const field=$('task-recipient');field.multiple=true;
+  field.placeholder='多个邮箱用逗号分隔';
+  const dialog=document.createElement('dialog');dialog.id='mail-recipients-dialog';dialog.className='mail-recipients-dialog';dialog.setAttribute('aria-labelledby','mail-recipients-title');
+  dialog.innerHTML='<form method="dialog"><h2 id="mail-recipients-title">邮箱投递</h2><p class="hint">填写收件邮箱，可自由添加或删除。保存后用于下一次提交的分析，不会立即发送邮件。</p><label class="check"><input id="mail-recipients-enabled" type="checkbox"> 分析完成后投递</label><div id="mail-recipients-list"></div><div class="actions"><button type="button" id="mail-recipients-add" class="btn">＋ 添加邮箱</button><span id="mail-recipients-count" role="status"></span></div><p class="hint">每次最多50个地址，逐地址投递并单独记录结果；仍遵循设置中的收件授权及任务预算。</p><p id="mail-recipients-error" role="alert" class="error-text"></p><div class="actions"><button type="button" id="mail-recipients-cancel" class="btn quiet">取消</button><button type="submit" class="btn primary">保存投递设置</button></div></form>';
+  document.body.append(dialog);const list=$('mail-recipients-list');
+  const authorize=document.createElement('button');authorize.id='mail-recipients-authorize';authorize.type='button';authorize.className='btn primary';authorize.textContent='授权以上邮箱并保存';authorize.hidden=true;
+  $('mail-recipients-error').after(authorize);let saving=false;
+  const clearAuthorization=()=>{authorize.hidden=true;$('mail-recipients-error').textContent='';};
+  list.addEventListener('input',clearAuthorization);
+  dialog.addEventListener('cancel',event=>{if(saving)event.preventDefault();});
+  const parse=value=>[...new Set(value.split(/[,;，；\s]+/).map(v=>v.trim()).filter(Boolean))];
+  function count(){clearAuthorization();const rows=list.querySelectorAll('input');$('mail-recipients-count').textContent=`${rows.length} 个邮箱输入位`;$('mail-recipients-add').disabled=rows.length>=50;rows.forEach((input,i)=>input.setAttribute('aria-label',`收件邮箱 ${i+1}`));}
+  function add(value=''){const row=document.createElement('div');row.className='mail-recipient-row';const input=document.createElement('input');input.type='email';input.required=true;input.placeholder='name@example.com';input.value=value;input.maxLength=254;
+    const remove=document.createElement('button');remove.type='button';remove.className='btn quiet';remove.textContent='删除';remove.onclick=()=>{row.remove();count();};row.append(input,remove);list.append(row);count();return input;}
+  const requirements=()=>list.querySelectorAll('input').forEach(input=>{input.required=$('mail-recipients-enabled').checked;});
+  $('mail-recipients-enabled').onchange=()=>{requirements();clearAuthorization();};
+  $('mail-recipients-add').onclick=()=>{const input=add();requirements();input.focus();};$('mail-recipients-cancel').onclick=()=>dialog.close();
+  async function save(allowNew=false){
+    if(saving||!dialog.querySelector('form').reportValidity())return;
+    const emails=parse([...list.querySelectorAll('input')].map(input=>input.value).join(',')),enabled=$('mail-recipients-enabled').checked;
+    if(enabled&&!emails.length){$('mail-recipients-error').textContent='请至少添加一个收件邮箱。';return;}
+    const allowed=settings?.mail?.recipient_allowlist||[];
+    const missing=emails.filter(email=>!allowed.includes(email));
+    if(enabled&&missing.length){
+      if(!allowNew){$('mail-recipients-error').textContent='以下邮箱尚未授权：'+missing.join('、')+'。可点击下方按钮授权并保存，不会立即发送邮件。';authorize.hidden=false;return;}
+      saving=true;const controls=[...dialog.querySelectorAll('input,button')];controls.forEach(node=>{node.disabled=true;});
+      try{
+        const latest=await api('settings');
+        latest.mail.recipient_allowlist=[...new Set([...latest.mail.recipient_allowlist,...emails])];
+        settings=await api('settings','PUT',latest);
+        $('mail-allowlist').value=settings.mail.recipient_allowlist.join('\n');
+      }catch(error){$('mail-recipients-error').textContent='授权未完成：'+error.message+'。已填写邮箱仍保留，请重试。';return;}
+      finally{saving=false;controls.forEach(node=>{node.disabled=false;});$('mail-recipients-add').disabled=list.children.length>=50;}
+    }
+    field.value=emails.join(', ');$('task-notify').checked=enabled;
+    for(const node of [field,$('task-notify')])node.dispatchEvent(new Event('change',{bubbles:true}));
+    draftSchedule();dialog.close();notice(`已保存 ${emails.length} 个收件邮箱${enabled?'，下次分析完成后投递':'，暂不投递'}。`);
+  }
+  dialog.querySelector('form').onsubmit=event=>{event.preventDefault();save();};authorize.onclick=()=>save(true);
+  function open(){list.replaceChildren();const emails=parse(field.value);(emails.length?emails:['']).forEach(add);$('mail-recipients-enabled').checked=$('task-notify').checked||!emails.length;requirements();clearAuthorization();dialog.showModal();list.querySelector('input')?.focus();}
+  return{open,values:()=>parse(field.value)};
+})();
+
 /* Composer tools use existing model, execution and mail authorization contracts. */
 window.ComposerControls = (() => {
   const dock=$('analysis-composer'),toolbar=dock.querySelector('.analysis-composer-controls'),send=$('analysis-send'),message=$('conversation-message');
@@ -2336,7 +2438,7 @@ window.ComposerControls = (() => {
       row('仅分析与生成报告',()=>{$('task-notify').checked=false;changed($('task-notify'));showPermission();},!$('task-notify').checked);
       row('完成后发送授权邮件',()=>{$('task-notify').checked=true;changed($('task-notify'));showPermission();},$('task-notify').checked);
       const label=document.createElement('label');label.className='field';label.textContent='收件地址';
-      const input=document.createElement('input');input.type='email';input.value=$('task-recipient').value;input.placeholder='授权清单内的邮箱';input.setAttribute('aria-label','授权收件地址');
+      const input=document.createElement('input');input.type='email';input.multiple=$('task-recipient').multiple;input.value=$('task-recipient').value;input.placeholder=input.multiple?'授权清单内的邮箱，多个用逗号分隔':'授权清单内的邮箱';input.setAttribute('aria-label','授权收件地址');
       input.oninput=()=>{$('task-recipient').value=input.value;changed($('task-recipient'));};label.append(input);panel.append(label);
       note('邮件仅向设置中的授权地址投递，未授权地址不会发送。');
     }else if(kind==='models'){

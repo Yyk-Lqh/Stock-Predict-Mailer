@@ -176,14 +176,16 @@ globalThis.PonyFloor = (() => {
       }
       return [...prefix,...smooth,...suffix];
     }
-    yieldRoute(actor,other,job){
+    yieldRoute(actor,other,job,doorPriority=false){
       const otherJob=this.motion(other.id);
-      if(!otherJob||actor.seed<other.seed)return false;
+      if(!otherJob||!doorPriority&&actor.seed<other.seed)return false;
       const goal=job.resumeGoal||job.path?.at(-1)||job.goal;if(!goal)return false;
       const dx=goal.x-actor.x,dy=goal.y-actor.y,d=Math.hypot(dx,dy)||1;
       const candidates=[1,-1].map(side=>({x:actor.x-dy/d*90*side,y:actor.y+dx/d*90*side}));
+      if(doorPriority)candidates.push({x:actor.x+100,y:actor.y});
       for(const x of hall?[50,115,372.5,677.5,990]:[115,372.5,677.5,930])for(const side of [-1,1])candidates.push({x,y:actor.y+side*85});
-      candidates.sort((a,b)=>distance(a,actor)-distance(b,actor));
+      const cost=point=>distance(point,actor)-(doorPriority&&point.x>=actor.x+90?200:0);
+      candidates.sort((a,b)=>cost(a)-cost(b));
       for(const point of candidates){
         if(this.blocked(point,actor)||distance(point,other)<85)continue;
         const route=this.path(actor,point,actor);if(!route)continue;
@@ -262,8 +264,13 @@ globalThis.PonyFloor = (() => {
       const job = this.transit, actor = this.actors.find(a => a.id === job.id);
       job.elapsed += dt;
       if (job.exit && actor.x < PonyDoor.frame.insideX+40 && actor.y > gate.y-35) {
-        if(this.gateOwner && this.gateOwner!==actor.id) { actor.pose='waiting'; actor.speed=0; return; }
-        this.gateOwner=actor.id;
+        if(this.gateOwner && this.gateOwner!==actor.id) {
+          if(!job.resumeGoal){
+            const owner=this.actors.find(a=>a.id===this.gateOwner);
+            if(owner&&distance(actor,owner)<180)this.yieldRoute(actor,owner,job,true);
+            actor.pose='waiting'; actor.speed=0; return;
+          }
+        } else this.gateOwner=actor.id;
       }
       const transition = stage => { job.stage = stage; job.elapsed = 0;job.goal=null; };
       if (job.roam && ['stroll','linger'].includes(job.stage) && (job.waitTotal || 0) > 3) {
@@ -317,7 +324,6 @@ globalThis.PonyFloor = (() => {
         if (this.operateDoor(job,actor,dt,reduced,true)) {
           this.doorDirection=null;this.doorHoldUntil=0;
           if(entering) {
-            this.gateOwner=null;
             actor.pose='waiting';
             job.path=this.path(actor,{x:actor.deskX,y:actor.deskY+(actor.station?furniture.approach:furniture.seat)},actor);transition('walk');
           } else {
@@ -390,6 +396,10 @@ globalThis.PonyFloor = (() => {
         if (this.blocked(next, actor, docking)||!portal&&!this.clear(actor,next,actor,docking)) {
           actor.pose='waiting';actor.speed=0;job.waitTotal=(job.waitTotal||0)+dt;job.blockedFor=(job.blockedFor||0)+dt;
           const other=this.actors.find(a=>a!==actor&&a.present&&distance(next,a)<radius*2+3);
+          if(other&&this.gateOwner===actor.id&&['enter','cross'].includes(job.stage)){
+            const blockedJob=this.motion(other.id);
+            if(blockedJob&&!blockedJob.resumeGoal&&!['open','enter','cross','close','latch','exit-open'].includes(blockedJob.stage))this.yieldRoute(other,actor,blockedJob,true);
+          }
           // Stagger replanning so two ponies do not repeatedly choose mirrored detours.
           if(other&&job.blockedFor>.35&&!job.resumeGoal&&!docking&&!portal&&this.yieldRoute(actor,other,job))return;
           const patience=other&&this.motion(other.id)?1.8:.8;
@@ -404,7 +414,7 @@ globalThis.PonyFloor = (() => {
         actor.facing = target.y < actor.y - .1 ? 'back' : target.y > actor.y + .1 ? 'front' : 'side';
         actor.x = next.x; actor.y = next.y; actor.speed = speed; actor.pose = 'walking';
         if (d <= travel + .01) job.path.shift();
-        if (distance(actor,gate)>85 && !job.exit && job.stage!=='enter' && this.gateOwner===actor.id) {
+        if (distance(actor,gate)>85 && distance(actor,{x:PonyDoor.frame.insideX,y:gate.y})>radius*2+3 && !job.exit && job.stage!=='enter' && this.gateOwner===actor.id) {
           this.gateOwner=null;
           if(this.doorDirection==='enter')this.doorHoldUntil=Math.max(this.doorHoldUntil,this.time+2);
         }

@@ -38,6 +38,7 @@ window.PonyOffice = (() => {
   let lastScreen = -1;
   function choose(id) {
     selected = id;
+    if(id==='mail'&&hallMode&&window.MailRecipients){window.MailRecipients.open();return;}
     if (id === 'assistant') { window.AnalysisInput?.open('input'); return; }
     for (const [key, button] of buttons) button.setAttribute('aria-pressed', String(key === id));
     if(hallMode)window.AnalysisInput?.open('progress');

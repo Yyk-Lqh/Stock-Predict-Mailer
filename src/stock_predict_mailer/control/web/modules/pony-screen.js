@@ -106,7 +106,11 @@ globalThis.PonyScreen = (() => {
     if(mode===games[4])return drawing(time,seed);
     return null;
   }
-  function render(actor, time, connected = true) {
+  function clock(now=new Date()) {
+    const two=value=>String(value).padStart(2,'0');
+    return {time:[now.getHours(),now.getMinutes(),now.getSeconds()].map(two).join(':'),date:`${now.getFullYear()}-${two(now.getMonth()+1)}-${two(now.getDate())}`};
+  }
+  function render(actor, time, connected = true, now=new Date()) {
     const mode = state(actor, time, connected), t = actor.idleClock || 0, localTime=t%33, seed = actor.seed;
     let content = '', title = mode;
     if (mode === 'off') return {mode, markup: '', title: '离室待机'};
@@ -128,12 +132,13 @@ globalThis.PonyScreen = (() => {
         content += rect(5,53,86*actor.progressPercent/100,2,'#7dddb7');
       }
     } else if (mode === 'screensaver') {
-      const phase = (time + seed * 9) / 35, blend = (Math.sin(phase * Math.PI) + 1) / 2;
-      content = `<g opacity="${blend.toFixed(2)}">${text(22,31,`${String(Math.floor(time/60)%24).padStart(2,'0')}:${String(Math.floor(time)%60).padStart(2,'0')}`, '#9ccadf',14)}</g>`;
+      const current=clock(now),phase=wrap(now.getTime()/1000+seed*7,32);
+      const blend=Math.max(0,Math.min(1,phase<18?1:phase<20?(20-phase)/2:phase<30?0:(phase-30)/2));
+      content = `<g class="office-wall-clock" data-clock="${current.time}" opacity="${blend.toFixed(2)}">`+text(48,30,current.time,'#c2e0ee',13).replace('<text ','<text text-anchor="middle" ')+text(48,42,current.date,'#89a8bb',6).replace('<text ','<text text-anchor="middle" ')+'</g>';
       content += `<g opacity="${(1-blend).toFixed(2)}">`;
       for(let i=0;i<7;i++) content += rect((i*19+time*(2+seed*.2))%90,18+Math.sin(time*.4+i)*13,5,5,['#a7c4ea','#dfbceb','#a7ded0'][i%3]);
       content += '</g>';
-      title = '在室 · 动态屏保';
+      title = `屏保 · ${current.date} ${current.time} · 本机时间`;
     } else {
       content = text(3,8,mode,'#accbde');
       const scene=simulate(mode,localTime,seed);
@@ -166,5 +171,5 @@ globalThis.PonyScreen = (() => {
     }
     return {mode, title, markup:`<g transform="translate(-48 -116)">${rect(0,0,96,58,'#192d40')}${content}</g>`};
   }
-  return {state, render, games, simulate};
+  return {state, render, games, simulate, clock};
 })();

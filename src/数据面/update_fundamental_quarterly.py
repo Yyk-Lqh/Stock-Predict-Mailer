@@ -1,5 +1,5 @@
 """
-基本面季度数据采集 V2 —— 增量补采版（防断联加固 v2 + 增量模式）
+基本面季度数据采集 V2 —— 增量补采版（防断联加固 v2 + 自动增量模式）
 
 核心设计：
 1. socket 超时兜底：绝不死循环、绝不无限阻塞（20 秒必返回）
@@ -10,8 +10,8 @@
 6. 跳过 DNS 解析，直连服务器 IP
 7. 连续 8 只股票网络失败 → 判定断网/半死，立即停止
 8. 防断联双保险：会话满 40 分钟或每 10 只主动重连；未登录错误自动重连重试
-9. 增量补采：设置 增量起点 后，已完成股票只补采该季度起的新报告期；
-   新股票仍采全量历史；落盘按 (code, report_date) 去重
+9. 增量补采：已完成股票只补采增量起点（默认 = 旧文件最新报告期所在季度）起的新报告期；
+   新股票仍采全量历史；落盘按 (code, report_date) 去重，并按 股票→报告期 排序
 """
 import os
 import time
@@ -66,9 +66,10 @@ START_YEAR = 2009
 END_YEAR = 2026
 END_QUARTER = 3
 
-# 增量补采模式：设为 (年, 季) 后，已完成股票只补采该季度起的新报告期，
-# 新股票仍采全量历史。例：2028 年补 2027 数据 → END_YEAR=2027, END_QUARTER=4,
-# 增量起点 = (2026, 4)；None = 老行为（新股票全量，老股票跳过）
+# 增量补采模式：设为 (年, 季) 后，已完成股票只补采该季度起的新报告期；
+# None = 自动增量：从旧文件最新报告期所在季度起补采（含该季度，可捕获迟发布与数据修正），
+# 例：旧文件最新 2026Q3，END_YEAR=2026, END_QUARTER=4 → 只补采 2026Q3、2026Q4。
+# 新股票仍采全量历史；落盘按 (code, report_date) 去重，新报告期行接在对应股票区块末尾。
 incremental_start = None
 # 节奏
 MAX_PER_MINUTE = 40
@@ -262,15 +263,21 @@ def _fetch_stock(code, quarters=None):
 
 def _load_existing():
     if not os.path.exists(OUTPUT_FILE):
-        return [], set()
+        return [], set(), None
     try:
         df = pd.read_csv(OUTPUT_FILE, dtype={'code': str}, encoding='utf-8-sig')
         df = df.rename(columns=INVERSE_MAP)
-        log(f"续采：已有 {len(df)} 行 / {df['code'].nunique()} 只")
-        return df.to_dict('records'), set(df['code'].unique())
+        latest_q = None
+        if 'report_date' in df.columns:
+            rd = pd.to_datetime(df['report_date'], errors='coerce').dropna()
+            if not rd.empty:
+                latest_q = rd.max().to_period('Q')
+        log(f"续采：已有 {len(df)} 行 / {df['code'].nunique()} 只，"
+            f"最新报告期 {latest_q if latest_q is not None else '无'}")
+        return df.to_dict('records'), set(df['code'].unique()), latest_q
     except Exception as e:
         log(f"读旧文件失败 {type(e).__name__}: {e}，从头开始")
-        return [], set()
+        return [], set(), None
 
 
 def _save(rows):
@@ -278,6 +285,8 @@ def _save(rows):
     if not df.empty:
         if 'code' in df.columns and 'report_date' in df.columns:
             df = df.drop_duplicates(subset=['code', 'report_date'], keep='last')
+            df = df.sort_values(['code', 'report_date'],
+                                kind='stable').reset_index(drop=True)
         df.to_csv(OUTPUT_FILE, encoding='utf-8-sig', index=False)
 
 
@@ -308,12 +317,27 @@ def main():
                           dtype={'股票代码': str}, encoding='utf-8-sig')
     stock_pool = sorted(pool_df['股票代码'].str.zfill(6).unique())
 
-    all_rows, done_codes = _load_existing()
-    if incremental_start:
-        # 增量模式：所有股票都参与，已完成股票只补新季度
+    all_rows, done_codes, latest_q = _load_existing()
+
+    inc_start = incremental_start
+    if inc_start is None and latest_q is not None:
+        inc_start = (latest_q.year, latest_q.quarter)
+        log(f"自动增量：旧文件最新报告期 {latest_q}，"
+            f"从 {inc_start[0]}Q{inc_start[1]} 起补采")
+
+    if inc_start:
+        y0, q0 = inc_start
+        inc_quarters = [(y, q) for y in range(y0, END_YEAR + 1)
+                        for q in range(1, 5)
+                        if not (y == END_YEAR and q > END_QUARTER)
+                        and not (y == y0 and q < q0)]
+        if not inc_quarters:
+            log(f"增量起点 {y0}Q{q0} 已在采集范围 {END_YEAR}Q{END_QUARTER} 之外，无需补采")
+            return
         todo = [c for c in stock_pool if not c.startswith('9')]
-        est_q = (END_YEAR - incremental_start[0] + 1) * 4
+        est_q = len(inc_quarters)
     else:
+        inc_quarters = None
         todo = [c for c in stock_pool if c not in done_codes and not c.startswith('9')]
         est_q = 71
     if MAX_STOCKS_PER_RUN:
@@ -322,8 +346,8 @@ def main():
     est_min = len(todo) * est_q * 4 / MAX_PER_MINUTE
     log("=" * 62)
     log(f"股票池 {len(stock_pool)} | 已完成 {len(done_codes)} | 本轮 {len(todo)}")
-    if incremental_start:
-        log(f"增量补采：{incremental_start[0]}Q{incremental_start[1]} 起  ~  {END_YEAR}Q{END_QUARTER}")
+    if inc_start:
+        log(f"增量补采：{inc_start[0]}Q{inc_start[1]} 起  ~  {END_YEAR}Q{END_QUARTER}")
     log(f"限速 每分钟 {MAX_PER_MINUTE} 次  →  预计 {est_min / 60:.1f} 小时")
     log("=" * 62)
 
@@ -351,17 +375,12 @@ def main():
                     except Exception as e:
                         log(f"  刷新会话失败 {type(e).__name__}: {e}，继续采")
                 try:
-                    if incremental_start and code in done_codes:
-                        y0, q0 = incremental_start
-                        quarters = [(y, q) for y in range(y0, END_YEAR + 1)
-                                    for q in range(1, 5)
-                                    if not (y == END_YEAR and q > END_QUARTER)
-                                    and not (y == y0 and q < q0)]
-                        rows = _fetch_stock(code, quarters)
+                    if inc_quarters and code in done_codes:
+                        rows = _fetch_stock(code, inc_quarters)
                     else:
                         rows = _fetch_stock(code)
                     if not rows:
-                        if incremental_start and code in done_codes:
+                        if inc_quarters and code in done_codes:
                             log(f"  ~ {code} 增量区间暂无新报告期，跳过")
                             continue
                         raise RuntimeError('EMPTY 无报告期')

@@ -12,6 +12,10 @@ original survives, which deletion cannot offer.
 """
 from __future__ import annotations
 
+import shutil
+import sqlite3
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from .agent_service.contracts import ServiceError
@@ -21,6 +25,38 @@ from .naming import env
 OWNER_MAP = "CREATE TABLE IF NOT EXISTS kb_owner_map (principal TEXT PRIMARY KEY, owner TEXT NOT NULL)"
 
 
+@contextmanager
+def preview_workspace(workspace):
+    """Clone metadata/vault key for dry-run constructors; never open source SQLite."""
+    from .operations import backup_inventory as inv
+    from .operations.schema_planning import snapshot
+
+    root = Path(workspace).resolve()
+    if not env("MASTER_KEY") and (root / "control.sqlite3").exists():
+        raise ValueError("workspace was created with a master key; set STOCK_PREDICT_MAILER_MASTER_KEY to reach its knowledge base")
+    control = "control.sqlite3" if env("MASTER_KEY") else "control-development.sqlite3"
+    with tempfile.TemporaryDirectory(prefix="knowledge-preview-") as folder:
+        target = Path(folder)
+        for relative in (control, "private-knowledge/knowledge.sqlite3"):
+            if not (root / relative).exists():
+                continue
+            with snapshot(root, relative) as (source, _):
+                output = target / relative
+                output.parent.mkdir(parents=True, exist_ok=True)
+                con = sqlite3.connect(output)
+                try:
+                    source.backup(con)
+                finally:
+                    con.close()
+        key = root / "control-development.key"
+        if control == "control-development.sqlite3" and key.exists():
+            before = inv.fingerprint(key)
+            shutil.copyfile(key, target / key.name)
+            if inv.fingerprint(key) != before or inv.fingerprint(target / key.name) != before:
+                raise ServiceError("SCHEMA_SOURCE_CHANGED", "预演期间开发密钥变化")
+        yield target
+
+
 def _knowledge(cfg: Config):
     # Imported lazily: the control layer belongs to the console, and importing it
     # at module level would make report generation depend on the web application.
@@ -28,11 +64,11 @@ def _knowledge(cfg: Config):
     from .control.store import Store
     from .private_knowledge.service import Knowledge
 
-    store = Store(cfg.workspace)  # Knowledge appends "private-knowledge" itself
-    if store.development_mode and (cfg.workspace / "control.sqlite3").exists():
+    if not env("MASTER_KEY") and (cfg.workspace / "control.sqlite3").exists():
         # A fresh development vault would not fail: it would silently present an
         # empty knowledge base and a key that cannot decrypt the existing files.
         raise ValueError("workspace was created with a master key; set STOCK_PREDICT_MAILER_MASTER_KEY to reach its knowledge base")
+    store = Store(cfg.workspace)  # Knowledge appends "private-knowledge" itself
     memory = Memory(store)
     with store.db() as con:
         con.executescript(OWNER_MAP)

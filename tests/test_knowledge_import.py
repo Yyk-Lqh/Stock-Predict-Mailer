@@ -74,8 +74,25 @@ class ImportTests(unittest.TestCase):
         manifest = self.f.manifest([{"path": "宏观/利率.txt", "available_date": "2026-05-02"}])
         summary = self.f.run(manifest=manifest, dry_run=True)
         self.assertEqual(summary["queued"][0]["status"], "planned")
+        self.assertEqual(list(self.f.root.iterdir()), [])
         kb, owner = self.f.open_kb()
         self.assertEqual(kb.catalog(owner)["total"], 0)
+
+    def test_dry_run_existing_content_deduplicates_without_source_writes(self):
+        self.f.write("研报/深度.md")
+        self.f.run(available="2026-05-02")
+        before = {str(p): p.read_bytes() for p in self.f.root.rglob("*") if p.is_file()}
+        summary = self.f.run(available="2026-05-02", dry_run=True)
+        self.assertEqual(summary["totals"]["queued"], 0)
+        self.assertIn("内容已存在", summary["skipped"][0]["reason"])
+        self.assertEqual({str(p): p.read_bytes() for p in self.f.root.rglob("*") if p.is_file()}, before)
+
+    def test_dry_run_missing_workspace_stays_missing(self):
+        self.f.root.rmdir()
+        self.f.write("公告/甲公司.txt")
+        summary = self.f.run(available="2026-05-02", dry_run=True)
+        self.assertEqual(summary["totals"]["queued"], 1)
+        self.assertFalse(self.f.root.exists())
 
     def test_repeat_import_skips_unchanged_content(self):
         self.f.write("研报/深度.md")

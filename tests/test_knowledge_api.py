@@ -1,12 +1,26 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from cryptography.fernet import Fernet
+
+from stock_predict_mailer.control.store import Store
 from stock_predict_mailer.core import Config
 from stock_predict_mailer.knowledge_api import _available, _context, ingest_document, retrieve, revoke, validate_citations
 
 
 class KnowledgeFacadeTests(unittest.TestCase):
+    def test_missing_master_key_does_not_create_a_development_vault(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            Store(root, Fernet.generate_key())
+            before = {p.name: p.read_bytes() for p in root.iterdir()}
+            with patch.dict("os.environ", {"STOCK_PREDICT_MAILER_MASTER_KEY": "", "SPM_MASTER_KEY": ""}):
+                with self.assertRaisesRegex(ValueError, "master key"):
+                    _context(Config(root))
+            self.assertEqual({p.name: p.read_bytes() for p in root.iterdir()}, before)
+
     def test_acl_asof_and_revocation_keep_legacy_semantics(self):
         with tempfile.TemporaryDirectory() as folder:
             cfg = Config(Path(folder) / "state")

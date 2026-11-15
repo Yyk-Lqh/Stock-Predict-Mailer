@@ -22,10 +22,11 @@ import csv
 import hashlib
 import re
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 from ..agent_service.contracts import ServiceError, utcnow
-from ..knowledge_api import open_store
+from ..knowledge_api import open_store, preview_workspace
 from ..naming import env, env_key
 from .parsing import FORMATS
 
@@ -125,6 +126,18 @@ def _existing(kb, owner, logical, fingerprint):
 def run(workspace, folder, *, principal="owner", manifest=None, write_manifest=None, source="本地导入",
         available=None, assume_available_today=False, dry_run=False, limit=None, recursive=True,
         progress=True, process=False):
+    context = preview_workspace(workspace) if dry_run and not write_manifest else nullcontext(workspace)
+    with context as target:
+        result = _run(target, folder, principal=principal, manifest=manifest, write_manifest=write_manifest, source=source,
+                      available=available, assume_available_today=assume_available_today, dry_run=dry_run, limit=limit,
+                      recursive=recursive, progress=progress, process=process)
+        if dry_run and not write_manifest:
+            result["owner_is_preview"] = True
+        return result
+
+
+def _run(workspace, folder, *, principal, manifest, write_manifest, source,
+         available, assume_available_today, dry_run, limit, recursive, progress, process):
     folder = Path(folder)
     if not folder.is_dir():
         raise ServiceError("INVALID_INPUT", "目录不存在或不是目录")
@@ -198,7 +211,7 @@ def run(workspace, folder, *, principal="owner", manifest=None, write_manifest=N
         summary["worker"] = {"exit": run_worker(workspace, once=True)}
     summary["totals"] = {"queued": len(summary["queued"]), "skipped": len(summary["skipped"]),
                          "failed": len(summary["failed"])}
-    if not env("KB_KEY"):
+    if not env("KB_KEY") and not dry_run:
         summary["note"] = (f"本次写入 owner {owner}；若控制台看不到资料，请用 {env_key('KB_KEY')}=<控制台密钥> 重新导入，"
                            "或用同一 config 的 principal")
     return summary

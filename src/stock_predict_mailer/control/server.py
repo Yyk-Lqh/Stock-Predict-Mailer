@@ -130,7 +130,9 @@ def make_server(root, port=8767, master_key=None, market=None):
                 if kind == "knowledge":
                     owner = engine.memory.owner(self.headers.get("X-Memory-Key", ""))
                     kb, route = engine.knowledge, parts[2:]
-                    if route == ["documents"] and method == "GET":
+                    if route == ["queue"] and method == "GET":
+                        self.output(kb.queue(owner))
+                    elif route == ["documents"] and method == "GET":
                         filters = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
                         if set(filters) - {"limit", "offset", "status"} or any(len(values) != 1 for values in filters.values()):
                             raise ServiceError("INVALID_INPUT", "分页仅接受单个 limit、offset 与 status")

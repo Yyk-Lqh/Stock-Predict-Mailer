@@ -7,7 +7,7 @@ import re
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -49,6 +49,9 @@ def stock_codes(text, *, explicit=False):
 
 
 STATES = ("pending", "processing", "ready", "review", "failed", "rejected", "deleting")
+# A worker beats at least every ten seconds while idle; ninety seconds of silence
+# means it is gone and the queue is stalled, not merely busy with a large file.
+WORKER_STALE = 90
 ERRORS = {"PARSE_OR_IMPORT_FAILED": "文件解析或导入失败，请检查格式和当前步骤",
           "REVIEW_REQUIRED": "扫描件、缺失字段或复杂结构需要人工复核",
           "PARSER_MISSING": "缺少解析依赖，请安装 knowledge extra",
@@ -83,6 +86,9 @@ class Knowledge:
                     PRIMARY KEY(generation,chunk));
                 CREATE TABLE IF NOT EXISTS review_audit (id TEXT PRIMARY KEY, owner TEXT NOT NULL, doc TEXT NOT NULL,
                     at TEXT NOT NULL, decision TEXT NOT NULL, body TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS workers (id TEXT PRIMARY KEY, host TEXT NOT NULL, pid INTEGER NOT NULL,
+                    started TEXT NOT NULL, beat TEXT NOT NULL, state TEXT NOT NULL, current TEXT,
+                    processed INTEGER NOT NULL DEFAULT 0);
             """)
             con.execute("BEGIN IMMEDIATE")
             for table, additions in {"owners": {"cleaner_config": "BLOB"},
@@ -365,7 +371,7 @@ class Knowledge:
         with self.db() as con:
             con.execute("UPDATE documents SET status='failed',error='INTERRUPTED' WHERE status='processing'")
 
-    def process_one(self):
+    def process_one(self, on_start=None):
         with self.db() as con:
             con.execute("BEGIN IMMEDIATE")
             row = con.execute("SELECT * FROM documents WHERE status='pending' ORDER BY uploaded,id LIMIT 1").fetchone()
@@ -374,6 +380,10 @@ class Knowledge:
             item = dict(row)
             con.execute("UPDATE documents SET status='processing',error=NULL WHERE id=?", (item["id"],))
         owner, did = item["owner"], item["id"]
+        if on_start is not None:
+            # Called outside the transaction above: the worker writes its heartbeat here,
+            # and opening a second connection inside BEGIN IMMEDIATE would fight for the lock.
+            on_start(did)
         try:
             if item["parsed"]:
                 parsed = json.loads(item["parsed"])
@@ -537,6 +547,66 @@ class Knowledge:
         return [{**{k: row[k] for k in ("id", "status", "dimension", "error")},
                  "model": self.opened(row["config"])["model"], "version": self.opened(row["config"])["version"],
                  "fingerprint": hashlib.sha256(packed({k: v for k, v in self.opened(row["config"]).items() if k != "api_key"}).encode()).hexdigest()} for row in rows]
+
+    def heartbeat(self, host, pid, *, state, current=None, processed=0, started=None):
+        # The worker is a separate process, so liveness cannot live in memory: SQLite is
+        # the only thing it shares with the console. Only one worker runs at a time
+        # (process_lock), so the table keeps the latest beat rather than a history.
+        if state not in ("idle", "busy", "stopped"):
+            raise ServiceError("INVALID_INPUT", "心跳状态无效")
+        now = utcnow().isoformat()
+        started = started or now
+        wid = f"{host}:{pid}:{started}"
+        with self.db() as con:
+            con.execute("DELETE FROM workers")
+            con.execute("INSERT INTO workers(id,host,pid,started,beat,state,current,processed) VALUES (?,?,?,?,?,?,?,?)",
+                        (wid, str(host), int(pid), started, now, state, current, int(processed)))
+        return {"id": wid, "state": state, "beat": now}
+
+    def worker_status(self):
+        # "Never started" and "went silent" are different problems for the operator: the
+        # first needs the command, the second needs a look at the process. Keep them apart.
+        with self.db() as con:
+            row = con.execute("SELECT * FROM workers ORDER BY beat DESC, rowid DESC LIMIT 1").fetchone()
+        if row is None:
+            return {"seen": False, "online": False, "state": None, "beat": None, "age": None,
+                    "host": None, "pid": None, "processed": 0, "current": None,
+                    "current_logical": None, "stale_after": WORKER_STALE}
+        age = round(max((utcnow() - datetime.fromisoformat(row["beat"])).total_seconds(), 0.0), 1)
+        return {"seen": True, "online": row["state"] != "stopped" and age <= WORKER_STALE,
+                "state": row["state"], "beat": row["beat"], "age": age, "host": row["host"],
+                "pid": row["pid"], "processed": row["processed"], "current": row["current"],
+                "current_logical": None, "stale_after": WORKER_STALE}
+
+    def queue(self, owner, *, limit=5):
+        # One GROUP BY feeds the console status bar; the document list has its own paging.
+        # Kept cheap on purpose: the console polls this every few seconds.
+        self.ensure(owner)
+        if type(limit) is not int or not 1 <= limit <= 20:
+            raise ServiceError("INVALID_INPUT", "待办条数须为 1–20")
+        with self.db() as con:
+            counts = dict(con.execute("SELECT status, COUNT(*) FROM documents WHERE owner=? GROUP BY status", (owner,)))
+            attention = []
+            for row in con.execute("SELECT id,logical,filename,status,error,uploaded FROM documents "
+                                   "WHERE owner=? AND status IN ('failed','review') ORDER BY uploaded DESC, id LIMIT ?",
+                                   (owner, limit)):
+                item = dict(row)
+                item["error_message"] = ERRORS.get(item["error"], item["error"])
+                attention.append(item)
+        worker = self.worker_status()
+        if worker["current"]:
+            # A worker imports for every owner. Name the document only when it is this
+            # caller's; another owner's import is not this caller's business.
+            with self.db() as con:
+                own = con.execute("SELECT logical FROM documents WHERE id=? AND owner=?",
+                                  (worker["current"], owner)).fetchone()
+            worker["current_logical"] = own["logical"] if own else None
+            if own is None:
+                worker["current"] = None
+        counts = {state: counts.get(state, 0) for state in STATES}
+        return {"counts": counts, "total": sum(counts.values()),
+                "waiting": counts["pending"] + counts["processing"],
+                "attention": attention, "worker": worker}
 
     def retire(self, owner, did):
         # Withdraws a version from retrieval while keeping its encrypted original:

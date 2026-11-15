@@ -505,7 +505,7 @@ window.Workbench = (() => {
 
 /* Private documents, evidence and review. Source text is always rendered as text. */
 window.KnowledgeUI = (() => {
-  let timer = null, epoch = 0, documents = [], catalog = {total: 0, review: 0};
+  let timer = null, epoch = 0, documents = [], catalog = {total: 0, review: 0}, queueTimer = null, waiting = null;
   const PAGE = 50;
   const STATE = {pending: '已排队', processing: '处理中', ready: '已发布', review: '待审阅', failed: '处理失败', rejected: '已拒绝', deleting: '等待删除'};
   const STEP = {received: '已接收', parsed: '已解析', chunked: '已切分', extracted: '已提取', reviewed: '已审阅', published: '已发布'};
@@ -538,7 +538,7 @@ window.KnowledgeUI = (() => {
           <p class="hint">支持 PDF、DOCX、TXT、Markdown、CSV、XLSX、JSON。上传后进入队列，由独立清洗进程处理。扫描件 OCR 暂不支持。标签用于检索前过滤，单类最多 40 个、每个不超过 100 字符；留空表示不限定。</p>
           <div><button type="submit" class="btn primary">上传并排队</button></div>
         </form></details>
-        <p class="hint worker-note">排队不代表入库完成。清洗进程须在本机单独启动，当前页面无法确认它是否在线。</p>
+        <div id="knowledge-queue" class="queue-bar"></div>
         <div id="knowledge-list"></div><div id="knowledge-detail" class="knowledge-detail" hidden></div>
       </div>
       <div data-kb-pane="search" hidden><form id="knowledge-search" class="stack"><label class="field"><span>查找证据</span><input id="knowledge-query" required maxlength="4000" placeholder="例如：营业收入、客户关系、供应链风险"></label><div class="grid-3"><label class="field"><span>截止日期</span><input id="knowledge-asof" type="date"></label><label class="field"><span>股票代码</span><input id="knowledge-stock" placeholder="600000.SH"></label><label class="field"><span>主体名称</span><input id="knowledge-entity" maxlength="200"></label></div><div><button type="submit" class="btn primary">检索证据</button></div></form><div id="knowledge-results" class="mt-26"></div></div>
@@ -555,8 +555,8 @@ window.KnowledgeUI = (() => {
   section.querySelectorAll('[data-kb-tab]').forEach(el => { el.onclick = safe(async () => { tab(el.dataset.kbTab); if (el.dataset.kbTab === 'processing') await configs(); }); });
   function reset() { $('task-knowledge-query').value = ''; $('task-knowledge-consent').checked = false; }
   function identityReset() {
-    ++epoch; clearTimeout(timer); documents = [];
-    for (const id of ['knowledge-list', 'knowledge-results', 'knowledge-configs', 'knowledge-indexes', 'knowledge-detail']) $(id).replaceChildren();
+    ++epoch; clearTimeout(timer); clearTimeout(queueTimer); waiting = null; documents = [];
+    for (const id of ['knowledge-list', 'knowledge-results', 'knowledge-configs', 'knowledge-indexes', 'knowledge-detail', 'knowledge-queue']) $(id).replaceChildren();
     $('knowledge-detail').hidden = true; reset();
   }
   function selection() { return {knowledge_query: $('task-knowledge-query').value.trim(), knowledge_to_model: $('task-knowledge-consent').checked}; }
@@ -584,13 +584,67 @@ window.KnowledgeUI = (() => {
     }
     if (!documents.length) text(host, 'p', '上传第一份资料，建立可追溯的证据库。', 'empty');
   }
+  function shortAge(seconds) {
+    if (seconds === null || seconds === undefined) return '未知';
+    if (seconds < 60) return `${Math.max(1, Math.round(seconds))} 秒前`;
+    if (seconds < 5400) return `${Math.round(seconds / 60)} 分钟前`;
+    return `${Math.round(seconds / 3600)} 小时前`;
+  }
+  // 队列条回答两个问题：进程在不在、卡在哪一份。计数每几秒轮询一次，
+  // 所以只读一个聚合接口，不重载列表。
+  function renderQueue(data) {
+    const host = $('knowledge-queue'); host.replaceChildren();
+    const counts = data.counts || {}, worker = data.worker || {};
+    const head = document.createElement('p'); head.className = 'queue-head';
+    const dot = document.createElement('span');
+    dot.className = 'dot ' + (worker.online ? 'ok' : worker.seen ? 'warn' : 'off');
+    const title = worker.online
+      ? (worker.state === 'busy' ? `清洗进程正在处理 · ${worker.current_logical || '其他资料'}` : '清洗进程在线 · 空闲')
+      : worker.seen
+        ? (worker.state === 'stopped' ? '清洗进程已退出' : `清洗进程无响应 · 最近心跳 ${shortAge(worker.age)}`)
+        : '清洗进程尚未在本机启动';
+    text(head, 'strong', title); head.prepend(dot);
+    if (worker.seen) text(head, 'span', `最近心跳 ${shortAge(worker.age)} · 本次已处理 ${worker.processed} 份 · ${worker.host}:${worker.pid}`, 'hint');
+    host.append(head);
+    text(host, 'p', `排队 ${counts.pending || 0} · 处理中 ${counts.processing || 0} · 待审阅 ${counts.review || 0} · 失败 ${counts.failed || 0} · 已发布 ${counts.ready || 0}`, 'hint');
+    if (!worker.online && data.waiting) {
+      const note = document.createElement('p'); note.className = 'note warn';
+      note.textContent = `有 ${data.waiting} 份资料在排队，但没有进程在处理。在本机运行 uv run stock-predict-mailer knowledge-worker 常驻处理，或加 --once 处理完即退出。`;
+      host.append(note);
+    }
+    for (const item of data.attention || []) {
+      const row = document.createElement('div'); row.className = 'queue-attention';
+      text(row, 'span', `${STATE[item.status] || item.status} · ${item.logical}`, item.status === 'failed' ? 'error-text' : 'hint');
+      if (item.status === 'failed') text(row, 'span', item.error_message || '处理失败', 'hint');
+      row.append(action('查看', () => detail(item.id)));
+      host.append(row);
+    }
+  }
+  async function queueStatus(reload = true) {
+    clearTimeout(queueTimer);
+    const key = memoryKey;
+    if (!key) { $('knowledge-queue').replaceChildren(); waiting = null; return; }
+    let busy = waiting;
+    try {
+      const data = await api('knowledge/queue');
+      if (key !== memoryKey) return;
+      renderQueue(data);
+      busy = data.waiting || 0;
+      // 队列从有到空：列表里的状态已经过期，补一次重载。load() 内部以 reload=false
+      // 调用本函数，避免两边互相触发。
+      if (reload && waiting !== null && waiting > 0 && busy === 0) await load();
+      waiting = busy;
+    } catch (error) { /* 轮询失败保持上一次显示，网络抖动不该刷提示 */ }
+    queueTimer = setTimeout(() => queueStatus(), busy ? 4000 : 15000);
+  }
   async function load(append = false) {
     clearTimeout(timer);
     const extend = append === true;
     const requestEpoch = ++epoch;
     const key = memoryKey;
     $('knowledge-access').hidden = Boolean(key); $('knowledge-body').hidden = !key;
-    if (!key) { documents = []; $('knowledge-list').replaceChildren(); $('knowledge-detail').hidden = true; return; }
+    if (!key) { documents = []; $('knowledge-list').replaceChildren(); $('knowledge-detail').hidden = true; $('knowledge-queue').replaceChildren(); clearTimeout(queueTimer); waiting = null; return; }
+    queueStatus(false);
     try {
       const offset = extend ? documents.length : 0;
       const limit = extend ? PAGE : Math.min(500, Math.max(PAGE, documents.length));

@@ -2,6 +2,17 @@
 
 ## 未发布（分支 `scene/56-agent-app`）
 
+- 知识库队列与 worker 在线状态接入控制台：新增 `GET /api/knowledge/queue` 与 `workers` 心跳表。
+  - worker 在每轮循环写心跳（`idle` / `busy` / `stopped`，含正在处理的资料与本次已处理份数），空闲时 10 秒节流一次；`--once` 退出前也写 `stopped`，因此「跑完即退」同样能解释队列为何不再推进。
+  - 判定：`state != stopped` 且心跳在 90 秒内为在线。「从未启动」与「无响应」分开呈现——前者给命令，后者提示查进程；离线而仍有排队时，状态条直接给出 `knowledge-worker` 命令。
+  - 控制台「资料与版本」顶部显示 排队 / 处理中 / 待审阅 / 失败 / 已发布 与最近心跳、本次处理份数；失败与待审阅条目可跳到详情。原先那句「当前页面无法确认它是否在线」随之删除。
+  - 心跳写失败只吞异常，不阻断导入；`busy` 时仅当正在处理的资料属于当前 owner 才显示名称。
+  - 289 项 unittest 通过（新增 8 项：计数与 owner 隔离、失败原因、心跳三态、静默判定、跨 owner 隐藏、`--limit` 边界、`--once` 心跳、HTTP 路由）。
+- 新增 `docs/知识库受控词表.md`：把 `logical` 与 8 个标签键的取值固定下来，作为种子库录入的唯一来源。
+  - 8 个一级域的二级键、第三级命名规则与正反例；一条判定规则——「修订版该覆盖还是该并存」，用于区分「报告期（允许）」与「获取日期（禁止）」。
+  - `topics` 受控 30 词（6 组，含含义边界与互斥对）、`industries` 采用申万一级 31 个、`source` 按「类别+机构」。
+  - 明确不覆盖宏观指标名、公司名、行业名，避免词表变成摘要库；`制度`、`方法` 两域默认留空 `topics`。
+  - 词表外写法视为录入错误；变更走月度评审，不回填历史文档（回填会触发新版本）。
 - 新增批量导入入口 `knowledge-import`：按目录或 CSV 清单一次导入整批资料，支持 `--dry-run`、`--limit`、`--write-manifest`、`--process`。
   - 清单列 `path,logical,source,document_date,available_date,valid_to,companies,industries,topics,stock_codes`，与 `metadata()` 白名单一致；未知列直接报错，避免拼写错误静默丢标签。
   - `available_date` 不会静默取当天：清单 → `--available` → `document_date` 依次兜底，三者皆无则逐文件失败；`--assume-available-today` 才用当天并计入 `warnings.available_date_inferred`。理由是该字段事后无法修复，填错会污染回测。

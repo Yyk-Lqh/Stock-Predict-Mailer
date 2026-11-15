@@ -708,7 +708,14 @@ body.inspector-expanded .report-inspector { width: calc(100vw - 232px); padding-
 .document-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, .45fr) auto; gap: 18px; align-items: center; padding: 20px 0; border-bottom: 1px solid var(--rule); }
 .document-row h3 { font-size: 14px; overflow-wrap: anywhere; }
 .document-row .hint { font-size: 11px; }
-.worker-note { margin: 8px 0 20px; }
+/* 队列条：一眼看出清洗进程在不在，而不是让用户去猜排队卡在哪 */
+.queue-bar { padding: 16px 18px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--surface-2); margin: 4px 0 22px; }
+.queue-head { display: flex; align-items: baseline; flex-wrap: wrap; }
+.queue-head strong { font-size: 13px; font-weight: 600; }
+.queue-bar > p + p { margin-top: 6px; }
+.queue-bar .note { margin-top: 10px; }
+.queue-attention { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--rule); }
+.queue-attention .btn { margin-left: auto; }
 .knowledge-detail { padding: 28px 0; border-top: 1px solid var(--rule-strong); margin-top: 28px; }
 .knowledge-detail > details { margin-top: 24px; }
 .source-excerpt { padding: 18px 0; border-bottom: 1px solid var(--rule); }

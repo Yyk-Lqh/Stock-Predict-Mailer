@@ -42,7 +42,7 @@ uv run stock-predict-mailer --config config/local.toml knowledge-worker --poll 2
 uv run stock-predict-mailer --config config/local.toml knowledge-worker --once
 ```
 
-只需知识库依赖时可用 `uv sync --extra knowledge --extra dev`；研究功能还需对应 research/trees extra。上传不会自动启动 worker。独立进程持有自己的 OS 锁，避免双 worker 恢复对方的运行任务；进程中断后再次启动将 processing 标为失败，需显式 retry。`--once` 有失败任务返回 2，否则返回 0；`--poll` 为 .1–60 秒。每次解析完成保存 parsed 检查点，清洗完成保存 chunked 检查点，重试从其后继续。向量/索引发布事务失败回滚，不暴露半成品。
+只需知识库依赖时可用 `uv sync --extra knowledge --extra dev`；研究功能还需对应 research/trees extra。上传不会自动启动 worker。worker 每轮写心跳（`idle` / `busy` / `stopped`），控制台按「90 秒内有心跳且未写 stopped」判定在线：正常退出与 Ctrl+C 会写 stopped，被强杀则最多滞后 90 秒。独立进程持有自己的 OS 锁，避免双 worker 恢复对方的运行任务；进程中断后再次启动将 processing 标为失败，需显式 retry。`--once` 有失败任务返回 2，否则返回 0；`--poll` 为 .1–60 秒。每次解析完成保存 parsed 检查点，清洗完成保存 chunked 检查点，重试从其后继续。向量/索引发布事务失败回滚，不暴露半成品。
 
 整批资料用 `knowledge-import <目录>`，同样只入队，`--process` 才顺带跑完队列：`--write-manifest` 生成清单骨架，填好后 `--dry-run` 核对计划，再正式导入。清单存在时以其为准，未登记文件不入库；`available_date` 依次取清单、`--available`、`document_date`，三者皆无则逐文件失败，`--assume-available-today` 是唯一显式覆盖方式。重复导入按 `(logical, 内容哈希)` 跳过。
 
@@ -52,6 +52,7 @@ uv run stock-predict-mailer --config config/local.toml knowledge-worker --once
 
 先从同源本机控制台建立 session，读取 `GET /api/session` 的 csrf_token。创建身份：`POST /api/memory/access`（JSON `{}`），妥善保存返回 key。所有知识库接口都必须携带 `X-Memory-Key`；所有写操作还须携带 `X-CSRF-Token` 和同源 session cookie。不得在 query URL 中传访问密钥。以下路径均以 `/api/knowledge` 为前缀。
 
+- `GET /queue`：队列总览，返回 `{counts,total,waiting,attention,worker}`。`counts` 覆盖全部状态且缺省为 0，`waiting` 为 pending+processing；`attention` 是最近的失败与待审阅条目，合计上限 `limit`（1–20，缺省 5）。`worker` 取自心跳表：`seen` 区分「从未启动」与「已退出」，`online` 为 `state != stopped` 且心跳在 90 秒内，`age` 是距上次心跳的秒数，`processed` 是本次进程处理的份数（重启归零）。`busy` 时 `current_logical` 仅在该资料属于本用户时给出，否则为 null。
 - `POST /documents`：`{"filename":"report.csv","data":"<base64>","logical":"财报","metadata":{...}}`。原文件上限 10 MiB，JSON 请求上限 15 MiB；响应 202 只表示 pending。logical 省略时用文件名；更新时保持 logical，上传新字节或新元数据。原格式 `.doc/.xls` 不支持。
 - `GET /documents?limit=50&offset=0&status=ready`：分页返回本用户的资料摘要（active 标记、上传时间、处理 status/step/error/error_message、warnings、needs_review），响应为 `{items,total,review,limit,offset}`。limit 1–500，缺省 50；status 取值见处理状态。分页只装配当前页，不再逐篇查询。
 - `GET /documents/{id}`：清洗前 original 摘录、清洗后 text、原始 fields、normalized_fields、结构标题与定位、实体和代码。长文本按结构分界与有限重叠切分，定位的 extracted_text_offset 是解析文本内字符位置，不是 PDF 二进制偏移。

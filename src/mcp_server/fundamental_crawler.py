@@ -3,15 +3,13 @@
 来源：数据面2/我已无力2，要更新数据面就用这个_步骤(5).py
 
 改动说明：
-1. END_YEAR / END_QUARTER 不再各自硬编码，跟随目录爬虫（catalog_crawler）
-   里硬编码的默认爬取日期 DEFAULT_CRAWL_DATE 推导
-   （2026-10-23 -> 2026Q3）；
+1. 默认截止日期采用上海时区当天；显式 end_date 用于截止日视图；
 2. collect_fundamental(max_stocks, end_date) 支持不改目录日期、
    单独指定数据面截止日期（end_date 不为空时覆盖默认推导）；
 3. 已有数据面 CSV 自动作为基线续采：已完成股票只补旧文件最新报告期起
    的增量区间，新股票采全量历史，落盘按 (code, report_date) 去重追加；
 4. MAX_STOCKS_PER_RUN 改为 max_stocks 参数，0 = 全量；
-5. 所有路径基于本文件位置绝对化解析；
+5. 所有路径使用独立可配置工作区，不向安装目录写入；
 6. 控制台输出走 stderr，避免污染 MCP stdio 协议。
 
 原有防封机制全部保留：socket 超时兜底、全局限速、降速停采、
@@ -24,20 +22,28 @@ import sys
 import time
 from datetime import date
 
+import baostock as bs
+import baostock.common.contants as cons
+import baostock.common.context as bs_context
+import baostock.util.socketutil as _su
 import pandas as pd
 
+from .fundamental_snapshot import normalize_row, write_cutoff_view
+from .paths import data_dir
+from .quality import (
+    DataQualityError,
+    code_of,
+    cutoff_date,
+    previous_quarter,
+    snapshot_status,
+    today,
+    utc_now,
+    write_snapshot,
+)
+from .runtime import check_cancelled, current_control, file_digest, path_for, pause, progress, serialize
+
 socket.setdefaulttimeout(20)
-
-import baostock as bs
-import baostock.common.context as bs_context
-import baostock.common.contants as cons
-
 cons.BAOSTOCK_SERVER_IP = '114.94.20.42'
-
-import baostock.util.socketutil as _su
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from catalog_crawler import DEFAULT_CRAWL_DATE  # noqa: E402
 
 QUERY_TIMEOUT = 20
 
@@ -65,13 +71,16 @@ def _safe_send_msg(msg):
 
 _su.send_msg = _safe_send_msg
 
-# 路径：数据目录固定为 数据面2
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), '数据面2')
+# 路径由独立工作区配置决定。
+DATA_DIR = str(data_dir())
 
 POOL_FILE = os.path.join(DATA_DIR, 'stock_data117.csv')
 OUTPUT_FILE = os.path.join(DATA_DIR, 'fundamental_quarterly_new.csv')
 LOG_FILE = os.path.join(DATA_DIR, '重采进度.log')
+
+
+def _path(name):
+    return path_for(name, globals()[name])
 
 START_YEAR = 2009
 
@@ -82,17 +91,11 @@ def _derive_end_quarter(as_of):
     规则：取该日期所在季度的上一个完整季度。
     例：2026-10-23 -> 2026Q3；2026-09-30 -> 2026Q2。
     """
-    d = date.fromisoformat(as_of)
-    month = d.month - 3
-    year = d.year
-    if month <= 0:
-        month += 12
-        year -= 1
-    return year, (month - 1) // 3 + 1
+    return previous_quarter(as_of)
 
 
-# 截止季度默认跟随目录爬取里设定的日期推导（不再各自硬编码）
-END_YEAR, END_QUARTER = _derive_end_quarter(DEFAULT_CRAWL_DATE)
+# 模块级常量仅保留兼容性；采集调用会重新解析当日截止日期。
+END_YEAR, END_QUARTER = _derive_end_quarter(today())  # Compatibility exports only; calls resolve dates afresh.
 
 # 增量补采模式：设为 (年, 季) 后，已完成股票只补采该季度起的新报告期；
 # None = 自动增量：从旧文件最新报告期所在季度起补采（含该季度，
@@ -148,7 +151,7 @@ class RateLimiter:
     def wait(self):
         gap = self.interval - (time.time() - self.last)
         if gap > 0:
-            time.sleep(gap + random.uniform(0, 0.05))
+            pause(gap + random.uniform(0, 0.05))
         self.last = time.time()
 
 
@@ -161,7 +164,8 @@ _last_login_time = 0.0
 
 def log(msg):
     _echo(msg)
-    with open(LOG_FILE, 'a', encoding='utf-8') as f:
+    os.makedirs(_path('DATA_DIR'), exist_ok=True)
+    with open(_path('LOG_FILE'), 'a', encoding='utf-8') as f:
         f.write(msg + '\n')
 
 
@@ -178,6 +182,7 @@ def _is_net(text):
 def _login():
     global _last_login_time
     _echo('  [login] 连接中...')
+    check_cancelled()
     rs = bs.login()
     _echo(f'  [login] {rs.error_code} {rs.error_msg}')
     if rs.error_code != '0':
@@ -191,12 +196,12 @@ def _reconnect():
     global _last_reconnect
     gap = RECONNECT_MIN_GAP - (time.time() - _last_reconnect)
     if gap > 0:
-        time.sleep(gap)
+        pause(gap)
     try:
         bs.logout()
     except Exception:
         pass
-    time.sleep(3)
+    pause(3)
     _login()
     _last_reconnect = time.time()
 
@@ -217,18 +222,21 @@ def _query(func, symbol, year, quarter, tag):
     global _req_count
     last = ''
     for delay in (0,) + NET_RETRY_DELAYS:
+        check_cancelled()
         if delay:
-            time.sleep(delay)
+            pause(delay)
         _limiter.wait()
         t0 = time.time()
         _req_count += 1
+        if _req_count % PROGRESS_EVERY == 0:
+            progress(stage='query', current_stock=symbol, year=year, quarter=quarter, requests=_req_count)
         try:
             rs = func(symbol, year=year, quarter=quarter)
         except Exception as e:
             _check_speed(time.time() - t0)
             last = f'{type(e).__name__}: {e}'
             if _is_ban(last):
-                raise RuntimeError(f'BAN {symbol} {last}')
+                raise RuntimeError(f'BAN {symbol} {last}') from e
             if _is_net(last):
                 _reconnect()
             continue
@@ -239,7 +247,7 @@ def _query(func, symbol, year, quarter, tag):
                 _echo(f'      {tag} 第 {_req_count} 次请求  {cost:.2f}s')
             out = {}
             while rs.next():
-                row = dict(zip(rs.fields, rs.get_row_data()))
+                row = dict(zip(rs.fields, rs.get_row_data(), strict=True))
                 out[row['statDate']] = row
             return out
         last = f'{rs.error_code}: {rs.error_msg}'
@@ -270,6 +278,7 @@ def _fetch_stock(code, quarters=None, end_year=None, end_quarter=None):
                     for q in range(1, 5)
                     if not (y == ey and q > eq)]
     for year, quarter in quarters:
+        check_cancelled()
         profit = _query(bs.query_profit_data, symbol, year, quarter,
                         f'{symbol} {year}Q{quarter}')
         balance = _query(bs.query_balance_data, symbol, year, quarter,
@@ -280,32 +289,45 @@ def _fetch_stock(code, quarters=None, end_year=None, end_quarter=None):
                           f'{symbol} {year}Q{quarter}')
         report_dates = set(profit) | set(balance) | set(growth) | set(cashflow)
         for rd in sorted(report_dates):
-            row = {'code': code, 'report_date': rd}
+            row = {'code': code, 'report_date': rd, 'provider_symbol': symbol}
             pubs = []
+            disclosure_verified = True
             for table, fields in ((profit, PROFIT_FIELDS),
                                   (balance, BALANCE_FIELDS),
                                   (growth, GROWTH_FIELDS),
                                   (cashflow, CASHFLOW_FIELDS)):
                 tr = table.get(rd, {})
+                if tr and not tr.get('pubDate'):
+                    disclosure_verified = False
                 for field in fields:
                     if field == 'pubDate':
                         v = tr.get('pubDate', '')
                         if v:
+                            if date.fromisoformat(v) < date.fromisoformat(rd):
+                                raise DataQualityError('INVALID_DATA', '表格披露日期早于报告期')
                             pubs.append(v)
                     else:
                         row[field] = tr.get(field, '')
             row['pubDate'] = max(pubs) if pubs else ''
-            rows.append(row)
+            row['publication_verified'] = bool(pubs) and disclosure_verified
+            row['collected_at'] = utc_now().isoformat()
+            rows.append(normalize_row(row, [key for key in RENAME_MAP if key != 'pubDate']))
     return rows
 
 
 def _load_existing():
-    if not os.path.exists(OUTPUT_FILE):
+    if not os.path.exists(_path('OUTPUT_FILE')):
         return [], set(), None
+    if snapshot_status(_path('OUTPUT_FILE'))['integrity'] == 'invalid':
+        raise DataQualityError('INVALID_DATA', '已有基本面文件与元数据不匹配，停止续采')
     try:
-        df = pd.read_csv(OUTPUT_FILE, dtype={'code': str},
+        df = pd.read_csv(_path('OUTPUT_FILE'), dtype={'code': str}, keep_default_na=False,
                          encoding='utf-8-sig')
         df = df.rename(columns=INVERSE_MAP)
+        if not {'code', 'report_date'}.issubset(df.columns):
+            raise DataQualityError('INVALID_DATA', '已有基本面文件缺少代码或报告期')
+        rows = [normalize_row(row, [key for key in RENAME_MAP if key != 'pubDate'])
+                for row in df.to_dict('records')]
         latest_q = None
         if 'report_date' in df.columns:
             rd = pd.to_datetime(df['report_date'], errors='coerce').dropna()
@@ -313,10 +335,9 @@ def _load_existing():
                 latest_q = rd.max().to_period('Q')
         log(f"续采：已有 {len(df)} 行 / {df['code'].nunique()} 只，"
             f"最新报告期 {latest_q if latest_q is not None else '无'}")
-        return df.to_dict('records'), set(df['code'].unique()), latest_q
+        return rows, set(df['code'].unique()), latest_q
     except Exception as e:
-        log(f'读旧文件失败 {type(e).__name__}: {e}，从头开始')
-        return [], set(), None
+        raise DataQualityError('INVALID_DATA', '已有基本面文件无效，保留原文件并停止续采') from e
 
 
 def _save(rows):
@@ -327,7 +348,12 @@ def _save(rows):
                                     keep='last')
             df = df.sort_values(['code', 'report_date'],
                                 kind='stable').reset_index(drop=True)
-        df.to_csv(OUTPUT_FILE, encoding='utf-8-sig', index=False)
+        write_snapshot(_path('OUTPUT_FILE'), df.to_csv(index=False).encode('utf-8-sig'),
+                       {'source': 'baostock', 'generated_at': utc_now().isoformat(), 'fetched_at': None,
+                        'completeness': 'unknown', 'row_count': len(df), 'point_in_time_verified': False})
+        control = current_control()
+        if control is not None:
+            control.output_written(file_digest(_path('OUTPUT_FILE')))
 
 
 def _preflight():
@@ -359,21 +385,22 @@ def _summary(ok, stock_pool, done_codes, all_rows, msg='',
     summary = {
         'ok': ok,
         'message': msg,
-        'crawl_date': DEFAULT_CRAWL_DATE,
+        'crawl_date': today(),
         'end_quarter': end_quarter_label or f'{END_YEAR}Q{END_QUARTER}',
         'pool_size': len(stock_pool),
         'done_total': len(done_codes),
         'rows': len(all_rows),
         'stop_reason': stop_reason,
         'failed': sorted(set(failed)) if failed else [],
-        'output_file': OUTPUT_FILE,
+        'output_file': _path('OUTPUT_FILE'),
     }
     if extra:
         summary.update(extra)
     return summary
 
 
-def collect_fundamental(max_stocks=0, end_date=None):
+@serialize(lambda: _path('OUTPUT_FILE'))
+def collect_fundamental(max_stocks=0, end_date=None, allow_unverified_pool=False):
     """按需采集基本面季度数据（股票池来自目录爬虫输出）。
 
     已有数据面 CSV 自动作为基线续采：已完成股票只补旧文件最新
@@ -381,24 +408,45 @@ def collect_fundamental(max_stocks=0, end_date=None):
     (code, report_date) 去重追加。
 
     max_stocks: 0 = 全量；>0 = 本轮最多采集 N 只（长任务建议分批）。
-    end_date: 截止日期 'YYYY-MM-DD'；None = 默认跟随目录爬取的日期
-              DEFAULT_CRAWL_DATE（不改目录日期时保持 None）。
+    end_date: 截止日期 'YYYY-MM-DD'；None = 上海时区当天。
     """
-    if end_date:
-        end_year, end_quarter = _derive_end_quarter(end_date)
-    else:
-        end_year, end_quarter = END_YEAR, END_QUARTER
+    as_of = cutoff_date(end_date).isoformat()
+    check_cancelled()
+    control = current_control()
+    frozen = control.checkpoint.get('plan') if control else None
+    end_year, end_quarter = _derive_end_quarter(as_of)
+    if isinstance(max_stocks, bool) or not isinstance(max_stocks, int) or max_stocks < 0:
+        raise DataQualityError('INVALID_ARGUMENT', 'max_stocks 必须为非负整数')
+    pool_quality = snapshot_status(_path('POOL_FILE'))
+    if pool_quality['integrity'] in ('invalid', 'missing'):
+        raise DataQualityError('INVALID_DATA', '股票池缺失或与元数据不匹配')
+    if (pool_quality['integrity'] != 'verified' or pool_quality.get('completeness') != 'complete'
+            or pool_quality.get('cache_state') != 'fresh') and not allow_unverified_pool and not frozen:
+        raise DataQualityError('POOL_UNVERIFIED', '股票池过期或未经完整性验证；须更新目录或显式允许未验证股票池')
 
-    pool_df = pd.read_csv(POOL_FILE, usecols=['股票代码'],
+    pool_df = pd.read_csv(_path('POOL_FILE'), usecols=['股票代码'],
                           dtype={'股票代码': str}, encoding='utf-8-sig')
-    stock_pool = sorted(pool_df['股票代码'].str.zfill(6).unique())
+    stock_pool = sorted({code_of(value) for value in pool_df['股票代码']})
+    if not stock_pool:
+        raise DataQualityError('INVALID_DATA', '股票池为空')
 
     all_rows, done_codes, latest_q = _load_existing()
+    processed, failed, todo = set(), [], []
+    scope_limited = False
 
     def _result(ok, msg='', stop_reason=None, failed=None, extra=None):
-        return _summary(ok, stock_pool, done_codes, all_rows, msg=msg,
-                        stop_reason=stop_reason, failed=failed, extra=extra,
-                        end_quarter_label=f'{end_year}Q{end_quarter}')
+        complete = ok and not failed and not stop_reason and len(processed) == len(todo)
+        run_meta = {'completeness': 'complete' if complete and not scope_limited else 'partial',
+                    'run_complete': bool(complete),
+                    'dataset_completeness': 'unknown', 'scope_limited': scope_limited,
+                    'selected_count': len(todo), 'processed_count': len(processed),
+                    'pool_quality': pool_quality, 'date_policy': 'historical_cutoff' if end_date else 'current_date'}
+        view_path = os.path.join(_path('DATA_DIR'), f'fundamental_as_of_{as_of}.csv')
+        view_meta = write_cutoff_view(view_path, all_rows, as_of, RENAME_MAP, run_meta)
+        result = _summary(bool(complete), stock_pool, done_codes, all_rows, msg=msg,
+                          stop_reason=stop_reason, failed=failed, extra=extra,
+                          end_quarter_label=f'{end_year}Q{end_quarter}')
+        return dict(result, **run_meta, crawl_date=as_of, view_file=view_path, view_metadata=view_meta)
 
     inc_start = incremental_start
     if inc_start is None and latest_q is not None:
@@ -415,8 +463,7 @@ def collect_fundamental(max_stocks=0, end_date=None):
         if not inc_quarters:
             log(f'增量起点 {y0}Q{q0} 已在采集范围 '
                 f'{end_year}Q{end_quarter} 之外，无需补采')
-            return _result(True, msg='增量起点已在截止季度之外，无需补采')
-        todo = [c for c in stock_pool if not c.startswith('9')]
+        todo = [c for c in stock_pool if not c.startswith('9')] if inc_quarters else []
         est_q = len(inc_quarters)
     else:
         inc_quarters = None
@@ -424,7 +471,20 @@ def collect_fundamental(max_stocks=0, end_date=None):
                 if c not in done_codes and not c.startswith('9')]
         est_q = 71
     if max_stocks:
+        scope_limited = len(todo) > max_stocks
         todo = todo[:max_stocks]
+    initial_done = set(done_codes)
+    if control is not None:
+        plan = control.prepare({'as_of': as_of, 'pool_sha256': file_digest(_path('POOL_FILE')), 'selected_codes': todo,
+                                'incremental_codes': sorted(initial_done), 'quarters': inc_quarters,
+                                'scope_limited': scope_limited}, file_digest(_path('OUTPUT_FILE')))
+        todo = plan['selected_codes']
+        inc_quarters = plan['quarters']
+        initial_done = set(plan['incremental_codes'])
+        scope_limited = plan['scope_limited']
+        processed.update(control.checkpoint.get('completed_codes', ()))
+    pending = [code for code in todo if code not in processed]
+    progress(stage='planned', selected=len(todo), completed=len(processed), remaining=len(pending))
 
     est_min = len(todo) * est_q * 4 / MAX_PER_MINUTE
     log('=' * 62)
@@ -433,7 +493,7 @@ def collect_fundamental(max_stocks=0, end_date=None):
             f'（由指定日期 {end_date} 推导）')
     else:
         log(f'截止季度 {end_year}Q{end_quarter}'
-            f'（跟随目录爬取日期 {DEFAULT_CRAWL_DATE}）')
+            f'（上海时区截止日 {as_of}）')
     log(f'股票池 {len(stock_pool)} | 已完成 {len(done_codes)}'
         f' | 本轮 {len(todo)}')
     if inc_start:
@@ -442,22 +502,24 @@ def collect_fundamental(max_stocks=0, end_date=None):
     log(f'限速 每分钟 {MAX_PER_MINUTE} 次  →  预计 {est_min / 60:.1f} 小时')
     log('=' * 62)
 
-    if not todo:
+    if not pending:
         log('全部采完')
         return _result(True, msg='全部采完')
 
     if not _preflight():
         return _result(False, msg='预检失败，请用 测试Iip解封.py 探测 IP 状态')
 
-    batches = [todo[i:i + BATCH_SIZE]
-               for i in range(0, len(todo), BATCH_SIZE)]
-    failed, start_count, stop_reason = [], len(done_codes), None
+    batches = [pending[i:i + BATCH_SIZE]
+               for i in range(0, len(pending), BATCH_SIZE)]
+    start_count, stop_reason = len(done_codes), None
     fail_streak = 0
     saved_rows_len = len(all_rows)
 
     try:
         for b_idx, batch in enumerate(batches, 1):
             for code in batch:
+                check_cancelled()
+                progress(stage='stock', current_stock=code, selected=len(todo), completed=len(processed))
                 age = time.time() - _last_login_time
                 n_done = len(done_codes) - start_count
                 if age >= REFRESH_MINUTES * 60 or (
@@ -469,14 +531,18 @@ def collect_fundamental(max_stocks=0, end_date=None):
                     except Exception as e:
                         log(f'  刷新会话失败 {type(e).__name__}: {e}，继续采')
                 try:
-                    if inc_quarters and code in done_codes:
+                    if inc_quarters and code in initial_done:
                         rows = _fetch_stock(code, inc_quarters)
                     else:
                         rows = _fetch_stock(code, end_year=end_year,
                                             end_quarter=end_quarter)
+                    rows = [normalize_row(row, [key for key in RENAME_MAP if key != 'pubDate']) for row in rows]
                     if not rows:
-                        if inc_quarters and code in done_codes:
+                        if inc_quarters and code in initial_done:
                             log(f'  ~ {code} 增量区间暂无新报告期，跳过')
+                            processed.add(code)
+                            if control is not None:
+                                control.complete_stock(code, file_digest(_path('OUTPUT_FILE')))
                             continue
                         raise RuntimeError('EMPTY 无报告期')
                 except Exception as e:
@@ -501,13 +567,17 @@ def collect_fundamental(max_stocks=0, end_date=None):
                     continue
 
                 fail_streak = 0
+                processed.add(code)
                 all_rows.extend(rows)
                 done_codes.add(code)
-                if (len(done_codes) - start_count) % SAVE_EVERY == 0:
+                if control is not None or (len(done_codes) - start_count) % SAVE_EVERY == 0:
                     _save(all_rows)
                     saved_rows_len = len(all_rows)
+                if control is not None:
+                    control.complete_stock(code, file_digest(_path('OUTPUT_FILE')))
+                progress(stage='stock_completed', current_stock=code, selected=len(todo), completed=len(processed))
                 log(f'  + {code}  {len(rows)} 期  '
-                    f'[{len(done_codes) - start_count}/{len(todo)}]  '
+                    f'[{len(processed)}/{len(todo)}]  '
                     f'累计 {len(all_rows)} 行')
 
             log(f'第 {b_idx}/{len(batches)} 批结束  '
@@ -532,8 +602,9 @@ def collect_fundamental(max_stocks=0, end_date=None):
                 break
             if b_idx < len(batches):
                 log(f'  休息 {BATCH_REST} 秒...')
-                time.sleep(BATCH_REST)
+                pause(BATCH_REST)
     except KeyboardInterrupt:
+        stop_reason = 'cancelled'
         log('\n手动中断，已采数据已落盘')
     finally:
         try:
@@ -546,7 +617,7 @@ def collect_fundamental(max_stocks=0, end_date=None):
         except Exception:
             pass
         if failed:
-            path = os.path.join(DATA_DIR, '重采失败列表.txt')
+            path = os.path.join(_path('DATA_DIR'), '重采失败列表.txt')
             with open(path, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(sorted(set(failed))))
             log(f'\n失败 {len(set(failed))} 只 -> {path}')
@@ -557,8 +628,6 @@ def collect_fundamental(max_stocks=0, end_date=None):
                        stop_reason=stop_reason, failed=failed)
 
     result = pd.DataFrame(all_rows).rename(columns=RENAME_MAP)
-    for c in list(RENAME_MAP.values())[1:]:
-        result[c] = pd.to_numeric(result[c], errors='coerce')
     _save(result)
 
     log(f"\n本轮结束：{len(result)} 行 / {result['code'].nunique()} 只")

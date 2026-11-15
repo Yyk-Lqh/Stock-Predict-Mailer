@@ -1,19 +1,6 @@
-"""目录爬虫 —— MCP 按需调用封装。
-
-来源：数据面2/股票爬虫（收集预测目录）步骤(1).py
-
-改动说明：
-1. 顶层脚本逻辑函数化为 crawl_catalog()，按需调用；
-2. 缓存与输出路径改为绝对路径（不再依赖运行目录）；
-3. 默认爬取日期硬编码为 DEFAULT_CRAWL_DATE，
-   数据面采集的截止季度跟随本值推导；
-4. 控制台输出走 stderr，避免污染 MCP stdio 协议。
-
-注意：完成一次强刷（force_refresh=True）后 10 分钟内勿再次强刷，
-否则 IP 封禁约 1 小时。
-"""
+"""On-demand catalog snapshots with explicit cache age and pagination quality."""
 import csv
-import json
+import io
 import os
 import random
 import sys
@@ -21,151 +8,186 @@ import time
 
 import requests
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA2_DIR = os.path.join(BASE_DIR, '数据面2')
-SESSIONS_DIR = os.path.join(BASE_DIR, 'sessions')
+from .paths import data_dir, workspace
+from .quality import (
+    DEFAULT_CACHE_AGE,
+    DataQualityError,
+    atomic_json,
+    cache_state,
+    code_of,
+    number,
+    read_json,
+    today,
+    utc_now,
+    write_snapshot,
+)
+from .runtime import check_cancelled, path_for, pause, progress, serialize
 
-# 目录默认爬取日期（写在代码里）。数据面采集的截止季度跟随本值推导。
-DEFAULT_CRAWL_DATE = '2026-10-23'
-
-CACHE_FILE = os.path.join(SESSIONS_DIR, 'cache_stock_data.json')
-OUTPUT_FILE = os.path.join(DATA2_DIR, 'stock_data117.csv')
-
-URL = 'https://pushguest.eastmoney.com/api/qt/clist/get'
-PARAMS = {
-    'timil': 1,
-    'np': 1,
-    'fltt': 2,          # 2 = 返回 ×100 整数；1 = 原始浮点（那时不用 /100）
-    'invt': 2,
-    'fs': 'b:bk0500+f:!50',
-    'fields': 'f12,f13,f14,f1,f2,f4,f3,f152,f5,f6,f7,f15,f18,f16,f17,f10,f8,f9,f23',
-    'fid': 'f3',                  # 按涨跌幅排序
-    'pn': 1,                      # 页码
-    'pz': 100,                    # 每页条数
-    'po': 1,                      # 1 = 降序
-    'dect': 1,
-    'ut': 'fa5fd1943c7b386f172d6893dbfba10b',
-    'wbp2u': '|0|0|0|web',
-    '_': int(time.time() * 1000),
-}
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-                  '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-    'Referer': 'https://quote.eastmoney.com/',
-    'Accept': 'application/json, text/plain, */*',
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    'Connection': 'keep-alive',
-}
-
+DATA2_DIR = str(data_dir())
+SESSIONS_DIR = str(workspace() / "sessions")
+CACHE_FILE = os.path.join(SESSIONS_DIR, "cache_stock_data.json")
+OUTPUT_FILE = os.path.join(DATA2_DIR, "stock_data117.csv")
+URL = "https://pushguest.eastmoney.com/api/qt/clist/get"
+PARAMS = {"timil": 1, "np": 1, "fltt": 2, "invt": 2, "fs": "b:bk0500+f:!50",
+          "fields": "f12,f13,f14,f1,f2,f4,f3,f152,f5,f6,f7,f15,f18,f16,f17,f10,f8,f9,f23",
+          "fid": "f3", "pn": 1, "pz": 100, "po": 1, "dect": 1,
+          "ut": "fa5fd1943c7b386f172d6893dbfba10b", "wbp2u": "|0|0|0|web"}
+HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://quote.eastmoney.com/", "Accept": "application/json"}
 MAX_RETRY = 3
+PRICE_FIELDS = ("f2", "f15", "f16", "f17", "f18")
 
 
-def _echo(msg):
-    print(msg, file=sys.stderr, flush=True)
+def _path(name):
+    return path_for(name, globals()[name])
+
+
+def _echo(message):
+    print(message, file=sys.stderr, flush=True)
 
 
 def _build_params(pn=1):
-    return {**PARAMS, 'pn': pn, '_': int(time.time() * 1000)}
+    return dict(PARAMS, pn=pn, _=int(time.time() * 1000))
+
+
+def _rows(raw):
+    if isinstance(raw, dict):
+        raw = list(raw.values())
+    if not isinstance(raw, list):
+        raise DataQualityError("INVALID_DATA", "目录行必须为数组")
+    result = []
+    for item in raw:
+        if not isinstance(item, dict) or not all(k in item for k in ("f12", "f14", "f5", *PRICE_FIELDS)):
+            raise DataQualityError("INVALID_DATA", "目录字段不完整")
+        row = dict(item)
+        code_of(row["f12"])
+        if not isinstance(row["f14"], str) or not row["f14"].strip():
+            raise DataQualityError("INVALID_DATA", "股票名称缺失")
+        for field in (*PRICE_FIELDS, "f5"):
+            row[field] = number(row[field])
+            if row[field] is not None and row[field] < 0:
+                raise DataQualityError("INVALID_DATA", "价格和成交量不能为负数")
+        high, low = row["f15"], row["f16"]
+        if high is not None and low is not None and high < low:
+            raise DataQualityError("INVALID_DATA", "最高价低于最低价")
+        result.append(row)
+    return result
+
+
+def _page(response):
+    response.raise_for_status()
+    payload = response.json()
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict):
+        raise DataQualityError("INVALID_DATA", "来源没有返回目录数据")
+    total = data.get("total")
+    if isinstance(total, bool) or not isinstance(total, int) or not 1 <= total <= 100000:
+        raise DataQualityError("INVALID_DATA", "来源总数量无效")
+    return total, _rows(data.get("diff"))
 
 
 def _fetch_from_api():
-    """请求东方财富行情列表，带重试与分页补全，成功后写缓存。"""
-    session = requests.Session()
-    session.headers.update(HEADERS)
-    for i in range(MAX_RETRY):
-        try:
+    with requests.Session() as session:
+        session.headers.update(HEADERS)
+        for attempt in range(MAX_RETRY):
+            check_cancelled()
+            progress(stage="catalog_page", page=1)
             try:
-                session.get('https://quote.eastmoney.com/', timeout=10)
-            except Exception:
-                pass
-            time.sleep(random.uniform(5, 10))
-            response = session.get(URL, params=_build_params(), timeout=30)
-            data = response.json()
-            if data.get('data'):
-                diff = data['data'].get('diff') or []
-                if isinstance(diff, dict):  # 只有 1 条时返回 dict
-                    diff = list(diff.values())
-                total = data['data'].get('total', 0)
-                pn = 1
-                while total and len(diff) < total:
-                    pn += 1
-                    time.sleep(random.uniform(1.5, 3))
-                    try:
-                        d2 = (session.get(URL, params=_build_params(pn),
-                                          timeout=30)
-                              .json().get('data') or {})
-                    except Exception as e:
-                        _echo(f'  补第 {pn} 页失败: {e}，'
-                              f'保留已拿到的 {len(diff)} 条')
-                        break
-                    part = d2.get('diff') or []
-                    if isinstance(part, dict):
-                        part = list(part.values())
-                    if not part:
-                        break
-                    diff.extend(part)
-                    _echo(f'  补第 {pn} 页 {len(part)} 条   '
-                          f'累计 {len(diff)} / {total}')
-                # 按代码去重（盘中 fid=f3 排序会变，可能重复）
-                data['data']['diff'] = list(
-                    {str(i['f12']): i for i in diff}.values())
-            with open(CACHE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            _echo(f'[缓存] 数据已保存到 {CACHE_FILE}')
-            return data
-        except Exception as e:
-            _echo(f'第 {i + 1} 次请求失败: {e}')
-            if i < MAX_RETRY - 1:
-                time.sleep(random.uniform(60, 120))
-    raise RuntimeError('多次重试仍失败，请稍后再运行')
+                total, first = _page(session.get(URL, params=_build_params(), timeout=30))
+                break
+            except requests.RequestException:
+                if attempt == MAX_RETRY - 1:
+                    raise
+                pause(random.uniform(60, 120))
+        unique = {row["f12"]: row for row in first}
+        duplicates, pages, reason = len(first) - len(unique), 1, None
+        while len(unique) < total and pages < 1000:
+            pause(random.uniform(1.5, 3))
+            pages += 1
+            check_cancelled()
+            progress(stage="catalog_page", page=pages, received=len(unique), expected=total)
+            try:
+                count, part = _page(session.get(URL, params=_build_params(pages), timeout=30))
+            except (requests.RequestException, ValueError):
+                reason = "page_failed"
+                break
+            if count != total:
+                reason = "total_changed"
+                break
+            before = len(unique)
+            unique.update({row["f12"]: row for row in part})
+            duplicates += len(part) - (len(unique) - before)
+            if len(unique) == before:
+                reason = "no_unique_progress"
+                break
+        complete = len(unique) == total and reason is None
+        metadata = {"source": "eastmoney", "source_url": URL, "fetched_at": utc_now().isoformat(),
+                    "source_as_of": None, "source_time_verified": False,
+                    "completeness": "complete" if complete else "partial",
+                    "expected_count": total, "row_count": len(unique), "pages": pages,
+                    "duplicate_count": duplicates, "partial_reason": reason or (None if complete else "count_mismatch"),
+                    "price_unit": "CNY", "price_transform": "legacy_divide_by_100", "volume_unit": "source_native"}
+        return {"cache_version": 1, "metadata": metadata, "data": {"total": total, "diff": list(unique.values())}}
 
 
 def _load_cache():
-    if not os.path.exists(CACHE_FILE):
-        return None
-    with open(CACHE_FILE, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    return read_json(_path("CACHE_FILE"))
 
 
-def _price(v):
-    return v / 100 if isinstance(v, (int, float)) else v
+def _write_csv(rows, metadata):
+    stream = io.StringIO(newline="")
+    writer = csv.writer(stream)
+    writer.writerow(["股票代码", "股票名称", "现价", "最高", "最低", "开盘", "昨收", "成交量"])
+    for row in rows:
+        writer.writerow([row["f12"], row["f14"],
+                         *(None if row[k] is None else row[k] / 100 for k in PRICE_FIELDS), row["f5"]])
+    return write_snapshot(_path("OUTPUT_FILE"), stream.getvalue().encode("utf-8-sig"), metadata)
 
 
-def _write_csv(rows):
-    os.makedirs(DATA2_DIR, exist_ok=True)
-    with open(OUTPUT_FILE, 'w', encoding='utf-8-sig', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(['股票代码', '股票名称', '现价', '最高', '最低',
-                         '开盘', '昨收', '成交量'])
-        for i in rows:
-            writer.writerow([
-                i['f12'], i['f14'],
-                _price(i['f2']), _price(i['f15']), _price(i['f16']),
-                _price(i['f17']), _price(i['f18']), i['f5'],
-            ])
-
-
-def crawl_catalog(force_refresh=False):
-    """抓取股票行情目录并输出 stock_data117.csv（按需调用）。
-
-    force_refresh=False 时优先复用本地缓存（防封禁）；
-    force_refresh=True 时强制请求实时行情。
-    """
-    if force_refresh or not os.path.exists(CACHE_FILE):
-        _echo('[目录爬虫] 请求东方财富实时行情...')
-        data = _fetch_from_api()
-        source = '实时'
-    else:
-        _echo(f'[目录爬虫] 读取本地缓存: {CACHE_FILE}')
-        data = _load_cache()
-        source = '缓存'
-    rows = data['data']['diff']
-    _write_csv(rows)
-    _echo(f'[完成] 目录数据已保存到 {OUTPUT_FILE}（{len(rows)} 只）')
-    return {
-        'ok': True,
-        'source': source,
-        'crawl_date': DEFAULT_CRAWL_DATE,
-        'stock_count': len(rows),
-        'output_file': OUTPUT_FILE,
-    }
+@serialize(lambda: _path("OUTPUT_FILE"))
+def crawl_catalog(force_refresh=False, max_cache_age_seconds=DEFAULT_CACHE_AGE, allow_stale=False):
+    check_cancelled()
+    # Validate parameters even when no cache exists.
+    cache_state(None, max_cache_age_seconds)
+    cached = not force_refresh and os.path.exists(_path("CACHE_FILE"))
+    snapshot = _load_cache() if cached else _fetch_from_api()
+    if not isinstance(snapshot, dict) or not isinstance(snapshot.get("data"), dict):
+        raise DataQualityError("INVALID_DATA", "目录快照结构无效")
+    version = snapshot.get("cache_version")
+    if version not in (None, 1):
+        raise DataQualityError("INVALID_DATA", "不支持的缓存版本")
+    metadata = snapshot.get("metadata") if version == 1 else None
+    if version == 1 and (not isinstance(metadata, dict) or metadata.get("source_url") != URL):
+        raise DataQualityError("INVALID_DATA", "缓存来源元数据无效")
+    state, age = cache_state(metadata, max_cache_age_seconds)
+    if state != "fresh" and not allow_stale:
+        raise DataQualityError("CACHE_STALE" if state == "stale" else "CACHE_UNVERIFIED",
+                               "缓存已过期或缺少抓取时间；显式强刷或允许读取旧资料", cache_state=state)
+    rows = _rows(snapshot["data"].get("diff"))
+    unique = {row["f12"]: row for row in rows}
+    if len(unique) != len(rows) or not rows:
+        raise DataQualityError("INVALID_DATA", "快照含重复代码或没有股票")
+    complete = "unknown"
+    if metadata:
+        complete = metadata.get("completeness")
+        if (complete not in ("complete", "partial") or metadata.get("row_count") != len(rows)
+                or metadata.get("expected_count") != snapshot["data"].get("total")):
+            raise DataQualityError("INVALID_DATA", "缓存数量元数据不一致")
+        if complete == "complete" and metadata["expected_count"] != len(rows):
+            raise DataQualityError("INVALID_DATA", "完整快照存在数量缺口")
+    result = {"ok": complete != "partial", "source": "缓存" if cached else "网络快照",
+              "crawl_date": today(), "date_policy": "request_date", "stock_count": len(rows),
+              "cache_state": state, "cache_age_seconds": age, "completeness": complete,
+              "analysis_eligible": state == "fresh" and complete == "complete",
+              "source_time_verified": False, "output_file": _path("OUTPUT_FILE")}
+    if complete == "partial":
+        return dict(result, error={"code": "PARTIAL_DATA", "message": "分页不完整，保留已有有效输出"}, metadata=metadata)
+    check_cancelled()
+    published = dict(metadata or {"source": "unverified_legacy_cache", "fetched_at": None,
+                                  "source_as_of": None, "volume_unit": "source_native",
+                                  "price_unit": "CNY", "price_transform": "legacy_divide_by_100"},
+                     cache_state=state, completeness=complete, analysis_eligible=result["analysis_eligible"],
+                     request_as_of=today(), source_time_verified=False)
+    if not cached:
+        atomic_json(_path("CACHE_FILE"), snapshot)
+    result["metadata"] = _write_csv(rows, published)
+    return result

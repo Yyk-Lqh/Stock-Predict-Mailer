@@ -221,9 +221,12 @@ class CaseFileTests(unittest.TestCase):
         path = Path(__file__).resolve().parents[1] / "examples" / "knowledge-eval" / "cases.json"
         cases = evaluation._load(path)
         prepared = [evaluation._case(number, item, "2026-11-01") for number, item in enumerate(cases, start=1)]
-        self.assertEqual(len(prepared), 20)
+        self.assertEqual(len(prepared), 23)
         self.assertEqual({item["id"] for item in prepared if item["critical"]}, {"q03", "q06", "q07", "q20"})
-        self.assertTrue(all(item["expect"]["domains"] for item in prepared))
+        self.assertTrue(all(item["expect"]["logical"] or item["expect"]["domains"] for item in prepared))
+        # q21–q23 走实体锚定：前两条靠查询自带的代码/全称，最后一条显式传主体。
+        self.assertEqual([item["id"] for item in prepared if item.get("entity")], ["q23"])
+        self.assertEqual([item["id"] for item in prepared if item["query"].startswith("600000.SH")], ["q21"])
 
 
 if __name__ == '__main__':

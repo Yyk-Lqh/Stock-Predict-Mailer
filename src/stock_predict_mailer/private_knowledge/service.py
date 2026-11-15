@@ -62,10 +62,64 @@ def stock_codes(text, *, explicit=False):
     return sorted(codes)
 
 
+def flat(text):
+    """去空白并折叠大小写：PDF 抽取会在中文之间插空格，逐字比较就会漏。"""
+    return re.sub(r"\s+", "", text).casefold()
+
+
+def entity_anchors(query, entity, stock_code, registry, stocks):
+    """Resolve which subject a question is about; parameters outrank query wording.
+
+    Ranking counts keyword coverage, so a question that names a company still lets
+    another company's filing win on wording alone: with 70 documents, 「三季报营收
+    同比」 returned eight other issuers' quarterly reports, because their heading
+    repeats the query's words while the wanted spreadsheet only repeats its metric
+    names. Anchoring answers a different question — 「这条片段属于谁」 — and turns
+    that into a ranking tier.
+
+    It is a tier, not a filter, except for the explicit ``entity`` parameter, which
+    already means "only this subject". Slots come from metadata, so a spreadsheet
+    whose own text never mentions the company stays attached to it.
+    """
+    text, found = flat(query), []
+
+    def add(kind, value, source, slots=()):
+        if value and not any(item["value"] == value and item["kind"] == kind for item in found):
+            found.append({"kind": kind, "value": value, "source": source, "slots": sorted(slots)})
+
+    if entity:
+        name = entity.strip()
+        slots = registry.get(name)
+        if slots is None:
+            # 传简称也要能用：只有当语料里恰好一家公司名包含它时才认。多义时宁可
+            # 不锚定并告警，也不要把一整片公司算成同一个主体。
+            matches = [item for item in registry if flat(name) in flat(item) or (len(flat(name)) >= 3 and flat(item) in flat(name))]
+            if len(matches) == 1:
+                name, slots = matches[0], registry[matches[0]]
+        add("entity", name, "param", slots or ())
+    for code in stock_codes(stock_code or "", explicit=True):
+        add("stock_code", code, "param", stocks.get(code, ()))
+    for code in stock_codes(query):
+        add("stock_code", code, "query", stocks.get(code, ()))
+    for name, slots in registry.items():
+        # 全称可锚定，去掉「股份有限公司」一类后缀也能锚定。两个字的名称不做包含
+        # 匹配，否则「银行」「控股」会把一整片公司算成同一个主体。
+        head = COMPANY_SUFFIX.sub("", name)
+        if flat(name) in text or (len(head) >= 3 and flat(head) in text):
+            add("entity", name, "query", slots)
+    return found
+
+
 STATES = ("pending", "processing", "ready", "review", "failed", "rejected", "deleting")
 # A worker beats at least every ten seconds while idle; ninety seconds of silence
 # means it is gone and the queue is stalled, not merely busy with a large file.
 WORKER_STALE = 90
+# 指代词：出现这些词却没有任何实体锚点时，排序只能靠关键词覆盖率，这类提问最容易
+# 「取回一堆看起来相关的别家资料」。逐词写死而不是用 * 通配，避免把「该行业」当指代。
+ANAPHORA = re.compile(r"该公司|该企业|该集团|该股(?![东票])|该行(?!业)|本公司|本行(?!业)|本企业|"
+                      r"这家公司|上述公司|某公司|某企业|某产品|某标的")
+# 公司名后缀不参与匹配：语料写「上海浦东发展银行股份有限公司」，提问常写到「银行」为止。
+COMPANY_SUFFIX = re.compile(r"(股份有限公司|有限责任公司|有限公司|股份公司|集团公司|集团|控股)$")
 ERRORS = {"PARSE_OR_IMPORT_FAILED": "文件解析或导入失败，请检查格式和当前步骤",
           "REVIEW_REQUIRED": "扫描件、缺失字段或复杂结构需要人工复核",
           "PARSER_MISSING": "缺少解析依赖，请安装 knowledge extra",
@@ -677,7 +731,7 @@ class Knowledge:
         with self.db() as con:
             con.execute("BEGIN")
             versions = con.execute("SELECT id,logical,metadata,uploaded FROM documents WHERE owner=? AND status='ready' AND logical IN (SELECT logical FROM documents WHERE owner=? AND active=1)", (owner, owner)).fetchall()
-            selected = {}
+            selected, registry, stocks = {}, {}, {}
             for version in versions:
                 # 权限过滤必须在排名与 limit 之前：先筛再截断，才不会被越权资料占用名额。
                 if allowed_domains is not None and domain(version["logical"]) not in allowed_domains:
@@ -685,12 +739,21 @@ class Knowledge:
                 meta = json.loads(version["metadata"])
                 if meta["available_date"] > as_of or (meta["document_date"] and meta["document_date"] > as_of):
                     continue
+                # 主体注册表只由当前可读的版本构成：锚点指向读不到的资料，等于把人引向 403。
+                for name in meta["companies"]:
+                    registry.setdefault(name, set()).add(version["logical"])
+                for code in meta["stock_codes"]:
+                    stocks.setdefault(code, set()).add(version["logical"])
                 key = (meta["available_date"], version["uploaded"], version["id"])
                 if version["logical"] not in selected or key > selected[version["logical"]][0]:
                     selected[version["logical"]] = (key, version["id"])
             selected_ids = {v[1] for v in selected.values()}
             rows = con.execute("SELECT c.id,c.doc,c.ordinal,c.body,d.filename,d.metadata,d.hash,d.logical FROM chunks c JOIN documents d ON d.id=c.doc WHERE c.owner=? AND d.owner=?", (owner, owner)).fetchall()
             rows = [r for r in rows if r["doc"] in selected_ids]
+            anchors = entity_anchors(query, entity, stock_code, registry, stocks)
+            anchor_names = {item["value"] for item in anchors}
+            # 锚点落在槽位上，再映射回本次真正可读的那个版本：否则锚点会指向旧版本。
+            anchor_docs = {selected[slot][1] for item in anchors for slot in item["slots"] if slot in selected}
             relations = [dict(r) for r in con.execute("SELECT r.* FROM relations r JOIN documents d ON r.doc=d.id WHERE r.owner=? AND d.owner=?", (owner, owner)) if r["doc"] in selected_ids]
             active = con.execute("SELECT * FROM generations WHERE owner=? AND status='active'", (owner,)).fetchone()
             vecs = {r[0]: json.loads(r[1]) for r in con.execute("SELECT chunk,vector FROM vectors WHERE generation=?", (active["id"],))} if active else {}
@@ -706,7 +769,10 @@ class Knowledge:
                     continue
                 if stock_code and not set(stock_codes(stock_code, explicit=True)) & set(meta["stock_codes"] + chunk.get("stock_codes", [])):
                     continue
-                eligible.append({**dict(row), **chunk, "metadata": meta})
+                eligible.append({**dict(row), **chunk, "metadata": meta, "anchored": row["doc"] in anchor_docs})
+            # 传了主体却一条都没连上：多半是填了简称，直接说清楚，别让它退化成空结果。
+            unmatched = bool(entity) and not any(
+                item["source"] == "param" and item["slots"] for item in anchors) and not any(entity in row["text"] for row in eligible)
             # 别名只扩展查询词，索引仍保存原文写法：加一条说法不需要重建索引，
             # 扩展也不可能把资料里没有的内容「造」出来。
             expanded, aliases = expand(query)
@@ -724,7 +790,7 @@ class Knowledge:
         ids = {r["id"] for r in eligible}
         relations = [r for r in relations if r["chunk"] in ids and (not r["valid_from"] or r["valid_from"] <= as_of)
                      and (not r["valid_to"] or r["valid_to"] >= as_of)]
-        seeds = {entity} if entity else {v for r in relations for v in (r["subject"], r["object"]) if v in query}
+        seeds = anchor_names | {v for r in relations for v in (r["subject"], r["object"]) if flat(v) in flat(query)}
         linked, edges = set(seeds), []
         for _ in range(2):
             frontier = set(linked)
@@ -746,11 +812,16 @@ class Knowledge:
                 warnings.append(exc.code + "：已降级为关键词与关系检索")
         else:
             warnings.append("未启用语义向量索引，当前为关键词与关系检索")
+        if unmatched:
+            warnings.append("主体名称没有匹配到任何可读资料；若填的是简称，请改用公司全称或股票代码")
+        if ANAPHORA.search(query) and not anchors:
+            warnings.append("查询含「该公司」一类指代但没有锚定到具体主体；结果只按关键词排序，"
+                            "可显式传 entity 或股票代码收窄")
         results = []
         edge_ids = {e["chunk"] for e in edges}
         for row in eligible:
             cid = row["id"]
-            graph = cid in edge_ids or any(v in row["text"] or v in row["metadata"]["companies"] or v in row["metadata"]["industries"] for v in linked)
+            graph = row["anchored"] or cid in edge_ids or any(v in row["text"] or v in row["metadata"]["companies"] or v in row["metadata"]["industries"] for v in linked)
             if entity and not graph:
                 continue
             score = (1 / (60 + ranks[cid]) if cid in ranks else 0) + (1 / (60 + vector_ranks[cid]) if cid in vector_ranks else 0) + (1 / 61 if graph else 0)
@@ -773,6 +844,7 @@ class Knowledge:
                     if value and ((key == "valid_from" and value > as_of) or (key == "valid_to" and value < as_of)):
                         item_warnings.append(label + "，不得用作当前有效关系")
                 results.append({"citation_id": f"{row['doc']}:{row['ordinal']}", "document_id": row["doc"], "chunk_id": cid,
+                                "anchored": row["anchored"],
                                 "logical": row["logical"], "expired": bool(meta["valid_to"] and meta["valid_to"] < as_of),
                                 "filename": row["filename"], "text": row["text"], "location": row["location"],
                                 "fields": row["fields"], "extractions": row.get("extractions", []),
@@ -780,7 +852,9 @@ class Knowledge:
                                     "entities": row.get("entities", {}), "stock_codes": sorted(set(meta["stock_codes"] + row.get("stock_codes", [])))}, "score": score, "warnings": item_warnings,
                                 "citation_path": f"/api/knowledge/citations/{row['doc']}:{row['ordinal']}",
                                 "source_hash": row["hash"], "trust": "untrusted_source_material"})
-        results.sort(key=lambda r: (-r["score"], r["citation_id"]))
+        # 锚定主体排在最前：问题点名了一家公司的资料，不该被另一家用词更像的资料压住。
+        # 同一层内仍按分数排，所以锚定只决定「先看谁」，不改变「谁的证据更贴题」。
+        results.sort(key=lambda r: (not r["anchored"], -r["score"], r["citation_id"]))
         # 版本槽位优先：一份长资料的多个切片会占满名额，先把每个 logical 的最好一段纳入，
         # 再按分数补齐剩余名额。limit 仍严格生效，结果集不会因此变大。
         chosen, seen_logical = [], set()
@@ -812,7 +886,7 @@ class Knowledge:
         order = {item["chunk_id"]: index for index, item in enumerate(chosen)}
         chosen.sort(key=lambda item: (next(i for i, g in enumerate(groups) if g["logical"] == item["logical"]), order[item["chunk_id"]]))
         chosen_ids = {r["chunk_id"] for r in chosen}
-        return {"query": query, "aliases": aliases, "as_of": as_of, "start_date": start_date, "results": chosen,
+        return {"query": query, "aliases": aliases, "anchors": anchors, "as_of": as_of, "start_date": start_date, "results": chosen,
                 "groups": [g for g in groups if g["shown"]], "logical_total": len(groups), "limit": limit,
                 "domains": sorted(allowed_domains) if allowed_domains is not None else None,
                 "relations": [r for r in edges if r["chunk"] in chosen_ids], "warnings": warnings}

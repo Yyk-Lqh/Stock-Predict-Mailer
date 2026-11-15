@@ -786,6 +786,16 @@ window.KnowledgeUI = (() => {
     const pairs = data.aliases.map(item => `${item.alias} → ${item.canonical.join(' / ')}`).join('；');
     text(host, 'p', `已按别名扩展查询：${pairs}。资料按原文写法入库，扩词只发生在查询侧。`, 'hint');
   }
+  /* 锚定与别名一样需要回显：这条结果为什么排第一，取决于问题里认出了哪家主体。 */
+  function anchorHint(host, data) {
+    if (!data.anchors?.length) return;
+    const items = data.anchors.map(item => {
+      const origin = item.source === 'param' ? '参数指定' : '查询识别';
+      const scope = item.slots?.length ? `${item.slots.length} 份资料` : '语料里没有对应资料';
+      return `${item.value}（${origin} · ${scope}）`;
+    });
+    text(host, 'p', `已锚定主体：${items.join('；')}。锚定只决定先看谁的资料，不改变证据本身。`, 'hint');
+  }
   function renderEvidence(host, data) {
     host.replaceChildren();
     const found = data.citations || data.results || [];
@@ -796,6 +806,7 @@ window.KnowledgeUI = (() => {
     if (data.limit) scope.push(`片段上限 ${data.limit} 段`);
     text(host, 'p', `${scope.join(' · ')}。来源声明与模型推断需要分别核对；日期未知、证据不足与冲突不代表事实已被确认。`, 'hint');
     aliasHint(host, data);
+    anchorHint(host, data);
     if (!found.length) text(host, 'p', '没有找到满足权限与截止时间的证据。', 'empty');
     renderGroups(host, data);
     for (const warning of data.warnings || []) text(host, 'p', typeof warning === 'string' ? warning : JSON.stringify(warning), 'note warn');
@@ -814,6 +825,7 @@ window.KnowledgeUI = (() => {
     scope.push(data.mode === 'evidence_extract' ? '规则汇总，非模型生成' : String(data.mode || '规则汇总'));
     text(wrap, 'p', scope.join(' · '), 'hint');
     aliasHint(wrap, data);
+    anchorHint(wrap, data);
     if (!found.length) {
       text(wrap, 'p', '证据不足：未找到当前权限与截止时间范围内的资料。可放宽截止日期、去掉股票代码或主体限制后重试；没有证据时不生成结论。', 'note warn');
       host.append(wrap); return;

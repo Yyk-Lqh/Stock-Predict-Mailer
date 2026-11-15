@@ -3,10 +3,12 @@ import argparse
 from pathlib import Path
 
 from ..agent_service.config import load
+from ..cli_io import utf8_console
 from .components import COMPONENTS
 
 
 def main(argv=None):
+    utf8_console()
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--workspace", type=Path, required=True)

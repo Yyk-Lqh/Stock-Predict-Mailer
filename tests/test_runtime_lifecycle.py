@@ -30,7 +30,7 @@ class RuntimeTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.base = Path(temporary.name)
+        self.base = Path(temporary.name).resolve()
         self.root, self.crawler = self.base / "app", self.base / "crawler"
         self.config = self.base / "agent.toml"
         self.config.write_text('workspace="app"\n[mail]\ntransport="file"\nsender="preview@example.invalid"\n', encoding="utf-8")
@@ -289,7 +289,8 @@ class RuntimeTests(unittest.TestCase):
 
     def test_managed_console_start_idempotence_conflict_doctor_and_stop(self):
         port = self.free_port()
-        view = self.start("console", port=port)
+        with patch.dict(os.environ, {"PYTHONIOENCODING": "cp1252"}):
+            view = self.start("console", port=port)
         self.assertEqual((view["state"], view["phase"]), ("verified", "running"))
         self.assertTrue(self.start("console", port=port)["already_running"])
         self.code("RUNTIME_CONFIG_CONFLICT", self.start, "console", port=self.free_port())

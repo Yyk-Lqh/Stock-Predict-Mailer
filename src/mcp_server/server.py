@@ -11,6 +11,7 @@ from mcp.server.fastmcp import FastMCP
 
 from mcp_server.paths import data_dir
 from mcp_server.quality import DEFAULT_CACHE_AGE, DataQualityError, previous_quarter, snapshot_status, today
+from stock_predict_mailer.cli_io import utf8_console
 
 
 def _error(exc: Exception) -> str:
@@ -109,6 +110,7 @@ def build(port: int = 8000) -> FastMCP:
 
 
 def main(argv=None):
+    utf8_console()
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] in ("jobs", "worker"):
         from mcp_server.jobs_cli import main as jobs_main

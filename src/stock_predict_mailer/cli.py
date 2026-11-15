@@ -13,12 +13,14 @@ from .agent_service.config import load
 from .agent_service.contracts import ServiceError, prediction
 from .agent_service.mail import MailService
 from .agent_service.reporting import save_report
+from .cli_io import utf8_console
 from .naming import COMMAND, PROJECT_NAME, SUMMARY_ZH, banner
 
 MANIFEST_COLUMNS = "path,logical,source,document_date,available_date,valid_to,companies,industries,topics,stock_codes"
 
 
 def main(argv=None):
+    utf8_console()
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "legacy":
         try:

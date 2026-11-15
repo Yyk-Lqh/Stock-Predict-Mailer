@@ -42,6 +42,8 @@ def verify_offline():
 
 
 def main(argv=None):
+    from stock_predict_mailer.cli_io import utf8_console
+    utf8_console()
     parser = argparse.ArgumentParser(description="临时合成数据验证，不改写业务资料")
     parser.add_argument("--online", action="store_true", help="额外执行一次 baostock 联网预检")
     args = parser.parse_args(argv)

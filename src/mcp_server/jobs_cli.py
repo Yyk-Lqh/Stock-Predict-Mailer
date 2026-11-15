@@ -5,6 +5,7 @@ import math
 import sqlite3
 
 from stock_predict_mailer.agent_service.contracts import ServiceError
+from stock_predict_mailer.cli_io import utf8_console
 
 from .job_worker import run_once
 from .jobs import JobStore
@@ -54,6 +55,7 @@ def _arguments(value):
 
 
 def main(argv=None):
+    utf8_console()
     parser = argparse.ArgumentParser(description="采集任务管理；提交不联网，Worker 显式启动")
     actions = parser.add_subparsers(dest="action", required=True)
     jobs = actions.add_parser("jobs")

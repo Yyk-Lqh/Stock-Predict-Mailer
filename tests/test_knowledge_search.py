@@ -86,6 +86,27 @@ class SearchGroupingTests(unittest.TestCase):
         self.assertFalse(before['results'][0]['expired'])
         self.assertFalse(before['groups'][0]['expired'])
 
+    def test_table_columns_are_not_mistaken_for_conflicting_sources(self):
+        # 表格行按行切片后，同一字段（本期）每行一个取值；那是数值列，不是来源冲突。
+        self.f.ready('甲.csv', '项目,本期\n营业收入,1236.45\n净利润,402.18\n'.encode(), logical='财报/甲公司/2026Q3')
+        self.assertEqual(self.kb.answer(self.owner, '本期')['conflicts'], [])
+        self.f.ready('乙.csv', '项目,本期\n营业收入,2468.31\n'.encode(), logical='财报/乙公司/2026Q3')
+        self.assertEqual(self.kb.answer(self.owner, '本期')['conflicts'], [])
+        self.f.ready('丙.csv', '项目,本期\n营业收入,2500.00\n'.encode(), logical='财报/丙公司/2026Q3')
+        self.assertEqual([item['field'] for item in self.kb.answer(self.owner, '本期')['conflicts']], ['本期'])
+
+    def test_same_field_is_compared_within_one_subject_only(self):
+        self.f.ready('甲.csv', '项目,本期\n营业收入,12\n'.encode(),
+                     {**META, 'companies': ['甲银行']}, logical='财报/甲/2026Q3')
+        self.f.ready('乙.csv', '项目,本期\n营业收入,13\n'.encode(),
+                     {**META, 'companies': ['乙银行']}, logical='财报/乙/2026Q3')
+        # 两家银行的「本期营业收入」本来就不该相等，这不是来源冲突。
+        self.assertEqual(self.kb.answer(self.owner, '营业收入')['conflicts'], [])
+        self.f.ready('丙.csv', '项目,本期\n营业收入,14\n'.encode(),
+                     {**META, 'companies': ['甲银行']}, logical='财报/丙/2026Q3')
+        conflict = next(item for item in self.kb.answer(self.owner, '营业收入')['conflicts'] if item['field'] == '本期')
+        self.assertEqual({source['value'] for source in conflict['sources']}, {'12', '14'})
+
     def test_filters_are_echoed_for_the_console(self):
         self.f.ready('公告.md', '营业收入 12 亿元'.encode())
         found = self.kb.search(self.owner, '营业收入', as_of='2026-11-01', start_date='2026-10-01', limit=5)
@@ -133,6 +154,9 @@ class AnswerRouteTests(unittest.TestCase):
                     data = client.post('/api/knowledge/answer',
                                        json={'query': '甲公司供应链风险', 'limit': 4, 'as_of': '2026-11-01'}).json()
                     self.assertEqual(data['mode'], 'evidence_extract')
+                    # 查询侧的两层加工（别名、锚定）必须活着穿过接口，控制台才有东西回显。
+                    self.assertEqual(data['aliases'], [])
+                    self.assertEqual(data['anchors'], [])
                     self.assertTrue(data['results'] and data['relations'] and data['inferences'])
                     self.assertTrue(all({'text', 'evidence_ids', 'kind'} <= set(item) for item in data['inferences']))
                     self.assertTrue(all({'doc', 'chunk', 'subject', 'predicate', 'object'} <= set(item) for item in data['relations']))

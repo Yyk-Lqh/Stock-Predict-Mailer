@@ -936,10 +936,37 @@ class Knowledge:
                 if key not in ("subject", "predicate", "object", "valid_from", "valid_to"):
                     values.setdefault(key, set()).add(packed(value))
                     field_sources.setdefault(key, []).append({"value": value, "citation_id": item["citation_id"],
+                                                               "document_id": item["document_id"],
+                                                               "companies": item["metadata"]["companies"],
                                                                "document_date": item["metadata"]["document_date"]})
-        conflicting = [key for key, variants in values.items() if len(variants) > 1]
+        conflicting = []
+        for key, variants in values.items():
+            if len(variants) < 2:
+                continue
+            # 按主体分组比较：两家银行的「本期营业收入」本来就不该相等，那不是来源冲突。
+            # 组内再看每份资料的取值——同一份资料同一字段多个取值是表格的数值列（每行
+            # 一个指标），不参与逐值比较，否则「本期」「同比」会被整列误报。
+            groups = {}
+            for source in field_sources[key]:
+                for company in (source["companies"] or [""]):
+                    groups.setdefault(company, []).append(source)
+            for members in groups.values():
+                per_document = {}
+                for source in members:
+                    per_document.setdefault(source["document_id"], set()).add(packed(source["value"]))
+                scalar = {next(iter(found)) for found in per_document.values() if len(found) == 1}
+                if len(scalar) > 1:
+                    # 只报触发冲突的那一组来源：把另一家公司的数值一起列出来，会让
+                    # 「冲突」看起来比实际更大，也会把无关主体卷进来。
+                    seen, group = set(), []
+                    for source in members:
+                        if source["citation_id"] not in seen:
+                            seen.add(source["citation_id"])
+                            group.append(source)
+                    conflicting.append((key, group))
+                    break
         if conflicting:
-            warnings.append("来源字段取值不同，可能统计周期或口径不同，请核对：" + "、".join(conflicting))
+            warnings.append("来源字段取值不同，可能统计周期或口径不同，请核对：" + "、".join(key for key, _ in conflicting))
         metric_groups = {}
         for item in citations:
             for claim in item.get("extractions", []):
@@ -954,5 +981,5 @@ class Knowledge:
             warnings.append("相同主体、指标、周期和单位存在不同来源数值，请核对原文，不自动择一")
         warnings.append("不能仅凭供应商或事件关联推断影响规模、确定因果关系或收益；需进一步核实。")
         return {**found, "answer": "\n\n".join(lines), "warnings": sorted(set(warnings)),
-                "inferences": inferences, "conflicts": [{"field": key, "sources": field_sources[key],
-                    "status": "different_values_need_period_and_unit_review"} for key in conflicting] + typed_conflicts, "mode": "evidence_extract"}
+                "inferences": inferences, "conflicts": [{"field": key, "sources": group,
+                    "status": "different_values_need_period_and_unit_review"} for key, group in conflicting] + typed_conflicts, "mode": "evidence_extract"}

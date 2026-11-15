@@ -10,6 +10,7 @@ from ..naming import PROJECT_NAME
 from .models import request_json
 
 SESSION_COOKIE = "stock_predict_mailer_session"
+KNOWLEDGE_FIELDS = {"query", "as_of", "start_date", "stock_code", "entity", "limit"}
 
 
 def card(base_url, role="main"):
@@ -20,7 +21,11 @@ def card(base_url, role="main"):
             "securitySchemes": {"session": {"type": "apiKey", "in": "cookie", "name": SESSION_COOKIE},
                                 "bearer": {"type": "http", "scheme": "bearer"}},
             "security": [{"session": []}, {"bearer": []}], "defaultInputModes": ["application/json"], "defaultOutputModes": ["application/json"],
-            "skills": [{"id": role, "name": role, "description": "Structured bounded analysis", "tags": ["prediction", role]}]}
+            "skills": [{"id": role, "name": role, "description": "Structured bounded analysis", "tags": ["prediction", role]},
+                       {"id": "knowledge.search", "name": "knowledge.search",
+                        "description": "Read-only evidence search over the caller's memory key, limited to the role's document domains; "
+                                       "requires X-Memory-Key and knowledge-acl authorization",
+                        "tags": ["knowledge", "read"]}]}
 
 
 def message(data, context_id=None):
@@ -90,7 +95,33 @@ class A2AService:
     def __init__(self, engine):
         self.engine = engine
 
-    async def dispatch(self, rpc, role="main", inline=None):
+    def knowledge_scope(self, role):
+        """角色可读的一级域；默认拒绝，未配置即等于没有权限。
+
+        暴露私有资料给外部 Agent 的风险全部压在这里：域白名单为空就报错，
+        而不是返回空结果——空结果会让对端以为「库里没有」，而不是「你没权限」。
+        """
+        config = self.engine.store.settings()["agents"].get(role)
+        if config is None:
+            raise ServiceError("PERMISSION_DENIED", "未知角色，无法确定可读的资料域")
+        domains = config.get("knowledge_domains") or []
+        if not domains:
+            raise ServiceError("PERMISSION_DENIED", "该角色未获任何资料域权限，先用 knowledge-acl 授权")
+        return domains
+
+    async def evidence(self, role, owner_key, params):
+        if not isinstance(params, dict) or set(params) - KNOWLEDGE_FIELDS or not isinstance(params.get("query"), str):
+            raise ServiceError("INVALID_PARAMS", "knowledge/search 需要 query，可选 as_of/start_date/stock_code/entity/limit")
+        domains = self.knowledge_scope(role)
+        if not owner_key:
+            # bearer 令牌只证明「能调这个服务」，不携带资料身份；知识库按 owner 隔离。
+            raise ServiceError("FORBIDDEN", "知识检索需要 X-Memory-Key；A2A bearer 令牌不含资料身份")
+        owner = self.engine.memory.owner(owner_key)
+        filters = {key: value for key, value in params.items() if key != "query"}
+        found = await asyncio.to_thread(self.engine.knowledge.search, owner, params["query"], domains=domains, **filters)
+        return {**found, "role": role, "effect": "read"}
+
+    async def dispatch(self, rpc, role="main", inline=None, owner_key=""):
         rid = rpc.get("id") if isinstance(rpc, dict) else None
         try:
             if not isinstance(rpc, dict) or rpc.get("jsonrpc") != "2.0" or rid is None:
@@ -107,6 +138,8 @@ class A2AService:
                     result = self.engine.submit(data)
                 else:
                     result = await self.engine.peer(role, data, inline)
+            elif method == "knowledge/search":
+                result = await self.evidence(role, owner_key, params)
             elif method == "tasks/get":
                 result = self.engine.store.task(params.get("id"))
             elif method == "tasks/cancel":
@@ -116,5 +149,6 @@ class A2AService:
             return {"jsonrpc": "2.0", "id": rid, "result": result}
         except ServiceError as exc:
             code = {"INVALID_REQUEST": -32600, "METHOD_NOT_FOUND": -32601, "INVALID_PARAMS": -32602,
-                    "NOT_FOUND": -32001, "TASK_NOT_CANCELABLE": -32002}.get(exc.code, -32602)
+                    "NOT_FOUND": -32001, "TASK_NOT_CANCELABLE": -32002,
+                    "FORBIDDEN": -32003, "PERMISSION_DENIED": -32003}.get(exc.code, -32602)
             return {"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": exc.message, "data": {"code": exc.code}}}

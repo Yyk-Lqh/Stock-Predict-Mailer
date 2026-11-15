@@ -12,7 +12,7 @@ import html
 import json
 
 from .core import Config, atomic_write, digest, now, timestamp, write_json
-from .knowledge import retrieve, validate_citations
+from .knowledge_api import retrieve, validate_citations
 from .model_registry import owner_key
 
 

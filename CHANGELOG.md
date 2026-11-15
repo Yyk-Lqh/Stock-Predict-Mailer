@@ -2,6 +2,93 @@
 
 ## 未发布（分支 `scene/56-agent-app`）
 
+- PDF 表格结构化：改用 pypdf 版式提取，按单元格形状识别表格块并逐行产出带 `fields` 的切片。
+  - 判据是单元格形状而不是列数——双栏正文（「三、资产质量 / 五、募集资金使用情况」并排）的版式与两列表格完全相同，靠「单元格短且无句读」区分，千分位数字例外。
+  - 列数对不齐、表头为空或重复时整块降级为段落并告警，不猜列对应；旧版 pypdf 无版式模式时自动退回普通提取。
+  - 70 份语料切片 580 → **823**（公告 14 → 166、产业 10 → 101），PDF 表格行 96 行带字段；切片中位数 8 → 12，公告不再「整份 1 片」。q03 的 MRR 由 0.5 升到 1.0：此前第一名是整份 1 片的公告 PDF，靠词频取胜。
+  - 顺带修正字段冲突口径：按主体分组比较，不同公司的同名字段不再互报冲突；同一份资料里同一字段的多个取值视为表格数值列、不参与比较。`conflicts[].sources` 只列触发冲突那一组来源。
+  - 评测 20/23 不变（MRR 0.957），四条 `critical` 与泄漏闸不变。
+- 新增查询实体锚定：问题里认出的主体变成一层排序，解决「问甲公司、前八名全是别家季报」。
+  - `entity_anchors()`：来源为查询内的股票代码、语料元数据里的公司全称（可省「股份有限公司」等后缀）或显式 `entity`/`stock_code` 参数；`entity` 传简称时，只有语料里恰好一家公司名包含它才认。
+  - 锚定是排序层而非过滤器（显式 `entity` 除外，语义仍是「只要这家」），并靠元数据把「正文不含公司名的报表切片」挂回主体——关键词匹配做不到这件事。
+  - 查询含「该公司」一类指代却无锚点时给出警告，不猜主体；`entity` 解析失败同样明确提示改用全称或代码。响应新增 `anchors`，每条结果新增 `anchored`，控制台回显「已锚定主体：…」。
+  - 评测新增 q21–q23（股票代码 / 公司全称 / 显式 entity 三种锚定路径），同一份语料 20/23：q02/q14/q18 保留原判，q23 用 q02 的原句补上主体即通过。
+- 新增查询别名表：`三季报→第三季度报告/Q3`、`营收→营业收入`、`CPI→居民消费价格指数` 等 29 组写法差异，在查询侧展开，不重建索引。
+  - `private_knowledge/aliases.py`：组内第一个成员为规范写法，扩展单向；只收同义写法，不收上下位概念（`产能利用率`≠`开工率`、`降准`≠`降息`）；长别名优先匹配，`三季报` 不会同时触发 `季报`。
+  - `search()`/`answer()` 响应新增 `aliases`，控制台在结果上方回显「已按别名扩展查询：营收 → 营业收入」；控制台 bundle 已重建。
+  - 70 份语料复跑同一份 `cases.json`：仍 17/20、MRR 0.95，别名未单独修复 q02/q14/q18——`三季报` 扩展出的全称同样被 15 份公告字面命中，说明缺的是实体锚点而不是词表。
+- 种子库试灌跑通「dry-run 四数 → 正式导入 → 评测」全流程，10 份样本覆盖 8 个域与 7 种格式。
+  - dry-run：`scanned=10`、`queued=10`、`skipped=0`、`failed=0`、`available_date_inferred=0`，四项都过模板的通过线；正式导入 9 份 `ready`，扫描件按设计 `REVIEW_REQUIRED`（不算通过，也不算静默失败）。
+  - `examples/knowledge-eval/cases.json` 的 20 条用例补上真实槽位：只判域 + 关键词时 `mean_recall` 无处可算，填了槽位后才真正校验「取回的是不是那一份」。
+  - q07 的查询从「某公司」改为点名实体：关系图只从问题里出现过的实体向外扩散，占位符锚点为空，`relation` 断言必然失败。
+  - 新增 `docs/试灌报告.md`：格式 × 结果 × 切片数、dry-run 四个数、时点边界、以及 6 条问题（PDF 表格失去字段对应、`.xlsx` 实际读取全部 sheet、按行切片导致「文档里有但检索里没有」等）。
+- 种子库语料扩容到 70 份（公告 15 / 财报 12 / 研报 12 / 产业 10 / 宏观 8 / 供应链 5 / 制度 4 / 方法 4），并重跑同一份评测用例。
+  - dry-run 四个数与 10 份口径一致：`scanned=70`、`queued=70`、`skipped=0`、`failed=0`、`available_date_inferred=0`；正式导入 69 份 `ready` + 1 份扫描件 `REVIEW_REQUIRED`，580 个切片、26 条关系行。
+  - 首次在真实规模下验证到三件事：同一 `logical` 的修订版自动顶替旧版（制度槽位 2 版 1 活动）、过期资料被标 `expired` 但不被排除、关系表只从结构化文件产生。
+  - 评测基线由 20/20 回落到 **17/20（MRR 0.95、槽位召回 0.85）**，四条 `critical` 全过、无时点泄漏。三条漏检（q02/q14/q18）根因均为查询缺实体锚点与口语别名，已在用例 `note` 中记录，不改判定以免把「用例太松」误当「检索可用」。
+  - q12「集采」与 q17「CPI 权重」的期望槽位被扩容证伪并改正：原来指向的只是 10 份语料里唯一提及该话题的文件。
+  - 新增 `docs/语料扩容报告.md`：规模结构、四个数、分域通过率、三条漏检根因、切片粒度不均（1–24 片）导致的排序偏差。
+- 323 项 unittest 通过；ruff、仓库卫生与控制台 bundle 检查通过。
+- 新增 `knowledge-eval`：用标注用例集给检索打分，输出可重复的通过率、MRR 与按域分布。
+  - 用例文件为 `{"version":1,"cases":[...]}`，支持 `expect.logical`（可写前缀）、`expect.domains`、`expect.keywords`、`expect.relation`/`inference`/`conflict`、`min_recall`、`critical`；未知字段与重复 id 直接报错，避免拼错键被当成未命中。
+  - 语料里没有的槽位记为 `blocked` 并排除在通过率之外，与 `fail` 分开：补语料与调检索是相反的修法。`blocked` 区分 `absent`、`pending` 等真实状态。
+  - `gates` 单独断言时点过滤：任何返回片段的 `available_date` 晚于 `as_of` 即判 `unsafe`，因为泄漏意味着回测无法复现，不该只是扣分。
+  - `critical` 用例失败即整轮 `fail`；退出码 0 仅对应 `pass`，其余返回 2，可直接进流水线。
+  - `--answer` 改评 `answer()`，额外校验 `mode=evidence_extract`、推断与冲突字段；判分全部是字符串匹配，不调用模型。
+  - 附 `examples/knowledge-eval/cases.json`：种子库清单模板第八节 20 条查询的机器可读版本，其中 3/6/7/20 标为 `critical`。
+  - 323 项 unittest 通过（新增 20 项：槽位前缀、域不符、部分召回、blocked 三态、待处理修订不遮蔽活动版本、泄漏门、关系与推断断言、阈值与 critical 判定、用例与代码校验、示例集可解析）。
+- 新增 A2A 只读知识检索 `knowledge/search`，按角色白名单限定可读的一级域。
+  - `POST /a2a/{main|prediction|risk|advice}` 新增 JSON-RPC 方法，参数与 `/api/knowledge/search` 同名同义；返回体额外回显 `role`、`effect="read"`、`domains`。
+  - 三道门：必须带 `X-Memory-Key`（Bearer 令牌不携带资料身份）、角色白名单非空（默认为空即拒绝）、白名单只能由 `knowledge-acl` 改（请求里带 `domains` 报 INVALID_PARAMS）。
+  - 域过滤发生在排名与 `limit` 之前，越权资料不占名额，`logical_total`/`groups` 只统计允许的版本；拒绝不返回空结果，避免对端误判「库里没有」。
+  - 新增 `knowledge-acl` 命令查看/设置角色域白名单（`--domains ""` 收回权限）；`RoleConfig` 增加 `knowledge_domains` 字段并校验格式。
+  - Agent Card 增加 `knowledge.search` 技能声明，描述里写明需要 `X-Memory-Key` 与角色授权。
+  - 303 项 unittest 通过（新增 7 项：全员默认拒绝、域收窄、限额只数允许版本、未知角色/缺密钥/错密钥、参数校验、Card 声明、service 层 `domains` 过滤与空列表语义）。
+- 控制台新增「汇总并回答」入口：`POST /api/knowledge/answer` 早就实现但没有界面，现在与检索共用筛选条件。
+  - 结果拆成四段而不是一段文字：关系证据（含有效期与来源片段）、条件性推断（逐条列 `evidence_ids`，可展开依据原文）、冲突候选（不自动择一）、警告。
+  - 明确标注 `mode=evidence_extract`「规则汇总，非模型生成」：没有配置聊天模型也能用；检索为空时只说证据不足，不补造引用。
+  - 底部两个折叠项：复用分组视图的「展开 N 段来源原文」、可直接粘进报告的「纯文本」。
+  - 296 项 unittest 通过（新增 1 项接口契约：`mode`/`relations`/`inferences`/`conflicts` 字段与空查询、`limit=0` 的 400）。
+- 检索证据界面补齐时间范围、返回上限与按版本槽位分组。
+  - `POST /api/knowledge/search` 结果新增 `logical`、`expired` 与 `groups`（`filename`/`document_date`/`available_date`/`valid_to`/`expired`/`hits`/`shown`），并回显 `as_of`/`start_date`/`limit`、给出 `logical_total`。
+  - 选片改为「先给每个版本一个名额，再按分数补齐」：一份多切片的长资料不再占满 `limit`，另一来源却被挤掉；`limit` 仍严格生效，组内顺序仍是分数序。
+  - `expired` 指 `valid_to < as_of`，只标记不排除——时点回放常需要过期资料；界面显示「已于 X 失效」，条目保留「仅作历史参考」警告。
+  - 控制台新增「文档日期不早于」与「返回片段数」（5/8/12/20），结果按 `logical` 分组渲染，命中多于显示时写明「命中 N 段，显示 M 段」，底部提示「另有 N 个版本命中」。
+  - 295 项 unittest 通过（新增 6 项：长资料不挤占、组内分数序、隐藏版本计数、过期标记、参数回显、空结果）。
+- 知识库队列与 worker 在线状态接入控制台：新增 `GET /api/knowledge/queue` 与 `workers` 心跳表。
+  - worker 在每轮循环写心跳（`idle` / `busy` / `stopped`，含正在处理的资料与本次已处理份数），空闲时 10 秒节流一次；`--once` 退出前也写 `stopped`，因此「跑完即退」同样能解释队列为何不再推进。
+  - 判定：`state != stopped` 且心跳在 90 秒内为在线。「从未启动」与「无响应」分开呈现——前者给命令，后者提示查进程；离线而仍有排队时，状态条直接给出 `knowledge-worker` 命令。
+  - 控制台「资料与版本」顶部显示 排队 / 处理中 / 待审阅 / 失败 / 已发布 与最近心跳、本次处理份数；失败与待审阅条目可跳到详情。原先那句「当前页面无法确认它是否在线」随之删除。
+  - 心跳写失败只吞异常，不阻断导入；`busy` 时仅当正在处理的资料属于当前 owner 才显示名称。
+  - 289 项 unittest 通过（新增 8 项：计数与 owner 隔离、失败原因、心跳三态、静默判定、跨 owner 隐藏、`--limit` 边界、`--once` 心跳、HTTP 路由）。
+- 新增 `docs/知识库受控词表.md`：把 `logical` 与 8 个标签键的取值固定下来，作为种子库录入的唯一来源。
+  - 8 个一级域的二级键、第三级命名规则与正反例；一条判定规则——「修订版该覆盖还是该并存」，用于区分「报告期（允许）」与「获取日期（禁止）」。
+  - `topics` 受控 30 词（6 组，含含义边界与互斥对）、`industries` 采用申万一级 31 个、`source` 按「类别+机构」。
+  - 明确不覆盖宏观指标名、公司名、行业名，避免词表变成摘要库；`制度`、`方法` 两域默认留空 `topics`。
+  - 词表外写法视为录入错误；变更走月度评审，不回填历史文档（回填会触发新版本）。
+- 新增批量导入入口 `knowledge-import`：按目录或 CSV 清单一次导入整批资料，支持 `--dry-run`、`--limit`、`--write-manifest`、`--process`。
+  - 清单列 `path,logical,source,document_date,available_date,valid_to,companies,industries,topics,stock_codes`，与 `metadata()` 白名单一致；未知列直接报错，避免拼写错误静默丢标签。
+  - `available_date` 不会静默取当天：清单 → `--available` → `document_date` 依次兜底，三者皆无则逐文件失败；`--assume-available-today` 才用当天并计入 `warnings.available_date_inferred`。理由是该字段事后无法修复，填错会污染回测。
+  - 提供清单时以其为准：未登记文件跳过、登记但缺失的文件报失败，清单本身即入库台账。
+  - 幂等按 `(logical, 内容哈希)`：重复导入跳过，内容变化则成为同一槽位的新版本。
+  - `logical` 留空时按目录路径推导；超过 200 字符报错并提示用清单简写。
+  - 281 项 unittest 通过（新增 11 项：清单解析与权威性、日期兜底与失败、幂等、试运行、清单骨架拒绝覆盖、版本递进、`--limit`）。
+
+- 知识库资料列表改为分页：`GET /api/knowledge/documents` 支持 `limit`（1–500，缺省 50）、`offset`、`status`，响应改为 `{items,total,review,limit,offset}`；控制台列表按页加载并提供「加载更多」。
+  - 原实现逐篇调用 `document()`，而它每次都执行 `ensure()` 的 `INSERT OR IGNORE` 写事务；200 篇资料实测 426 ms，400 篇 843 ms，且每次切换页签都会触发。改为单页一次查询后，首页 4.6 ms / 6.4 ms（约 90–130 倍）。
+  - `Knowledge.catalog()` 为新增分页接口，`listing()` 保留原签名与返回形状（全部版本），供既有调用方使用。
+- 知识库下架与版本历史接入控制台：新增 `POST /api/knowledge/documents/{id}/retire` 与 `GET /api/knowledge/documents/{id}/versions`。
+  - 此前控制台只有「删除」，走的是 `DELETE`：会 unlink 加密原件并清除片段/索引，不可恢复。现在「下架」为默认出口（保留原件、仅退出检索），永久删除改为需输入资料 ID 前 8 位确认的二步操作。
+  - 详情页显示失效日期与版本历史，并注明「检索按截止日期选用当时有效版本，下架不退回旧版本」。
+- 270 项 unittest 通过（新增 3 项：分页装配与参数校验、版本历史与下架保留原件、HTTP 路由与分页报错）。
+
+- 合并两套知识库实现：删除 `knowledge.py`（`state.sqlite3` 明文片段库），新增 `knowledge_api.py` 作为兼容门面，`kb-add` / `kb-search` / `kb-revoke` 与报告链路全部改落私有知识库，`state.sqlite3` 的知识表停用留档。
+  - 门面保留原有四个函数签名，`report.py`、`prediction_report.py`、`model_cli.py`、`legacy_cli.py` 各只改一行 import；`upload` 只入队，门面负责推完流水线并同步返回。
+  - `private_knowledge` 新增 `retire()`：撤销停用但保留加密原件（`delete` 不可恢复，语义过重）；新增 `versions()` 按逻辑槽位列版本。
+  - 行为变化：`kb-add` 支持七种格式、耗时变为秒级、需要 `knowledge` 可选依赖；多 `--allow` 生成多份加密副本；时间比较改为日粒度（最坏情况同日内资料提前约 1 天可用，与引擎口径一致，避免「检出却校验失败」）；64 位旧 `citation_id` 明确报错而不是静默引用错误文本。
+  - 未经 `MASTER_KEY` 而工作区已用主密钥建库时，命令行直接报错，不再静默切到空库。
+  - 267 项 unittest 通过（原 269 项中 2 项重复用例已并入 `tests/test_knowledge_api.py`）。
+
 - 项目名统一为 **Stock-Predict-Mailer**：新增 `naming.py` 作为专有名 / 发行名 / 导入名 / 环境变量前缀的唯一来源；
   `pyproject.toml` 改为从包内读取版本并使用 `stock-predict-mailer` 入口（旧的短命令别名退役）；
   环境变量前缀改为 `STOCK_PREDICT_MAILER_*`（旧 `SPM_*` 仍可读取）、会话 Cookie 与浏览器本地键同步改名；

@@ -279,6 +279,31 @@ class KnowledgeTests(unittest.TestCase):
         with self.assertRaises(ServiceError):
             self.kb.upload(self.owner, '../escape.txt', b'bad')
 
+    def test_catalog_pages_without_loading_every_document(self):
+        for index in range(3):
+            self.f.ready(f'{index}.txt', f'供应商风险 {index}'.encode(), META, f'note/{index}')
+        page = self.kb.catalog(self.owner, limit=2, offset=0)
+        self.assertEqual((page['total'], page['review'], page['limit'], page['offset']), (3, 0, 2, 0))
+        self.assertEqual(len(page['items']), 2)
+        self.assertEqual(len(self.kb.catalog(self.owner, limit=2, offset=2)['items']), 1)
+        self.assertEqual(self.kb.catalog(self.owner, status='ready')['total'], 3)
+        self.assertEqual(self.kb.catalog(self.owner, status='failed')['items'], [])
+        self.assertEqual(len(self.kb.listing(self.owner)), 3)
+        for broken in ({'limit': 0}, {'limit': 501}, {'offset': -1}, {'status': 'unknown'}):
+            with self.assertRaises(ServiceError):
+                self.kb.catalog(self.owner, **broken)
+
+    def test_versions_keep_history_and_retire_keeps_original(self):
+        first = self.f.ready('a.txt', b'Alpha supplier risk', META, 'note/a')
+        second = self.f.ready('a.txt', b'Alpha supplier risk v2', META, 'note/a')
+        history = self.kb.versions(self.owner, 'note/a')
+        self.assertEqual([item['id'] for item in history], [first, second])
+        self.assertEqual([item['active'] for item in history], [0, 1])
+        self.kb.retire(self.owner, second)
+        self.assertFalse(self.kb.document(self.owner, second)['active'])
+        self.assertEqual(self.kb.original(self.owner, second)[1], b'Alpha supplier risk v2')
+        self.assertEqual(self.kb.search(self.owner, 'Alpha supplier')['results'], [])
+
 
 class EmbedServer(BaseHTTPRequestHandler):
     requests = []
@@ -424,6 +449,38 @@ class HTTPTests(unittest.TestCase):
                     client.headers['X-CSRF-Token'] = csrf
                     self.assertEqual(client.delete('/api/knowledge/documents/' + did).status_code, 200)
                     self.assertEqual(client.post('/api/knowledge/search', json={'query': '甲公司'}).json()['results'], [])
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_document_paging_retire_and_versions_routes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server = make_server(Path(tmp), 0, Fernet.generate_key())
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with httpx.Client(base_url=f'http://127.0.0.1:{server.server_port}') as client:
+                    client.get('/')
+                    client.headers['X-CSRF-Token'] = client.get('/api/session').json()['csrf_token']
+                    client.headers['X-Memory-Key'] = client.post('/api/memory/access', json={}).json()['key']
+                    uploads = [client.post('/api/knowledge/documents', json={'filename': f'{index}.txt',
+                        'data': base64.b64encode(f'供应商风险 {index}'.encode()).decode(), 'metadata': META}).json()['id'] for index in range(3)]
+                    while server.engine.knowledge.process_one():
+                        pass
+                    page = client.get('/api/knowledge/documents?limit=2&offset=1').json()
+                    self.assertEqual((page['total'], len(page['items']), page['offset']), (3, 2, 1))
+                    self.assertEqual(client.get('/api/knowledge/documents?status=ready').json()['total'], 3)
+                    self.assertEqual(client.get('/api/knowledge/documents?limit=two').status_code, 400)
+                    self.assertEqual(client.get('/api/knowledge/documents?limit=1&limit=2').status_code, 400)
+                    self.assertEqual(client.get('/api/knowledge/documents?unknown=1').status_code, 400)
+                    did = uploads[0]
+                    self.assertEqual(client.get(f'/api/knowledge/documents/{did}/versions').json()[0]['active'], 1)
+                    self.assertEqual(client.post(f'/api/knowledge/documents/{did}/retire', json={}).status_code, 200)
+                    self.assertFalse(client.get(f'/api/knowledge/documents/{did}').json()['active'])
+                    self.assertEqual(client.get(f'/api/knowledge/documents/{did}/original').json()['filename'], '0.txt')
+                    self.assertEqual(client.post(f'/api/knowledge/documents/{did}/retire', json={}).status_code, 400)
+                    self.assertEqual(client.delete(f'/api/knowledge/documents/{did}').status_code, 200)
+                    self.assertEqual(client.get(f'/api/knowledge/documents/{did}/versions').status_code, 404)
             finally:
                 server.shutdown()
                 server.server_close()

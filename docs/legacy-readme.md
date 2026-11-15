@@ -222,7 +222,7 @@ uv run stock-mailer update-history
 | 预测报告与影子运行 | `prediction-report <prediction_id> [--generate]`、`shadow-record`、`shadow-evaluate`、`shadow-status` |
 | 发布治理 | `stable-promote --authorize --note "..."`、`stable-revoke --reason "..."`、`release-status`、`key-revoke`、`key-status` |
 | 产物保留 | `model-retention --keep N [--apply]`、`retention-log` |
-| 知识库与报告 | `kb-add`、`kb-search`、`kb-revoke`、`report <experiment_id>` |
+| 知识库与报告 | `kb-add`、`kb-search`、`kb-revoke`、`report <experiment_id>`（均写入私有知识库，`state.sqlite3` 中的旧知识表已停用） |
 | 邮件 | `queue-mail`、`outbox`、`send-mail <outbox_id>` |
 
 完整的命令顺序、门禁条件与限制见 [平台模型命令与验收](docs/平台模型命令与验收.md)；安装与路径约定见 [本地运行手册](docs/本地运行手册.md)。

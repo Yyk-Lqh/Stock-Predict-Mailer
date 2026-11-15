@@ -121,7 +121,9 @@ def make_server(root, port=8767, master_key=None, market=None):
                     return
                 if method == "POST" and path.startswith("/a2a/"):
                     role = path.split("/")[-1]
-                    self.output(asyncio.run(A2AService(engine).dispatch(self.body(), role)))
+                    # 记忆密钥只用于知识检索这类按 owner 隔离的读取；编排入口不依赖它。
+                    self.output(asyncio.run(A2AService(engine).dispatch(self.body(), role,
+                                                                       owner_key=self.headers.get("X-Memory-Key", ""))))
                     return
                 parts = path.strip("/").split("/")
                 if len(parts) < 2 or parts[0] != "api":
@@ -130,8 +132,18 @@ def make_server(root, port=8767, master_key=None, market=None):
                 if kind == "knowledge":
                     owner = engine.memory.owner(self.headers.get("X-Memory-Key", ""))
                     kb, route = engine.knowledge, parts[2:]
-                    if route == ["documents"] and method == "GET":
-                        self.output(kb.listing(owner))
+                    if route == ["queue"] and method == "GET":
+                        self.output(kb.queue(owner))
+                    elif route == ["documents"] and method == "GET":
+                        filters = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                        if set(filters) - {"limit", "offset", "status"} or any(len(values) != 1 for values in filters.values()):
+                            raise ServiceError("INVALID_INPUT", "分页仅接受单个 limit、offset 与 status")
+                        try:
+                            limit = int(filters.get("limit", ["50"])[0])
+                            offset = int(filters.get("offset", ["0"])[0])
+                        except ValueError:
+                            raise ServiceError("INVALID_INPUT", "分页参数须为整数") from None
+                        self.output(kb.catalog(owner, limit=limit, offset=offset, status=filters.get("status", [None])[0]))
                     elif route == ["documents"] and method == "POST":
                         data = self.body()
                         try:
@@ -176,6 +188,10 @@ def make_server(root, port=8767, master_key=None, market=None):
                             self.output(kb.reextract(owner, did), 202)
                         elif route[2:] == ["retry"] and method == "POST":
                             self.output(kb.retry(owner, did), 202)
+                        elif route[2:] == ["retire"] and method == "POST":
+                            self.output(kb.retire(owner, did))
+                        elif route[2:] == ["versions"] and method == "GET":
+                            self.output(kb.versions(owner, kb.document(owner, did)["logical"]))
                         elif route[2:] == ["original"] and method == "GET":
                             filename, raw = kb.original(owner, did)
                             self.output({"filename": filename, "data": base64.b64encode(raw).decode()})

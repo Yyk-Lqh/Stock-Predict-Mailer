@@ -13,6 +13,68 @@ from xml.etree import ElementTree as ET
 from ..agent_service.contracts import ServiceError
 
 FORMATS = (".txt", ".md", ".csv", ".json", ".docx", ".xlsx", ".pdf")
+# 版式提取把列间距留成空格串，这是纯文本里唯一残留的结构信息。
+PDF_CELL = re.compile(r"\s{2,}")
+PDF_SENTENCE = re.compile(r"[。！？；，、：]")
+PDF_NUMBER = re.compile(r"^[-\u2212+]?[\d,]*\.?\d+\s*(%|pct|PCT|个百分点|亿元|万元|元|Wh|GWh|MWh|吨|天|倍|股|户)?$")
+PDF_CELL_LIMIT = 24
+
+
+def _pdf_cell(cell):
+    """表格单元格要短且无句读；千分位数字例外，`,` 是数字的一部分。"""
+    return len(cell) <= PDF_CELL_LIMIT and (bool(PDF_NUMBER.match(cell)) or not PDF_SENTENCE.search(cell))
+
+
+def pdf_blocks(text):
+    """Split one page of layout text into prose blocks and table blocks.
+
+    ``extraction_mode="layout"`` keeps column positions as runs of spaces, which is
+    the only structure a text extractor leaves behind. Consecutive lines splitting
+    into the same number of short, punctuation-free cells are a table.
+
+    Column count alone cannot decide this: a two-column page — 「三、资产质量 / 五、
+    募集资金使用情况」并排 — is laid out exactly like a two-column table. What
+    separates them is cell shape: table cells are labels and numbers, prose cells are
+    sentences, so a long cell or a full stop disqualifies the block. Empty lines are
+    ignored inside a table because layout mode pads rows apart, but they still end a
+    paragraph.
+    """
+    blocks, prose, table = [], [], []
+
+    def close_table():
+        nonlocal table
+        if not table:
+            return
+        if len(table) >= 2 and len({len(row) for row in table}) == 1 and all(_pdf_cell(cell) for row in table for cell in row):
+            blocks.append({"kind": "table", "rows": table})
+        else:
+            blocks.append({"kind": "prose", "lines": ["  ".join(row) for row in table]})
+        table = []
+
+    def close_prose():
+        nonlocal prose
+        if prose:
+            blocks.append({"kind": "prose", "lines": prose})
+            prose = []
+
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            close_prose()
+            continue
+        cells = [cell.strip() for cell in PDF_CELL.split(line) if cell.strip()]
+        if len(cells) >= 2:
+            close_prose()
+            # 列数变了就是另一张表：先收掉上一张，免得一条两栏正文把整张表拖成段落。
+            if table and len(cells) != len(table[0]):
+                close_table()
+            table.append(cells)
+            continue
+        close_table()
+        prose.append(line)
+    close_table()
+    close_prose()
+    return blocks
 
 
 def parse(filename, raw):
@@ -85,12 +147,29 @@ def parse(filename, raw):
         if reader.is_encrypted or len(reader.pages) > 500:
             raise ServiceError("REVIEW_REQUIRED", "加密或超过 500 页 PDF 需另行处理")
         for number, page in enumerate(reader.pages, 1):
-            text = page.extract_text() or ""
+            try:
+                text = page.extract_text(extraction_mode="layout")
+            except TypeError:  # 旧版 pypdf 没有布局模式：退回普通提取，表格按段落处理。
+                text = page.extract_text()
             if not text.strip():
                 warnings.append(f"第 {number} 页无可提取文本，需要 OCR")
-            for paragraph, part in enumerate(text.split("\n\n"), 1):
-                add(part, {"page": number, "paragraph": paragraph})
-        warnings.append("PDF 复杂表格未结构化，需对照原页复核；不保证阅读顺序")
+                continue
+            for index, block in enumerate(pdf_blocks(text), 1):
+                if block["kind"] == "prose":
+                    add(" ".join(block["lines"]), {"page": number, "paragraph": index})
+                    continue
+                headers, rows = block["rows"][0], block["rows"][1:]
+                if any(not header.strip() for header in headers) or len(set(headers)) != len(headers):
+                    # 表头不可信就退回段落：宁可少结构化，也不把错位的列当成字段。
+                    warnings.append(f"第 {number} 页表格 {index} 表头为空或重复，未结构化，需对照原页复核")
+                    add(" ".join(" ".join(row) for row in block["rows"]), {"page": number, "paragraph": index})
+                    continue
+                warnings.append(f"第 {number} 页表格 {index} 的列边界按版式空格推断，合并单元格与折行需对照原页复核")
+                for row_number, cells in enumerate(rows, 1):
+                    fields = dict(zip(headers, cells, strict=False))
+                    add("；".join(f"{key}: {value}" for key, value in fields.items()),
+                        {"page": number, "table_block": index, "row": row_number}, fields)
+        warnings.append("PDF 按版式提取文本，双栏阅读顺序需对照原页复核")
     else:
         raise ServiceError("FORMAT_UNSUPPORTED", "不支持的文件格式")
     if suffix == ".xlsx":

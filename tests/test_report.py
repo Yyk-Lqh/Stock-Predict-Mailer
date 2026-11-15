@@ -4,7 +4,7 @@ from pathlib import Path
 
 from stock_predict_mailer.core import Config
 from stock_predict_mailer.data import demo_csv, import_csv
-from stock_predict_mailer.knowledge import ingest_document, revoke
+from stock_predict_mailer.knowledge_api import ingest_document, revoke
 from stock_predict_mailer.report import build_report, load_report
 from stock_predict_mailer.research import experiment
 

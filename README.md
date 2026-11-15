@@ -75,7 +75,7 @@ uv run stock-predict-mailer --config config/local.toml knowledge-worker --poll 2
 uv run stock-predict-mailer --config config/local.toml knowledge-worker --once
 ```
 
-上传和管理当前通过后端 `/api/knowledge` 接口完成，前端暂未增加知识库页面。上传成功表示已排队，不代表完成入库。
+控制台的「知识库」页签可上传资料、检索证据、汇总回答、配置索引与下架版本；检索结果按版本槽位分组并标出已失效资料，「汇总并回答」把同一批证据排成「关系证据 → 条件性推断 → 冲突」——它是规则拼接（`evidence_extract`），不是大模型结论，没有证据时只说证据不足。顶部状态条显示队列深度与清洗进程是否在线（心跳 90 秒内视为在线，正常退出会写 `stopped`，被强杀则最多滞后 90 秒），离线而仍有排队时直接给出上面的 `knowledge-worker` 命令。后端接口是 `/api/knowledge`，上传成功表示已排队，不代表完成入库。整批导入用 `knowledge-import`（用法见 `docs/知识库与报告.md`）：先 `--write-manifest` 生成清单骨架，填好标签后 `--dry-run` 核对计划，再 `--process` 导入并处理。旧入口的 `kb-add` / `kb-search` / `kb-revoke`（须加 `legacy` 前缀）写入同一份存储，但会同步跑完流水线才返回，因此耗时从毫秒级变为秒级。外部 Agent 可按角色白名单只读检索：`POST /a2a/<role>` 的 `knowledge/search` 需要 `X-Memory-Key` 与 `knowledge-acl --role <role> --domains ...` 授权，默认全部拒绝。检索质量用 `knowledge-eval examples/knowledge-eval/cases.json` 打分：语料里缺的槽位记为 `blocked` 不计入通过率，时点泄漏直接判 `unsafe`，非 `pass` 返回码为 2。
 
 模型分别配置，按需启用：
 
@@ -91,6 +91,8 @@ uv run stock-predict-mailer --config config/local.toml knowledge-worker --once
 - [私有知识库：导入、索引、检索和删除](docs/private-knowledge.md)
 - [语义清洗：模型配置、证据校验与审批](docs/cleaning-agent.md)
 - [清洗模型实施计划与边界](docs/cleaning-model-plan.md)
+- [试灌报告：10 份样本 × 7 种格式](docs/试灌报告.md)
+- [语料扩容报告：70 份语料下的检索基线](docs/语料扩容报告.md)
 
 扫描件 OCR、复杂版式与表格的自动准确解析、简称消歧和真实模型准确率仍需后续验证；当前协议验收使用本地模拟服务与合成资料。单机工作区的片段和全文索引为明文，应保留本机磁盘访问控制，不宣称互联网多租户隔离或磁盘取证级擦除。
 

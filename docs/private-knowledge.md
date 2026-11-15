@@ -12,7 +12,7 @@
 
 接收→解析→清洗→结构化/切分→向量→索引。清洗 Agent 是独立命令 worker，持久步骤检查点和失败原因，不由分析动态委派触发。原文件按用户和版本 ID 加密且不可变保存，内容摘要用于去重；更新生成新版本，准备好后切换活动版本；失败继续使用旧版本。重复内容与相同元数据不重复导入。删除清理该用户的原文件、片段、关系和全部索引代；查询无跨请求缓存。
 
-数字 PDF 使用 pypdf；DOCX 使用标准库 OOXML；UTF-8 TXT/MD/CSV/JSON 使用标准库；XLSX 使用 openpyxl。旧 .doc/.xls 不支持。扫描件需 OCR，首期不执行；复杂表格、合并单元格、公式缓存缺失等标记复核。清洗不推断缺失值，不自动换算金额单位。保留原始文本与清洗文本、页/段落/工作表/行单元格定位；表格行重复列名，保留周期与单位。关系仅从带 subject/predicate/object 的结构化行导入，不承诺从任意文章抽取全部实体。
+数字 PDF 使用 pypdf 的版式提取；列间距留成空格串，按「单元格短且无句读」识别表格块并逐行产出字段，列数对不齐或表头重复时整块降级为段落并告警——双栏正文与两列表格的版式相同，只靠列数会误判。DOCX 使用标准库 OOXML；UTF-8 TXT/MD/CSV/JSON 使用标准库；XLSX 使用 openpyxl。旧 .doc/.xls 不支持。扫描件需 OCR，首期不执行；合并单元格、公式缓存缺失等标记复核。清洗不推断缺失值，不自动换算金额单位。保留原始文本与清洗文本、页/段落/工作表/行单元格定位；表格行重复列名，保留周期与单位。关系仅从带 subject/predicate/object 的结构化行导入，不承诺从任意文章抽取全部实体。
 
 ## Embedding 与索引
 
@@ -23,6 +23,13 @@ OpenAI 兼容 /embeddings 与 Ollama /api/embed 通过统一适配器调用；Ol
 ## 引用与时间
 
 文档日期、可用时间和关系有效期分别记录。查询 as_of 排除未来资料；日期缺失显式警告。回答使用可定位的引用片段，资料永远是待分析数据，不执行其中指令。来源冲突需要保留各版本与日期，不把未知描述成事实。过期与证据不足给出警告；关系扩展只使用当前用户有权限的活动版本。
+
+## 查询侧的加工：别名与锚定
+
+索引保存原文写法，查询侧做两件不改变索引的事，因此加一条说法或换一种锚定都不需要重建索引、也不会凭空造出证据。
+
+- **别名**：`aliases.py` 是一张可评审的同义表（`营收`→`营业收入`、`三季报`→`第三季度报告`/`Q3`），组内第一个成员为规范写法，扩展单向、长别名优先。只收写法差异，不收上下位概念 —— `产能利用率` 与 `开工率` 是两个口径，映射会把「问 A 答 B」变成静默行为。响应 `aliases` 回显本次扩展。
+- **锚定**：从查询里的股票代码、公司全称（可省「股份有限公司」等后缀）以及显式 `entity` 参数解析出主体，再用元数据把片段挂回主体。锚定是一层排序而非过滤（显式 `entity` 除外，它本来表示「只要这家」），所以顺带提到该主体的证据仍留在结果里。指代（「该公司」）解析不出主体时给警告，不猜。响应 `anchors` 回显来源与牵涉槽位。
 
 ## 官方接口依据
 
@@ -42,7 +49,11 @@ uv run stock-predict-mailer --config config/local.toml knowledge-worker --poll 2
 uv run stock-predict-mailer --config config/local.toml knowledge-worker --once
 ```
 
-只需知识库依赖时可用 `uv sync --extra knowledge --extra dev`；研究功能还需对应 research/trees extra。上传不会自动启动 worker。独立进程持有自己的 OS 锁，避免双 worker 恢复对方的运行任务；进程中断后再次启动将 processing 标为失败，需显式 retry。`--once` 有失败任务返回 2，否则返回 0；`--poll` 为 .1–60 秒。每次解析完成保存 parsed 检查点，清洗完成保存 chunked 检查点，重试从其后继续。向量/索引发布事务失败回滚，不暴露半成品。
+只需知识库依赖时可用 `uv sync --extra knowledge --extra dev`；研究功能还需对应 research/trees extra。上传不会自动启动 worker。worker 每轮写心跳（`idle` / `busy` / `stopped`），控制台按「90 秒内有心跳且未写 stopped」判定在线：正常退出与 Ctrl+C 会写 stopped，被强杀则最多滞后 90 秒。独立进程持有自己的 OS 锁，避免双 worker 恢复对方的运行任务；进程中断后再次启动将 processing 标为失败，需显式 retry。`--once` 有失败任务返回 2，否则返回 0；`--poll` 为 .1–60 秒。每次解析完成保存 parsed 检查点，清洗完成保存 chunked 检查点，重试从其后继续。向量/索引发布事务失败回滚，不暴露半成品。
+
+整批资料用 `knowledge-import <目录>`，同样只入队，`--process` 才顺带跑完队列：`--write-manifest` 生成清单骨架，填好后 `--dry-run` 核对计划，再正式导入。清单存在时以其为准，未登记文件不入库；`available_date` 依次取清单、`--available`、`document_date`，三者皆无则逐文件失败，`--assume-available-today` 是唯一显式覆盖方式。重复导入按 `(logical, 内容哈希)` 跳过。
+
+质量基线用 `knowledge-eval <用例.json>`：逐条跑 `search()`（加 `--answer` 则跑 `answer()`）并按标注判分，输出 `totals`/`metrics`/`by_domain`/`gates`。语料里没有的槽位记为 `blocked` 且不计入通过率，与 `fail` 分开；返回内容若违反 `as_of` 过滤则整体判 `unsafe`。判分只用字符串匹配，不调用模型。用例格式与指标含义见 `docs/知识库与报告.md`。
 
 资料保存在 `<workspace>/private-knowledge/knowledge.sqlite3` 及用户子目录；与 control.sqlite3 的对话记忆不同。原文件和 API key 用现有主密钥加密，片段/FTS/元数据为本机明文索引，需依靠工作区磁盘权限保护。备份时须保留原文件、索引、control.sqlite3 的用户身份以及外部保存的原主密钥。逻辑删除会移除当前索引记录和加密文件，不宣称磁盘取证级安全擦除。
 
@@ -50,18 +61,21 @@ uv run stock-predict-mailer --config config/local.toml knowledge-worker --once
 
 先从同源本机控制台建立 session，读取 `GET /api/session` 的 csrf_token。创建身份：`POST /api/memory/access`（JSON `{}`），妥善保存返回 key。所有知识库接口都必须携带 `X-Memory-Key`；所有写操作还须携带 `X-CSRF-Token` 和同源 session cookie。不得在 query URL 中传访问密钥。以下路径均以 `/api/knowledge` 为前缀。
 
+- `GET /queue`：队列总览，返回 `{counts,total,waiting,attention,worker}`。`counts` 覆盖全部状态且缺省为 0，`waiting` 为 pending+processing；`attention` 是最近的失败与待审阅条目，合计上限 `limit`（1–20，缺省 5）。`worker` 取自心跳表：`seen` 区分「从未启动」与「已退出」，`online` 为 `state != stopped` 且心跳在 90 秒内，`age` 是距上次心跳的秒数，`processed` 是本次进程处理的份数（重启归零）。`busy` 时 `current_logical` 仅在该资料属于本用户时给出，否则为 null。
 - `POST /documents`：`{"filename":"report.csv","data":"<base64>","logical":"财报","metadata":{...}}`。原文件上限 10 MiB，JSON 请求上限 15 MiB；响应 202 只表示 pending。logical 省略时用文件名；更新时保持 logical，上传新字节或新元数据。原格式 `.doc/.xls` 不支持。
-- `GET /documents`：本用户所有版本、active 标记、上传时间、处理 status/step/error/error_message、warnings 和 needs_review。
+- `GET /documents?limit=50&offset=0&status=ready`：分页返回本用户的资料摘要（active 标记、上传时间、处理 status/step/error/error_message、warnings、needs_review），响应为 `{items,total,review,limit,offset}`。limit 1–500，缺省 50；status 取值见处理状态。分页只装配当前页，不再逐篇查询。
 - `GET /documents/{id}`：清洗前 original 摘录、清洗后 text、原始 fields、normalized_fields、结构标题与定位、实体和代码。长文本按结构分界与有限重叠切分，定位的 extracted_text_offset 是解析文本内字符位置，不是 PDF 二进制偏移。
+- `GET /documents/{id}/versions`：按同名 logical 列出全部版本的 id、status、active、上传时间。检索按截止日期选用当时有效的最新版本，下架不退回到旧版本。
+- `POST /documents/{id}/retire`：下架活动版本，不再参与检索与任务证据；加密原件、片段与历史引用保留，可重新对照。已是非活动版本或已删除时报 INVALID_STATE / NOT_FOUND。运维下架应使用此接口。
 - `GET /documents/{id}/original`：返回 filename 和 base64 原文件，供 PDF 页、工作表、重要数值对照。原件不能执行为工具。
 - `POST /documents/{id}/retry`：仅允许失败任务重排队；原文件不变，需更换文件则上传新版本。
-- `DELETE /documents/{id}`：删除此版本的原文件、片段、全部索引代向量、关系和 FTS。无跨请求检索缓存；删除活动版本不自动复活旧版本。旧的独立分析报告属于历史输出，需操作者另行管理，不会因资料删除被重写。
+- `DELETE /documents/{id}`：永久删除此版本的原文件、片段、全部索引代向量、关系和 FTS，不可恢复，无回收站。仅用于错传或误导入；日常下架请用 `retire`。删除活动版本不自动复活旧版本。旧的独立分析报告属于历史输出，需操作者另行管理，不会因资料删除被重写。
 - `GET/PUT /config`：查询/保存用户自己的 Embedding 配置。响应只含 has_secret；api_key 不回显。变更服务地址不自动沿用旧服务的认证 key。
 - `POST /test`：只发送两条固定测试文本，验证向量数量、维度、有限数值与非零向量。provider=none 返回 lexical_only。
 - `POST /rebuild`：同步构建新索引代，其他请求仍可查询旧代；完成后事务切换。资料或配置在重建期间变化会报 INDEX_CHANGED，需重新调用。失败重试不会覆盖旧代。
 - `GET /indexes`：查询各代状态、失败码、模型、声明版本、维度与不含凭据的配置指纹。
-- `POST /search`：`{"query":"营业收入","as_of":"2026-11-07","start_date":"2026-01-01","stock_code":"600000.SH","entity":"甲公司","limit":8}`，可选条件按 AND 组合，limit 1–20。文档日期、资料可用时间及记录的 data_date/date/日期/数据日期会按截止时间过滤；未知文档日期标记警告。结构化日期支持 YYYY-MM-DD 和 YYYY/MM/DD，原字段保留。代码按 A 股 SH/SZ/BJ 六位规则规范；不宣称其他市场代码自动识别。
-- `POST /answer`：相同查询参数，返回摘录、条件性推断、逐条 citation_id、来源日期、定位、冲突候选、过期/不足说明。使用确定性有界规则，不需要配置聊天模型。
+- `POST /search`：`{"query":"营业收入","as_of":"2026-11-07","start_date":"2026-01-01","stock_code":"600000.SH","entity":"甲公司","limit":8}`，可选条件按 AND 组合，limit 1–20。文档日期、资料可用时间及记录的 data_date/date/日期/数据日期会按截止时间过滤；未知文档日期标记警告。结构化日期支持 YYYY-MM-DD 和 YYYY/MM/DD，原字段保留。代码按 A 股 SH/SZ/BJ 六位规则规范；不宣称其他市场代码自动识别。返回 `as_of`/`start_date`/`limit` 回显、`results`（含 `logical`、`expired`）、`groups`（按版本槽位聚合的 filename、日期、`valid_to`、`expired`、`hits`/`shown`）与 `logical_total`。选片时先给每个版本一个名额、再按分数补齐，因此一份多切片的长资料不会占满结果；`hits > shown` 表示该版本还有命中未返回。`expired` 指 `valid_to < as_of`，只做标记，不排除——历史回放常需要过期资料。
+- `POST /answer`：相同查询参数，返回 `results`/`groups` 之外还有 `answer`（拼接文本）、`relations`、`inferences`（`text`/`evidence_ids`/`kind=bounded_rule_inference`）、`conflicts`（`sources` 逐条给 value 与 citation_id）、`mode=evidence_extract`。使用确定性有界规则，不需要配置聊天模型；没有证据时只说「证据不足」，不补造引用。条件性推断要求同时命中供应商关系与停产/延期/短缺/制裁/火灾事件，且两侧无警告；冲突不自动择一。
 - `GET /citations/{document_id}:{ordinal}`：按当前用户权限定位片段和源版本；退休版本仍可对照，已删除则不存在。
 
 metadata 支持 source、document_date、available_date、valid_to、companies、industries、topics、stock_codes。默认 available_date 为上传当天；历史回放需填写真实可用日期，不能把文件里出现的未来时间当作当时已知。document_date 缺失会提示未知，不自动从文件名猜测。单位保留在字段名与原始文本，不做金额换算；JSON 数字按词法字符串保留，避免小数精度在清洗时变化。
@@ -105,6 +119,18 @@ OpenAI 兼容服务（base_url 包含服务实际使用的 /v1 前缀；不是�
 ## 分析任务接入
 
 现有 POST /api/tasks 的私有 conversation_id 任务可增加 knowledge_query 字符串，返回结果的 knowledge 附录是同一私有检索接口生成的证据回答。默认 knowledge_to_model=false，不把资料内容发送给聊天模型；显式设 true 才以 source_material/untrusted_source_material 字段发送给已配置的主模型。外部聊天模型可能收到原文，须由操作者在任务级决定。资料不作为对话记忆条目自动入库，也不会获得工具或邮件权限。原有股票预测结论代码和证据校验保持约束，不允许模型借资料任意输出未校验的因果结论。
+
+## 命令行门面（kb-*）
+
+`kb-add` / `kb-search` / `kb-revoke` 与 `report` 保留原有命令行签名，内部经 `knowledge_api.py` 落到本知识库，不再有第二套存储。门面只做三次翻译：
+
+1. `Config` → `(Knowledge, owner)`。`principal` 第一次使用时映射到一个私有 owner 并记录在 `kb_owner_map`；设了 `STOCK_PREDICT_MAILER_KB_KEY` 则改用该密钥对应的 owner，与控制台看到同一份资料。工作区若曾用主密钥建库而当前未提供主密钥，门面直接报错，不会静默切到一个空库。
+2. 入队 → 同步。`upload()` 只入队（HTTP 202），命令行必须等流水线跑完才返回，失败或进入复核都抛错。
+3. 证据形状回译。`search()` 的 `text`/`filename`/`citation_id` 还原成旧的 `content`/`title`/`ordinal`/`sha256`，因此 `report.py`、`generation.py` 无需改动。
+
+已知行为变化：支持七种格式（原先仅 `.md`/`.txt`）；耗时由毫秒级变为秒级（解析 + 清洗 + 建索引）；需要 `knowledge` 可选依赖；多 `--allow` 生成多份加密副本，磁盘按 principal 数量放大；撤销改为 `retire`（保留原件），不再等于删除。
+
+`knowledge_api.py` 只由命令行使用，HTTP 接口直接走 `Knowledge`，两者共享同一个 `knowledge.sqlite3`，不要为命令行另建 workspace。
 
 ## 测试与未验证范围
 

@@ -7,12 +7,13 @@ import re
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
 from ..agent_service.contracts import ServiceError, utcnow
 from ..core import atomic_write
+from .aliases import expand
 from .cleaner import CleanerAdapter, cleaner_config, extract, fingerprint
 from .embedding import EmbeddingAdapter, configuration
 from .parsing import FORMATS, clean, parse
@@ -39,6 +40,19 @@ def day(value):
         raise ServiceError("INVALID_INPUT", "日期须为 YYYY-MM-DD") from None
 
 
+def domain(logical):
+    """一级域取 logical 的第一段（`研报/中金/跟踪` → `研报`），与受控词表一致。"""
+    return logical.split("/", 1)[0].strip()
+
+
+def domain_scope(domains):
+    if domains is None:
+        return None
+    if not isinstance(domains, (list, tuple, set)) or any(not isinstance(item, str) for item in domains):
+        raise ServiceError("INVALID_INPUT", "资料域白名单须为字符串列表")
+    return {item.strip() for item in domains if item.strip()}
+
+
 def stock_codes(text, *, explicit=False):
     codes = set()
     pattern = r"(?<![A-Z0-9])(\d{6})(?:[. ]?(SH|SZ|BJ))?(?![A-Z0-9])" if explicit else r"(?<![A-Z0-9])(\d{6})[. ]?(SH|SZ|BJ)(?![A-Z0-9])"
@@ -46,6 +60,71 @@ def stock_codes(text, *, explicit=False):
         exchange = exchange or ("SH" if code.startswith("6") else "BJ" if code.startswith(("4", "8", "9")) else "SZ")
         codes.add(f"{code}.{exchange}")
     return sorted(codes)
+
+
+def flat(text):
+    """去空白并折叠大小写：PDF 抽取会在中文之间插空格，逐字比较就会漏。"""
+    return re.sub(r"\s+", "", text).casefold()
+
+
+def entity_anchors(query, entity, stock_code, registry, stocks):
+    """Resolve which subject a question is about; parameters outrank query wording.
+
+    Ranking counts keyword coverage, so a question that names a company still lets
+    another company's filing win on wording alone: with 70 documents, 「三季报营收
+    同比」 returned eight other issuers' quarterly reports, because their heading
+    repeats the query's words while the wanted spreadsheet only repeats its metric
+    names. Anchoring answers a different question — 「这条片段属于谁」 — and turns
+    that into a ranking tier.
+
+    It is a tier, not a filter, except for the explicit ``entity`` parameter, which
+    already means "only this subject". Slots come from metadata, so a spreadsheet
+    whose own text never mentions the company stays attached to it.
+    """
+    text, found = flat(query), []
+
+    def add(kind, value, source, slots=()):
+        if value and not any(item["value"] == value and item["kind"] == kind for item in found):
+            found.append({"kind": kind, "value": value, "source": source, "slots": sorted(slots)})
+
+    if entity:
+        name = entity.strip()
+        slots = registry.get(name)
+        if slots is None:
+            # 传简称也要能用：只有当语料里恰好一家公司名包含它时才认。多义时宁可
+            # 不锚定并告警，也不要把一整片公司算成同一个主体。
+            matches = [item for item in registry if flat(name) in flat(item) or (len(flat(name)) >= 3 and flat(item) in flat(name))]
+            if len(matches) == 1:
+                name, slots = matches[0], registry[matches[0]]
+        add("entity", name, "param", slots or ())
+    for code in stock_codes(stock_code or "", explicit=True):
+        add("stock_code", code, "param", stocks.get(code, ()))
+    for code in stock_codes(query):
+        add("stock_code", code, "query", stocks.get(code, ()))
+    for name, slots in registry.items():
+        # 全称可锚定，去掉「股份有限公司」一类后缀也能锚定。两个字的名称不做包含
+        # 匹配，否则「银行」「控股」会把一整片公司算成同一个主体。
+        head = COMPANY_SUFFIX.sub("", name)
+        if flat(name) in text or (len(head) >= 3 and flat(head) in text):
+            add("entity", name, "query", slots)
+    return found
+
+
+STATES = ("pending", "processing", "ready", "review", "failed", "rejected", "deleting")
+# A worker beats at least every ten seconds while idle; ninety seconds of silence
+# means it is gone and the queue is stalled, not merely busy with a large file.
+WORKER_STALE = 90
+# 指代词：出现这些词却没有任何实体锚点时，排序只能靠关键词覆盖率，这类提问最容易
+# 「取回一堆看起来相关的别家资料」。逐词写死而不是用 * 通配，避免把「该行业」当指代。
+ANAPHORA = re.compile(r"该公司|该企业|该集团|该股(?![东票])|该行(?!业)|本公司|本行(?!业)|本企业|"
+                      r"这家公司|上述公司|某公司|某企业|某产品|某标的")
+# 公司名后缀不参与匹配：语料写「上海浦东发展银行股份有限公司」，提问常写到「银行」为止。
+COMPANY_SUFFIX = re.compile(r"(股份有限公司|有限责任公司|有限公司|股份公司|集团公司|集团|控股)$")
+ERRORS = {"PARSE_OR_IMPORT_FAILED": "文件解析或导入失败，请检查格式和当前步骤",
+          "REVIEW_REQUIRED": "扫描件、缺失字段或复杂结构需要人工复核",
+          "PARSER_MISSING": "缺少解析依赖，请安装 knowledge extra",
+          "UNSUPPORTED_ENCODING": "文本不是 UTF-8，请转换编码后更新资料",
+          "INTERRUPTED": "工作进程中断，可重试已完成步骤之后的处理"}
 
 
 class Knowledge:
@@ -75,6 +154,9 @@ class Knowledge:
                     PRIMARY KEY(generation,chunk));
                 CREATE TABLE IF NOT EXISTS review_audit (id TEXT PRIMARY KEY, owner TEXT NOT NULL, doc TEXT NOT NULL,
                     at TEXT NOT NULL, decision TEXT NOT NULL, body TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS workers (id TEXT PRIMARY KEY, host TEXT NOT NULL, pid INTEGER NOT NULL,
+                    started TEXT NOT NULL, beat TEXT NOT NULL, state TEXT NOT NULL, current TEXT,
+                    processed INTEGER NOT NULL DEFAULT 0);
             """)
             con.execute("BEGIN IMMEDIATE")
             for table, additions in {"owners": {"cleaner_config": "BLOB"},
@@ -270,35 +352,63 @@ class Knowledge:
             raise ServiceError("NOT_FOUND", "资料不存在或无权访问")
         return row
 
+    def _summary(self, row, detail=False):
+        # Shared by document() and catalog(): one row in, the same list shape out.
+        result = {k: row[k] for k in ("id", "logical", "filename", "hash", "uploaded", "status", "step", "error", "active")}
+        result["metadata"] = json.loads(row["metadata"])
+        draft = json.loads(row["draft"]) if row["draft"] else {}
+        result["warnings"] = draft.get("warnings", [])
+        result["needs_review"] = bool(result["warnings"]) or row["status"] == "review"
+        result["extraction"] = json.loads(row["extraction"]) if detail and row["extraction"] else None
+        result["review"] = json.loads(row["review"]) if row["review"] else None
+        result["error_message"] = ERRORS.get(row["error"], row["error"])
+        return result
+
     def document(self, owner, did, detail=False):
         self.ensure(owner)
         with self.db() as con:
             row = dict(self._row(con, owner, did))
-            result = {k: row[k] for k in ("id", "logical", "filename", "hash", "uploaded", "status", "step", "error", "active")}
-            result["metadata"] = json.loads(row["metadata"])
-            draft = json.loads(row["draft"]) if row["draft"] else {}
-            result["warnings"] = draft.get("warnings", [])
-            result["needs_review"] = bool(result["warnings"]) or row["status"] == "review"
-            result["extraction"] = json.loads(row["extraction"]) if detail and row["extraction"] else None
-            result["review"] = json.loads(row["review"]) if row["review"] else None
-            reasons = {"PARSE_OR_IMPORT_FAILED": "文件解析或导入失败，请检查格式和当前步骤",
-                       "REVIEW_REQUIRED": "扫描件、缺失字段或复杂结构需要人工复核",
-                       "PARSER_MISSING": "缺少解析依赖，请安装 knowledge extra",
-                       "UNSUPPORTED_ENCODING": "文本不是 UTF-8，请转换编码后更新资料",
-                       "INTERRUPTED": "工作进程中断，可重试已完成步骤之后的处理"}
-            result["error_message"] = reasons.get(row["error"], row["error"])
+            result = self._summary(row, detail)
             if detail:
-                result["chunks"] = [json.loads(r[0]) for r in con.execute("SELECT body FROM chunks WHERE doc=? AND owner=? ORDER BY ordinal", (did, owner))]
-                if not result["chunks"]:
-                    result["chunks"] = draft.get("chunks", [])
+                chunks = [json.loads(r[0]) for r in con.execute("SELECT body FROM chunks WHERE doc=? AND owner=? ORDER BY ordinal", (did, owner))]
+                if not chunks and row["draft"]:
+                    chunks = json.loads(row["draft"]).get("chunks", [])
+                result["chunks"] = chunks
                 result["relations"] = [dict(r) for r in con.execute("SELECT * FROM relations WHERE doc=? AND owner=?", (did, owner))]
         return result
 
+    def catalog(self, owner, *, limit=50, offset=0, status=None):
+        # Paged summaries: one query per page instead of one query per document.
+        self.ensure(owner)
+        if limit is not None and (type(limit) is not int or not 1 <= limit <= 500):
+            raise ServiceError("INVALID_INPUT", "每页条数须为 1–500，或省略表示全部")
+        if type(offset) is not int or offset < 0:
+            raise ServiceError("INVALID_INPUT", "分页偏移须为非负整数")
+        if status is not None and status not in STATES:
+            raise ServiceError("INVALID_INPUT", "资料状态无效")
+        clause, params = "owner=?", [owner]
+        if status:
+            clause += " AND status=?"
+            params.append(status)
+        with self.db() as con:
+            total = con.execute(f"SELECT COUNT(*) FROM documents WHERE {clause}", params).fetchone()[0]
+            statement = f"SELECT * FROM documents WHERE {clause} ORDER BY uploaded DESC,id"
+            if limit is not None:
+                statement += " LIMIT ? OFFSET ?"
+                params += [limit, offset]
+            rows = [dict(row) for row in con.execute(statement, params)]
+            review = con.execute("SELECT COUNT(*) FROM documents WHERE owner=? AND status='review'", (owner,)).fetchone()[0]
+        return {"items": [self._summary(row) for row in rows], "total": total, "review": review,
+                "limit": limit, "offset": offset}
+
     def listing(self, owner):
+        return self.catalog(owner, limit=None)["items"]
+
+    def versions(self, owner, logical):
         self.ensure(owner)
         with self.db() as con:
-            ids = [r[0] for r in con.execute("SELECT id FROM documents WHERE owner=? ORDER BY uploaded DESC,id", (owner,))]
-        return [self.document(owner, did) for did in ids]
+            return [dict(row) for row in con.execute("SELECT id,logical,active,status,uploaded FROM documents WHERE owner=? AND logical=? ORDER BY uploaded,id",
+                                                     (owner, logical))]
 
     def citation(self, owner, citation_id):
         if not isinstance(citation_id, str) or not re.fullmatch(r"[a-f0-9]{32}:[0-9]{1,8}", citation_id):
@@ -329,7 +439,7 @@ class Knowledge:
         with self.db() as con:
             con.execute("UPDATE documents SET status='failed',error='INTERRUPTED' WHERE status='processing'")
 
-    def process_one(self):
+    def process_one(self, on_start=None):
         with self.db() as con:
             con.execute("BEGIN IMMEDIATE")
             row = con.execute("SELECT * FROM documents WHERE status='pending' ORDER BY uploaded,id LIMIT 1").fetchone()
@@ -338,6 +448,10 @@ class Knowledge:
             item = dict(row)
             con.execute("UPDATE documents SET status='processing',error=NULL WHERE id=?", (item["id"],))
         owner, did = item["owner"], item["id"]
+        if on_start is not None:
+            # Called outside the transaction above: the worker writes its heartbeat here,
+            # and opening a second connection inside BEGIN IMMEDIATE would fight for the lock.
+            on_start(did)
         try:
             if item["parsed"]:
                 parsed = json.loads(item["parsed"])
@@ -502,6 +616,81 @@ class Knowledge:
                  "model": self.opened(row["config"])["model"], "version": self.opened(row["config"])["version"],
                  "fingerprint": hashlib.sha256(packed({k: v for k, v in self.opened(row["config"]).items() if k != "api_key"}).encode()).hexdigest()} for row in rows]
 
+    def heartbeat(self, host, pid, *, state, current=None, processed=0, started=None):
+        # The worker is a separate process, so liveness cannot live in memory: SQLite is
+        # the only thing it shares with the console. Only one worker runs at a time
+        # (process_lock), so the table keeps the latest beat rather than a history.
+        if state not in ("idle", "busy", "stopped"):
+            raise ServiceError("INVALID_INPUT", "心跳状态无效")
+        now = utcnow().isoformat()
+        started = started or now
+        wid = f"{host}:{pid}:{started}"
+        with self.db() as con:
+            con.execute("DELETE FROM workers")
+            con.execute("INSERT INTO workers(id,host,pid,started,beat,state,current,processed) VALUES (?,?,?,?,?,?,?,?)",
+                        (wid, str(host), int(pid), started, now, state, current, int(processed)))
+        return {"id": wid, "state": state, "beat": now}
+
+    def worker_status(self):
+        # "Never started" and "went silent" are different problems for the operator: the
+        # first needs the command, the second needs a look at the process. Keep them apart.
+        with self.db() as con:
+            row = con.execute("SELECT * FROM workers ORDER BY beat DESC, rowid DESC LIMIT 1").fetchone()
+        if row is None:
+            return {"seen": False, "online": False, "state": None, "beat": None, "age": None,
+                    "host": None, "pid": None, "processed": 0, "current": None,
+                    "current_logical": None, "stale_after": WORKER_STALE}
+        age = round(max((utcnow() - datetime.fromisoformat(row["beat"])).total_seconds(), 0.0), 1)
+        return {"seen": True, "online": row["state"] != "stopped" and age <= WORKER_STALE,
+                "state": row["state"], "beat": row["beat"], "age": age, "host": row["host"],
+                "pid": row["pid"], "processed": row["processed"], "current": row["current"],
+                "current_logical": None, "stale_after": WORKER_STALE}
+
+    def queue(self, owner, *, limit=5):
+        # One GROUP BY feeds the console status bar; the document list has its own paging.
+        # Kept cheap on purpose: the console polls this every few seconds.
+        self.ensure(owner)
+        if type(limit) is not int or not 1 <= limit <= 20:
+            raise ServiceError("INVALID_INPUT", "待办条数须为 1–20")
+        with self.db() as con:
+            counts = dict(con.execute("SELECT status, COUNT(*) FROM documents WHERE owner=? GROUP BY status", (owner,)))
+            attention = []
+            for row in con.execute("SELECT id,logical,filename,status,error,uploaded FROM documents "
+                                   "WHERE owner=? AND status IN ('failed','review') "
+                                   "ORDER BY CASE status WHEN 'failed' THEN 0 ELSE 1 END, uploaded DESC, id LIMIT ?",
+                                   (owner, limit)):
+                item = dict(row)
+                item["error_message"] = ERRORS.get(item["error"], item["error"])
+                attention.append(item)
+        worker = self.worker_status()
+        if worker["current"]:
+            # A worker imports for every owner. Name the document only when it is this
+            # caller's; another owner's import is not this caller's business.
+            with self.db() as con:
+                own = con.execute("SELECT logical FROM documents WHERE id=? AND owner=?",
+                                  (worker["current"], owner)).fetchone()
+            worker["current_logical"] = own["logical"] if own else None
+            if own is None:
+                worker["current"] = None
+        counts = {state: counts.get(state, 0) for state in STATES}
+        return {"counts": counts, "total": sum(counts.values()),
+                "waiting": counts["pending"] + counts["processing"],
+                "attention": attention, "worker": worker}
+
+    def retire(self, owner, did):
+        # Withdraws a version from retrieval while keeping its encrypted original:
+        # deletion cannot be undone, so "revoke" must not be mapped onto it. Older
+        # versions stay inactive because retirement is not a rollback.
+        self.ensure(owner)
+        with self.db() as con:
+            con.execute("BEGIN IMMEDIATE")
+            row = self._row(con, owner, did)
+            if not row["active"]:
+                raise ServiceError("INVALID_STATE", "该版本未激活，无需撤销")
+            con.execute("UPDATE documents SET active=0 WHERE id=? AND owner=?", (did, owner))
+            con.execute("UPDATE owners SET revision=revision+1 WHERE owner=?", (owner,))
+        return {"id": did, "status": "retired"}
+
     def delete(self, owner, did):
         self.ensure(owner)
         with self.db() as con:
@@ -527,12 +716,14 @@ class Knowledge:
         # Deletion does not reactivate older versions.
         return {"status": "deleted", "id": did}
 
-    def search(self, owner, query, *, as_of=None, start_date=None, stock_code=None, entity=None, limit=8):
+    def search(self, owner, query, *, as_of=None, start_date=None, stock_code=None, entity=None, limit=8, domains=None):
         self.ensure(owner)
         if not isinstance(query, str) or not 1 <= len(query.strip()) <= 4000 or type(limit) is not int or not 1 <= limit <= 20:
             raise ServiceError("INVALID_INPUT", "查询须非空且 limit 为 1–20")
         as_of = day(as_of or utcnow().date().isoformat())
         start_date = day(start_date) if start_date else None
+        # 空列表代表「什么都不许读」，与 None（不限制）必须区分开。
+        allowed_domains = domain_scope(domains)
         if stock_code is not None and (not isinstance(stock_code, str) or not stock_codes(stock_code, explicit=True)):
             raise ServiceError("INVALID_INPUT", "股票代码无效")
         if entity is not None and (not isinstance(entity, str) or len(entity) > 200):
@@ -540,17 +731,29 @@ class Knowledge:
         with self.db() as con:
             con.execute("BEGIN")
             versions = con.execute("SELECT id,logical,metadata,uploaded FROM documents WHERE owner=? AND status='ready' AND logical IN (SELECT logical FROM documents WHERE owner=? AND active=1)", (owner, owner)).fetchall()
-            selected = {}
+            selected, registry, stocks = {}, {}, {}
             for version in versions:
+                # 权限过滤必须在排名与 limit 之前：先筛再截断，才不会被越权资料占用名额。
+                if allowed_domains is not None and domain(version["logical"]) not in allowed_domains:
+                    continue
                 meta = json.loads(version["metadata"])
                 if meta["available_date"] > as_of or (meta["document_date"] and meta["document_date"] > as_of):
                     continue
+                # 主体注册表只由当前可读的版本构成：锚点指向读不到的资料，等于把人引向 403。
+                for name in meta["companies"]:
+                    registry.setdefault(name, set()).add(version["logical"])
+                for code in meta["stock_codes"]:
+                    stocks.setdefault(code, set()).add(version["logical"])
                 key = (meta["available_date"], version["uploaded"], version["id"])
                 if version["logical"] not in selected or key > selected[version["logical"]][0]:
                     selected[version["logical"]] = (key, version["id"])
             selected_ids = {v[1] for v in selected.values()}
-            rows = con.execute("SELECT c.id,c.doc,c.ordinal,c.body,d.filename,d.metadata,d.hash FROM chunks c JOIN documents d ON d.id=c.doc WHERE c.owner=? AND d.owner=?", (owner, owner)).fetchall()
+            rows = con.execute("SELECT c.id,c.doc,c.ordinal,c.body,d.filename,d.metadata,d.hash,d.logical FROM chunks c JOIN documents d ON d.id=c.doc WHERE c.owner=? AND d.owner=?", (owner, owner)).fetchall()
             rows = [r for r in rows if r["doc"] in selected_ids]
+            anchors = entity_anchors(query, entity, stock_code, registry, stocks)
+            anchor_names = {item["value"] for item in anchors}
+            # 锚点落在槽位上，再映射回本次真正可读的那个版本：否则锚点会指向旧版本。
+            anchor_docs = {selected[slot][1] for item in anchors for slot in item["slots"] if slot in selected}
             relations = [dict(r) for r in con.execute("SELECT r.* FROM relations r JOIN documents d ON r.doc=d.id WHERE r.owner=? AND d.owner=?", (owner, owner)) if r["doc"] in selected_ids]
             active = con.execute("SELECT * FROM generations WHERE owner=? AND status='active'", (owner,)).fetchone()
             vecs = {r[0]: json.loads(r[1]) for r in con.execute("SELECT chunk,vector FROM vectors WHERE generation=?", (active["id"],))} if active else {}
@@ -566,8 +769,16 @@ class Knowledge:
                     continue
                 if stock_code and not set(stock_codes(stock_code, explicit=True)) & set(meta["stock_codes"] + chunk.get("stock_codes", [])):
                     continue
-                eligible.append({**dict(row), **chunk, "metadata": meta})
+                eligible.append({**dict(row), **chunk, "metadata": meta, "anchored": row["doc"] in anchor_docs})
+            # 传了主体却一条都没连上：多半是填了简称，直接说清楚，别让它退化成空结果。
+            unmatched = bool(entity) and not any(
+                item["source"] == "param" and item["slots"] for item in anchors) and not any(entity in row["text"] for row in eligible)
+            # 别名只扩展查询词，索引仍保存原文写法：加一条说法不需要重建索引，
+            # 扩展也不可能把资料里没有的内容「造」出来。
+            expanded, aliases = expand(query)
             query_terms = terms(query)[:80]
+            if aliases:
+                query_terms = sorted(set(query_terms) | set(terms(expanded)))
             ranks = {}
             if query_terms:
                 expression = " OR ".join('"' + t.replace('"', '""') + '"' for t in query_terms)
@@ -579,7 +790,7 @@ class Knowledge:
         ids = {r["id"] for r in eligible}
         relations = [r for r in relations if r["chunk"] in ids and (not r["valid_from"] or r["valid_from"] <= as_of)
                      and (not r["valid_to"] or r["valid_to"] >= as_of)]
-        seeds = {entity} if entity else {v for r in relations for v in (r["subject"], r["object"]) if v in query}
+        seeds = anchor_names | {v for r in relations for v in (r["subject"], r["object"]) if flat(v) in flat(query)}
         linked, edges = set(seeds), []
         for _ in range(2):
             frontier = set(linked)
@@ -601,11 +812,16 @@ class Knowledge:
                 warnings.append(exc.code + "：已降级为关键词与关系检索")
         else:
             warnings.append("未启用语义向量索引，当前为关键词与关系检索")
+        if unmatched:
+            warnings.append("主体名称没有匹配到任何可读资料；若填的是简称，请改用公司全称或股票代码")
+        if ANAPHORA.search(query) and not anchors:
+            warnings.append("查询含「该公司」一类指代但没有锚定到具体主体；结果只按关键词排序，"
+                            "可显式传 entity 或股票代码收窄")
         results = []
         edge_ids = {e["chunk"] for e in edges}
         for row in eligible:
             cid = row["id"]
-            graph = cid in edge_ids or any(v in row["text"] or v in row["metadata"]["companies"] or v in row["metadata"]["industries"] for v in linked)
+            graph = row["anchored"] or cid in edge_ids or any(v in row["text"] or v in row["metadata"]["companies"] or v in row["metadata"]["industries"] for v in linked)
             if entity and not graph:
                 continue
             score = (1 / (60 + ranks[cid]) if cid in ranks else 0) + (1 / (60 + vector_ranks[cid]) if cid in vector_ranks else 0) + (1 / 61 if graph else 0)
@@ -628,16 +844,51 @@ class Knowledge:
                     if value and ((key == "valid_from" and value > as_of) or (key == "valid_to" and value < as_of)):
                         item_warnings.append(label + "，不得用作当前有效关系")
                 results.append({"citation_id": f"{row['doc']}:{row['ordinal']}", "document_id": row["doc"], "chunk_id": cid,
+                                "anchored": row["anchored"],
+                                "logical": row["logical"], "expired": bool(meta["valid_to"] and meta["valid_to"] < as_of),
                                 "filename": row["filename"], "text": row["text"], "location": row["location"],
                                 "fields": row["fields"], "extractions": row.get("extractions", []),
                                 "semantic_reviewed": row.get("semantic_reviewed", False), "metadata": {**meta, "data_date": row.get("data_date"),
                                     "entities": row.get("entities", {}), "stock_codes": sorted(set(meta["stock_codes"] + row.get("stock_codes", [])))}, "score": score, "warnings": item_warnings,
                                 "citation_path": f"/api/knowledge/citations/{row['doc']}:{row['ordinal']}",
                                 "source_hash": row["hash"], "trust": "untrusted_source_material"})
-        results.sort(key=lambda r: (-r["score"], r["citation_id"]))
-        chosen = results[:limit]
+        # 锚定主体排在最前：问题点名了一家公司的资料，不该被另一家用词更像的资料压住。
+        # 同一层内仍按分数排，所以锚定只决定「先看谁」，不改变「谁的证据更贴题」。
+        results.sort(key=lambda r: (not r["anchored"], -r["score"], r["citation_id"]))
+        # 版本槽位优先：一份长资料的多个切片会占满名额，先把每个 logical 的最好一段纳入，
+        # 再按分数补齐剩余名额。limit 仍严格生效，结果集不会因此变大。
+        chosen, seen_logical = [], set()
+        for item in results:
+            if len(chosen) >= limit:
+                break
+            if item["logical"] not in seen_logical:
+                seen_logical.add(item["logical"])
+                chosen.append(item)
+        shown = {item["chunk_id"] for item in chosen}
+        for item in results:
+            if len(chosen) >= limit:
+                break
+            if item["chunk_id"] not in shown:
+                shown.add(item["chunk_id"])
+                chosen.append(item)
+        groups = []
+        for item in results:
+            group = next((g for g in groups if g["logical"] == item["logical"]), None)
+            if group is None:
+                meta = item["metadata"]
+                group = {"logical": item["logical"], "document_id": item["document_id"], "filename": item["filename"],
+                         "document_date": meta["document_date"], "available_date": meta["available_date"],
+                         "valid_to": meta["valid_to"], "expired": item["expired"],
+                         "hits": 0, "shown": 0, "best_citation": item["citation_id"]}
+                groups.append(group)
+            group["hits"] += 1
+            group["shown"] += 1 if item["chunk_id"] in shown else 0
+        order = {item["chunk_id"]: index for index, item in enumerate(chosen)}
+        chosen.sort(key=lambda item: (next(i for i, g in enumerate(groups) if g["logical"] == item["logical"]), order[item["chunk_id"]]))
         chosen_ids = {r["chunk_id"] for r in chosen}
-        return {"query": query, "as_of": as_of, "results": chosen,
+        return {"query": query, "aliases": aliases, "anchors": anchors, "as_of": as_of, "start_date": start_date, "results": chosen,
+                "groups": [g for g in groups if g["shown"]], "logical_total": len(groups), "limit": limit,
+                "domains": sorted(allowed_domains) if allowed_domains is not None else None,
                 "relations": [r for r in edges if r["chunk"] in chosen_ids], "warnings": warnings}
 
     def answer(self, owner, query, **filters):
@@ -685,10 +936,37 @@ class Knowledge:
                 if key not in ("subject", "predicate", "object", "valid_from", "valid_to"):
                     values.setdefault(key, set()).add(packed(value))
                     field_sources.setdefault(key, []).append({"value": value, "citation_id": item["citation_id"],
+                                                               "document_id": item["document_id"],
+                                                               "companies": item["metadata"]["companies"],
                                                                "document_date": item["metadata"]["document_date"]})
-        conflicting = [key for key, variants in values.items() if len(variants) > 1]
+        conflicting = []
+        for key, variants in values.items():
+            if len(variants) < 2:
+                continue
+            # 按主体分组比较：两家银行的「本期营业收入」本来就不该相等，那不是来源冲突。
+            # 组内再看每份资料的取值——同一份资料同一字段多个取值是表格的数值列（每行
+            # 一个指标），不参与逐值比较，否则「本期」「同比」会被整列误报。
+            groups = {}
+            for source in field_sources[key]:
+                for company in (source["companies"] or [""]):
+                    groups.setdefault(company, []).append(source)
+            for members in groups.values():
+                per_document = {}
+                for source in members:
+                    per_document.setdefault(source["document_id"], set()).add(packed(source["value"]))
+                scalar = {next(iter(found)) for found in per_document.values() if len(found) == 1}
+                if len(scalar) > 1:
+                    # 只报触发冲突的那一组来源：把另一家公司的数值一起列出来，会让
+                    # 「冲突」看起来比实际更大，也会把无关主体卷进来。
+                    seen, group = set(), []
+                    for source in members:
+                        if source["citation_id"] not in seen:
+                            seen.add(source["citation_id"])
+                            group.append(source)
+                    conflicting.append((key, group))
+                    break
         if conflicting:
-            warnings.append("来源字段取值不同，可能统计周期或口径不同，请核对：" + "、".join(conflicting))
+            warnings.append("来源字段取值不同，可能统计周期或口径不同，请核对：" + "、".join(key for key, _ in conflicting))
         metric_groups = {}
         for item in citations:
             for claim in item.get("extractions", []):
@@ -703,5 +981,5 @@ class Knowledge:
             warnings.append("相同主体、指标、周期和单位存在不同来源数值，请核对原文，不自动择一")
         warnings.append("不能仅凭供应商或事件关联推断影响规模、确定因果关系或收益；需进一步核实。")
         return {**found, "answer": "\n\n".join(lines), "warnings": sorted(set(warnings)),
-                "inferences": inferences, "conflicts": [{"field": key, "sources": field_sources[key],
-                    "status": "different_values_need_period_and_unit_review"} for key in conflicting] + typed_conflicts, "mode": "evidence_extract"}
+                "inferences": inferences, "conflicts": [{"field": key, "sources": group,
+                    "status": "different_values_need_period_and_unit_review"} for key, group in conflicting] + typed_conflicts, "mode": "evidence_extract"}

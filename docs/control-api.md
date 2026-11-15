@@ -55,9 +55,11 @@ Task 为 `{kind:"task",id,contextId,status:{state,timestamp},artifacts:[]}`。st
 
 发现 GET `/.well-known/agent-card.json`（main）或 `/a2a/{role}/agent-card.json`；JSON-RPC POST `/a2a/{main|prediction|risk|advice}`。Agent Card 声明 protocolVersion=0.3.0、preferredTransport=JSONRPC、streaming=false、pushNotifications=false。不声称兼容 A2A 1.0 或完整协议实现。
 
-支持 `message/send`、`tasks/get`、`tasks/cancel`；TaskIdParams `{id}`。message/send.params.message 为 `{kind:"message",role:"user",messageId,contextId?,parts:[{kind:"data",data:…}]}`。main data 为 TaskRequest；子角色 data 为 `{role,prediction,facts,depth:1,tools:[],cost_ceiling_usd?}`，返回 completed Task，其 artifact DataPart 是模型输出结构，经主 Agent再次校验。主任务非阻塞返回 submitted/working，调用 tasks/get 查询。子任务是同步非流式执行，有明确超时和结构化失败，不开放任意主机上的 Agent 创建。
+支持 `message/send`、`tasks/get`、`tasks/cancel`、`knowledge/search`；TaskIdParams `{id}`。message/send.params.message 为 `{kind:"message",role:"user",messageId,contextId?,parts:[{kind:"data",data:…}]}`。main data 为 TaskRequest；子角色 data 为 `{role,prediction,facts,depth:1,tools:[],cost_ceiling_usd?}`，返回 completed Task，其 artifact DataPart 是模型输出结构，经主 Agent再次校验。主任务非阻塞返回 submitted/working，调用 tasks/get 查询。子任务是同步非流式执行，有明确超时和结构化失败，不开放任意主机上的 Agent 创建。
 
-JSON-RPC 错误 -32600 请求不合法、-32601 未支持方法、-32602 参数错误、-32001 找不到任务、-32002 不可取消；不包含内部异常正文。浏览器使用会话/CSRF；外部 A2A 客户端使用服务端环境 STOCK_PREDICT_MAILER_A2A_TOKEN 对应的 Bearer token（未设置则不开放 Bearer 通道）。A2A 凭据是单独配置，不复用模型 Key。当前监听本机，外部远程部署需要另行实现 HTTPS、身份与网络隔离。
+`knowledge/search` 是只读证据检索（`effect=read`），params 为 `{query, as_of?, start_date?, stock_code?, entity?, limit?}`，与 `/api/knowledge/search` 同名同义；额外要求请求头 `X-Memory-Key`（知识库按 owner 隔离，Bearer 令牌只证明能调用服务，不携带资料身份），并按角色白名单收窄可读的一级域（`logical` 第一段，如 `研报/中金/跟踪` → `研报`）。白名单由 `knowledge-acl --role <role> --domains 研报,产业` 设置，默认为空即拒绝，未知角色、越权域参数、缺密钥分别返回 PERMISSION_DENIED / INVALID_PARAMS / FORBIDDEN（JSON-RPC 码 -32003、-32602、-32003），不返回空结果——空结果会让对端误以为「库里没有」。返回体中 `role`、`effect`、`domains` 回显生效范围。`aliases` 回显查询侧的同义扩展（`[{"alias":"营收","canonical":["营业收入"]}]`），扩展只作用于查询、不改变索引，因此调用方可以据此解释「用口语问、按全称命中」。`anchors` 回显本次锚定的主体（`[{"kind":"entity","value":"…","source":"query"|"param","slots":[…]}]`）：锚定按元数据把片段挂回主体并优先排序，`source=query` 表示从查询里的股票代码或公司全称认出，`source=param` 表示由 `entity`/`stock_code` 传入；查询含「该公司」一类指代而无锚点时 `warnings` 会明确写出「只按关键词排序」，解析不出主体同样给警告而不是空结果。领域白名单为空时的拒绝优先于密钥校验，因此未授权角色无法用错密钥试探域是否存在。
+
+JSON-RPC 错误 -32600 请求不合法、-32601 未支持方法、-32602 参数错误、-32001 找不到任务、-32002 不可取消、-32003 拒绝访问；不包含内部异常正文。浏览器使用会话/CSRF；外部 A2A 客户端使用服务端环境 STOCK_PREDICT_MAILER_A2A_TOKEN 对应的 Bearer token（未设置则不开放 Bearer 通道）。A2A 凭据是单独配置，不复用模型 Key。当前监听本机，外部远程部署需要另行实现 HTTPS、身份与网络隔离。
 
 ## 官方依据与兼容边界
 

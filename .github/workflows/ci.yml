@@ -27,9 +27,23 @@ jobs:
       - run: uv sync --python 3.11 --locked
       - run: uv run python -m unittest discover -s tests -p test_agent_service.py -v
       - run: uv run python -m unittest discover -s tests -p test_control.py -v
+      - run: uv run python -m unittest discover -s tests -p test_crawler_service.py -v
+      - run: uv run python -m unittest discover -s tests -p test_crawler_quality.py -v
+      - run: uv run python -m unittest discover -s tests -p test_crawler_analysis.py -v
+      - run: uv run python -m unittest discover -s tests -p test_crawler_jobs.py -v
+      - run: uv run python -m unittest discover -s tests -p test_mail_core.py -v
+      - run: uv run python -m unittest discover -s tests -p test_mail_cutover.py -v
+      - run: uv run python -m unittest discover -s tests -p test_diagnostics.py -v
+      - run: uv run python -m unittest discover -s tests -p test_runtime_lifecycle.py -v
+      - run: uv run python -m unittest discover -s tests -p test_workspace_backup.py -v
+      - run: uv run python -m unittest discover -s tests -p test_schema_planning.py -v
+      - run: uv run python scripts/build_schema_catalog.py --check
       - run: uv run python -m unittest discover -s tests -p test_private_knowledge.py -v
       - run: uv run python -m unittest discover -s tests -p test_cleaning_agent.py -v
       - run: uv run python -m unittest discover -s tests -p test_knowledge_publication.py -v
+      - run: uv run python -m unittest discover -s tests -p 'test_knowledge*.py' -v
+      - run: uv run python -m unittest discover -s tests -p test_a2a_knowledge.py -v
+      - run: uv run python -m unittest discover -s tests -p test_pdf_structure.py -v
       - run: node --check src/stock_predict_mailer/control/web/app.js
       - run: node --check src/stock_predict_mailer/control/web/memory.js
       - run: node tests/test_pony_floor.cjs
@@ -59,9 +73,11 @@ jobs:
         run: uv sync --all-extras --locked
       - name: Lint
         # The data-plane training scripts are an upstream delivery.
-        run: uv run ruff check src/stock_predict_mailer tests scripts
+        run: uv run ruff check src/stock_predict_mailer src/mcp_server tests scripts
       - name: Compile
         run: uv run python -m compileall -q src tests
+      - name: Schema catalogue matches sources
+        run: uv run python scripts/build_schema_catalog.py --check
       - name: Unit tests
         run: uv run python -m unittest discover -s tests -v
 

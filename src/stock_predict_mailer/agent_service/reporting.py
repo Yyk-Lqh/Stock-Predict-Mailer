@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from ..core import atomic_write, write_json
 from .charts import chart_svg
 from .contracts import instant
+from .input_evidence import fingerprint, persist
 
 
 def render(analysis, timezone="Asia/Shanghai", *, charts="inline"):
@@ -25,6 +26,19 @@ def render(analysis, timezone="Asia/Shanghai", *, charts="inline"):
         lines += ["本轮用户约束", *analysis["user_constraints"]]
     for title, key in (("不确定性与限制", "limitations"), ("风险提示", "risks"), ("建议（不作收益保证）", "recommendations")):
         lines += [title] + analysis[key]
+    if analysis.get("input_evidence"):
+        evidence = analysis["input_evidence"]
+        snapshot = evidence["snapshot"]
+        source = snapshot["source"]
+        lines += ["输入快照与来源追溯（摘要不代表来源认证）", f"快照 ID：{evidence['snapshot_id']}",
+                  f"上游预测 ID：{snapshot['prediction']['prediction_id']}；预测内容摘要：{fingerprint(snapshot['prediction'])}",
+                  f"上下文摘要：{fingerprint(snapshot['context'])}",
+                  f"来源文件：{source['filename']}；CSV SHA256：{source['csv_sha256']}",
+                  f"来源元数据内容摘要：{source['metadata_sha256']}；原始行摘要：{fingerprint(source['record'])}"]
+        for fact in analysis["facts"]:
+            lines += [f"[{fact['id']}] 来源行：{source['row_number']}；字段：{source['fact_fields'][fact['id']]}；"
+                      f"报告期：{source['record']['report_date']}；披露日：{source['record']['pub_date']}；"
+                      f"原始采集时间：{source['record']['collected_at']}"]
     evidence = analysis.get("knowledge_evidence")
     if evidence:
         lines += ["私有资料证据（来源声明，未独立核实）", "资料截止：" + evidence["as_of"]]
@@ -54,6 +68,8 @@ def render(analysis, timezone="Asia/Shanghai", *, charts="inline"):
 
 
 def save_report(workspace, analysis, timezone="Asia/Shanghai"):
+    if "input_evidence" in analysis:
+        persist(workspace, analysis["input_evidence"])
     folder = workspace / "analysis" / analysis["analysis_id"]
     write_json(folder / "analysis.json", analysis)
     _, html = render(analysis, timezone)

@@ -7,6 +7,7 @@ from ..core import digest
 from .adapters import http_json
 from .charts import build_charts, chart_data
 from .contracts import ServiceError, context, fail, keys, prediction
+from .input_evidence import validate as validate_input_evidence
 
 INFERENCES = {
     "MODEL_UP": "模型方向为上行；这不是收益保证，也不能据此判断上涨概率。",
@@ -31,16 +32,22 @@ class AnalysisAgent:
 
     def analyze(self, raw_prediction, raw_context=None):
         p = prediction(raw_prediction, max_age=self.settings.get("max_age_seconds", 86400))
+        evidence_present = isinstance(raw_context, dict) and "input_evidence" in raw_context
+        evidence = raw_context.get("input_evidence") if evidence_present else None
+        if evidence_present:
+            raw_context = {k: v for k, v in raw_context.items() if k != "input_evidence"}
         # chart_data rides alongside the context contract; strip it before validation.
         series = raw_context.get("chart_data") if isinstance(raw_context, dict) else None
         if series is not None:
             raw_context = {k: v for k, v in raw_context.items() if k != "chart_data"}
         c = context(raw_context, p["subject"], max_age=self.settings.get("max_context_age_seconds", 86400))
         facts = c["facts"] if c else []
+        if evidence_present:
+            validate_input_evidence(evidence, p, facts, self.settings, full_context=c)
         direction_code = "MODEL_" + p["direction"].upper() if "direction" in p else "INSUFFICIENT"
         selected = {"evidence_ids": [f["id"] for f in facts], "inference_codes": [direction_code],
                     "recommendation_codes": ["VERIFY", "WAIT"]}
-        limitations = []
+        limitations = list(evidence["snapshot"]["source"]["warnings"]) if evidence_present else []
         if not facts:
             limitations.append("未提供客观上下文，无法解释预测原因或交叉验证模型结果。")
         if p["confidence"] is None:
@@ -86,6 +93,8 @@ class AnalysisAgent:
             if figures:
                 result["charts"] = figures
             result["limitations"] += chart_notes
+        if evidence_present:
+            result["input_evidence"] = evidence
         result["analysis_id"] = identity(result)
         return result
 
@@ -93,7 +102,7 @@ class AnalysisAgent:
 def validate_analysis(value, settings=None):
     settings = settings or {}
     keys(value, ("schema_version", "analysis_id", "generated_at", "status", "mode", "prediction", "facts", "inferences",
-                 "recommendations", "limitations", "risks"), ("charts", "report_format", "user_constraints", "knowledge_evidence"))
+                 "recommendations", "limitations", "risks"), ("charts", "report_format", "user_constraints", "knowledge_evidence", "input_evidence"))
     if "knowledge_evidence" in value:
         evidence = value["knowledge_evidence"]
         keys(evidence, ("as_of", "results", "used_ids"))
@@ -143,4 +152,8 @@ def validate_analysis(value, settings=None):
     for field in ("recommendations", "limitations", "risks"):
         if any(not isinstance(v, str) or not v.strip() for v in value[field]):
             fail("分析文本无效")
+    if "input_evidence" in value:
+        evidence = validate_input_evidence(value["input_evidence"], value["prediction"], value["facts"], settings)
+        if any(note not in value["limitations"] for note in evidence["snapshot"]["source"]["warnings"]):
+            fail("分析遗漏来源限制声明")
     return value

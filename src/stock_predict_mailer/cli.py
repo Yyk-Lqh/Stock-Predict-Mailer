@@ -15,6 +15,8 @@ from .agent_service.mail import MailService
 from .agent_service.reporting import save_report
 from .naming import COMMAND, PROJECT_NAME, SUMMARY_ZH, banner
 
+MANIFEST_COLUMNS = "path,logical,source,document_date,available_date,valid_to,companies,industries,topics,stock_codes"
+
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -51,6 +53,19 @@ def main(argv=None):
     worker = sub.add_parser("knowledge-worker", help="独立资料清洗 Agent；不占分析子 Agent 名额")
     worker.add_argument("--once", action="store_true", help="处理当前所有待导入资料后退出")
     worker.add_argument("--poll", type=float, default=2)
+    importer = sub.add_parser("knowledge-import", help="按目录或 CSV 清单批量导入知识资料")
+    importer.add_argument("folder", type=Path, help="要导入的目录")
+    importer.add_argument("--manifest", type=Path, help="CSV 清单，列为 %s" % MANIFEST_COLUMNS)
+    importer.add_argument("--write-manifest", type=Path, help="按目录生成清单骨架后退出，不导入")
+    importer.add_argument("--source", default="本地导入", help="清单未填来源时的默认值")
+    importer.add_argument("--available", help="清单未填可用日期时的默认值 YYYY-MM-DD")
+    importer.add_argument("--assume-available-today", action="store_true", help="缺日期时按今天可用；会污染历史回测，慎用")
+    importer.add_argument("--principal", default="owner", help="写入身份；与控制台一致时用 KB_KEY 环境变量")
+    importer.add_argument("--dry-run", action="store_true", help="只生成计划，不写库")
+    importer.add_argument("--limit", type=int, help="本次最多导入多少个文件，用于试灌")
+    importer.add_argument("--shallow", action="store_true", help="只扫当前目录，不递归")
+    importer.add_argument("--process", action="store_true", help="导入后立即处理队列")
+    importer.add_argument("--quiet", action="store_true", help="不打印逐文件进度")
     console = sub.add_parser("console", help="启动本机模型、MCP 与 Agent 配置控制台")
     console.add_argument("--port", type=int, default=8767)
     args = parser.parse_args(argv)
@@ -74,6 +89,16 @@ def main(argv=None):
             from .control.server import serve
             serve(cfg["workspace"], args.port)
             return 0
+        if args.command == "knowledge-import":
+            from .private_knowledge.importer import run as import_knowledge
+            summary = import_knowledge(cfg["workspace"], args.folder, principal=args.principal,
+                                       manifest=args.manifest, write_manifest=args.write_manifest,
+                                       source=args.source, available=args.available,
+                                       assume_available_today=args.assume_available_today,
+                                       dry_run=args.dry_run, limit=args.limit, recursive=not args.shallow,
+                                       progress=not args.quiet, process=args.process)
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
+            return 2 if summary.get("failed") else 0
         mail = MailService(cfg["workspace"], cfg["mail"], cfg["timezone"], analysis_settings=cfg["agent"])
         if args.command == "run":
             p = adapter(cfg["prediction"]["adapter"], {**cfg["prediction"], "role": "prediction"}).fetch()

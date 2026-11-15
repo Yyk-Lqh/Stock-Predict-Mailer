@@ -58,6 +58,17 @@ def _context(cfg: Config):
     return kb, _owner(store, memory, cfg.principal, primary=True)
 
 
+def open_store(workspace, principal="owner"):
+    """Public ``(Knowledge, owner)`` pair for tools that write in bulk.
+
+    The import tool is not a legacy caller, so it uses this instead of the four
+    compatibility functions; it still resolves the owner the same way, which is
+    what keeps a console session and a command line import in one space when
+    ``STOCK_PREDICT_MAILER_KB_KEY`` is set.
+    """
+    return _context(Config(Path(workspace), principal=principal))
+
+
 def _as_of(cutoff: str) -> str:
     return timestamp(cutoff).date().isoformat()
 

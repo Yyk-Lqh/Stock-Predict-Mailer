@@ -1,0 +1,390 @@
+{
+  "schema_version": "1",
+  "catalogue_revision": "2",
+  "app_version": "0.5.0",
+  "groups": {
+    "mail.core": {
+      "source": "stock_predict_mailer/mail_core/service.py",
+      "source_id": "7f32ef7bc07992ecd771babe0feb882cefe65e6835ead0a663d8d79ea2110abf",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS mail (\n                id TEXT PRIMARY KEY, recipient TEXT NOT NULL, sender TEXT NOT NULL, transport TEXT NOT NULL,\n                status TEXT NOT NULL, attempts INTEGER NOT NULL, next_attempt TEXT NOT NULL,\n                error TEXT, payload_hash TEXT NOT NULL, analysis TEXT NOT NULL);",
+        "CREATE TABLE IF NOT EXISTS mail_audit (\n                id TEXT PRIMARY KEY, message_id TEXT NOT NULL, action TEXT NOT NULL, at TEXT NOT NULL);"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
+    },
+    "mail.bindings": {
+      "source": "stock_predict_mailer/mail_core/service.py",
+      "source_id": "7f32ef7bc07992ecd771babe0feb882cefe65e6835ead0a663d8d79ea2110abf",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS mail_binding(\n                message_id TEXT PRIMARY KEY,kind TEXT NOT NULL,principal TEXT NOT NULL,source_id TEXT,report_id TEXT,\n                source_record TEXT,profile TEXT,request TEXT,binding_hash TEXT NOT NULL);",
+        "CREATE TABLE IF NOT EXISTS mail_alias(\n                namespace TEXT,source_id TEXT,principal TEXT,message_id TEXT,PRIMARY KEY(namespace,source_id,principal));",
+        "CREATE TABLE IF NOT EXISTS mail_control(id TEXT PRIMARY KEY,body TEXT NOT NULL);"
+      ],
+      "additions": [],
+      "initialize_when_absent": true,
+      "target_revision": "1"
+    },
+    "mail.archive": {
+      "source": "stock_predict_mailer/mail_core/migration.py",
+      "source_id": "64149af32e668d60f8e879ca428582b6f0cc6d281bfa16ff55a54724db9e965c",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS mail_archive(\n        id TEXT PRIMARY KEY, origin TEXT NOT NULL, namespace TEXT NOT NULL, source_id TEXT NOT NULL,\n        kind TEXT NOT NULL, principal TEXT, report_id TEXT, analysis_id TEXT, status TEXT NOT NULL,\n        original_status TEXT NOT NULL, recipient TEXT, sender TEXT, message_id TEXT,\n        payload_hash TEXT, payload BLOB, source_metadata TEXT NOT NULL,\n        delivery_disabled INTEGER NOT NULL CHECK(delivery_disabled=1), UNIQUE(origin,namespace,source_id));",
+        "CREATE TABLE IF NOT EXISTS mail_migration_ledger(\n        origin TEXT NOT NULL, namespace TEXT NOT NULL, source_id TEXT NOT NULL,\n        record_id TEXT NOT NULL, source_digest TEXT NOT NULL, plan_id TEXT NOT NULL, imported_at TEXT NOT NULL,\n        PRIMARY KEY(origin,namespace,source_id));"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
+    },
+    "control.base": {
+      "source": "stock_predict_mailer/control/store.py",
+      "source_id": "a9359b602ed385dc751df989b9b956dfb10a39f5f2b46a3f269552e8a8f8f40c",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS profiles (kind TEXT,id TEXT,body TEXT,secrets BLOB,PRIMARY KEY(kind,id));",
+        "CREATE TABLE IF NOT EXISTS state (id TEXT PRIMARY KEY,body TEXT);",
+        "CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY,body TEXT);",
+        "CREATE TABLE IF NOT EXISTS task_events (seq INTEGER PRIMARY KEY, task_id TEXT NOT NULL, body TEXT NOT NULL);",
+        "CREATE INDEX IF NOT EXISTS task_events_lookup ON task_events(task_id,seq);"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
+    },
+    "control.memory": {
+      "source": "stock_predict_mailer/control/memory.py",
+      "source_id": "9befdc971f2494210b563109cec6d62ad4bbe04736ee0520177c1b596965d265",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS memory_owners (id TEXT PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, settings TEXT NOT NULL);",
+        "CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, owner TEXT NOT NULL, state BLOB NOT NULL, updated TEXT NOT NULL);",
+        "CREATE INDEX IF NOT EXISTS conversation_owner ON conversations(owner,updated);",
+        "CREATE TABLE IF NOT EXISTS conversation_turns (seq INTEGER PRIMARY KEY, conversation TEXT NOT NULL, body BLOB NOT NULL);",
+        "CREATE INDEX IF NOT EXISTS conversation_turn_index ON conversation_turns(conversation,seq);",
+        "CREATE TABLE IF NOT EXISTS memory_tasks (task TEXT PRIMARY KEY, owner TEXT NOT NULL, conversation TEXT NOT NULL);",
+        "CREATE TABLE IF NOT EXISTS memory_pending (id TEXT PRIMARY KEY, owner TEXT NOT NULL, conversation TEXT NOT NULL, turn INTEGER NOT NULL, body BLOB NOT NULL);",
+        "CREATE INDEX IF NOT EXISTS memory_pending_owner ON memory_pending(owner,conversation);",
+        "CREATE TABLE IF NOT EXISTS memory_vectors (id TEXT PRIMARY KEY, owner TEXT NOT NULL, dedup TEXT NOT NULL,\n                    kind TEXT NOT NULL, expires TEXT, body BLOB NOT NULL, vector BLOB NOT NULL, UNIQUE(owner,dedup));",
+        "CREATE INDEX IF NOT EXISTS memory_filter ON memory_vectors(owner,kind,expires);"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
+    },
+    "control.receipts": {
+      "source": "historical control/orchestrator",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS mcp_mail (id TEXT PRIMARY KEY,status TEXT);"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
+    },
+    "control.knowledge_owners": {
+      "source": "stock_predict_mailer/knowledge_api.py",
+      "source_id": "9077bfe3d52913721691460c35d5e2a05fb76bbd48e1182b213815c6bfa6c705",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS kb_owner_map (principal TEXT PRIMARY KEY, owner TEXT NOT NULL);"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
+    },
+    "knowledge.core": {
+      "source": "stock_predict_mailer/private_knowledge/service.py",
+      "source_id": "20d9227058b5e6b893f253be0c4d641675304e803ff5f34eaf1a58c1ec7b8fbf",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS owners (owner TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0, config BLOB);",
+        "CREATE TABLE IF NOT EXISTS documents (\n                    id TEXT PRIMARY KEY, owner TEXT NOT NULL, logical TEXT NOT NULL, filename TEXT NOT NULL,\n                    hash TEXT NOT NULL, metadata TEXT NOT NULL, uploaded TEXT NOT NULL,\n                    status TEXT NOT NULL, step TEXT NOT NULL, error TEXT, parsed TEXT, draft TEXT,\n                    active INTEGER NOT NULL DEFAULT 0, UNIQUE(owner,logical,hash,metadata));",
+        "CREATE INDEX IF NOT EXISTS doc_owner ON documents(owner,logical,active);",
+        "CREATE TABLE IF NOT EXISTS chunks (id INTEGER PRIMARY KEY, doc TEXT NOT NULL, owner TEXT NOT NULL,\n                    ordinal INTEGER NOT NULL, body TEXT NOT NULL, UNIQUE(doc,ordinal));",
+        "CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(terms);",
+        "CREATE TABLE IF NOT EXISTS relations (id TEXT PRIMARY KEY, owner TEXT NOT NULL, doc TEXT NOT NULL,\n                    chunk INTEGER NOT NULL, subject TEXT NOT NULL, predicate TEXT NOT NULL, object TEXT NOT NULL,\n                    valid_from TEXT, valid_to TEXT, evidence TEXT NOT NULL);",
+        "CREATE TABLE IF NOT EXISTS generations (id TEXT PRIMARY KEY, owner TEXT NOT NULL, config BLOB NOT NULL,\n                    dimension INTEGER, status TEXT NOT NULL, error TEXT);",
+        "CREATE TABLE IF NOT EXISTS vectors (generation TEXT NOT NULL, chunk INTEGER NOT NULL, vector TEXT NOT NULL,\n                    PRIMARY KEY(generation,chunk));",
+        "CREATE TABLE IF NOT EXISTS review_audit (id TEXT PRIMARY KEY, owner TEXT NOT NULL, doc TEXT NOT NULL,\n                    at TEXT NOT NULL, decision TEXT NOT NULL, body TEXT NOT NULL);"
+      ],
+      "additions": [
+        {
+          "id": "knowledge.cleaner_config",
+          "table": "owners",
+          "column": "cleaner_config",
+          "sql": "ALTER TABLE owners ADD COLUMN cleaner_config BLOB",
+          "data_sql": [],
+          "data_effect": "adds_defaulted_or_nullable_column"
+        },
+        {
+          "id": "knowledge.extraction",
+          "table": "documents",
+          "column": "extraction",
+          "sql": "ALTER TABLE documents ADD COLUMN extraction TEXT",
+          "data_sql": [],
+          "data_effect": "adds_defaulted_or_nullable_column"
+        },
+        {
+          "id": "knowledge.review",
+          "table": "documents",
+          "column": "review",
+          "sql": "ALTER TABLE documents ADD COLUMN review TEXT",
+          "data_sql": [],
+          "data_effect": "adds_defaulted_or_nullable_column"
+        },
+        {
+          "id": "knowledge.origin",
+          "table": "relations",
+          "column": "origin",
+          "sql": "ALTER TABLE relations ADD COLUMN origin TEXT NOT NULL DEFAULT 'structured'",
+          "data_sql": [],
+          "data_effect": "adds_defaulted_or_nullable_column"
+        },
+        {
+          "id": "knowledge.claim_id",
+          "table": "relations",
+          "column": "claim_id",
+          "sql": "ALTER TABLE relations ADD COLUMN claim_id TEXT",
+          "data_sql": [],
+          "data_effect": "adds_defaulted_or_nullable_column"
+        }
+      ],
+      "initialize_when_absent": false,
+      "target_revision": "2"
+    },
+    "knowledge.workers": {
+      "source": "stock_predict_mailer/private_knowledge/service.py",
+      "source_id": "20d9227058b5e6b893f253be0c4d641675304e803ff5f34eaf1a58c1ec7b8fbf",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS workers (id TEXT PRIMARY KEY, host TEXT NOT NULL, pid INTEGER NOT NULL,\n                    started TEXT NOT NULL, beat TEXT NOT NULL, state TEXT NOT NULL, current TEXT,\n                    processed INTEGER NOT NULL DEFAULT 0);"
+      ],
+      "additions": [],
+      "initialize_when_absent": true,
+      "target_revision": "1"
+    },
+    "crawler.jobs": {
+      "source": "mcp_server/jobs.py",
+      "source_id": "4e31bbc2cd8d7e195dc1bf054ae940a85ea78c23d5a499d01e2e3036f423b849",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS jobs(\n                    id TEXT PRIMARY KEY, kind TEXT NOT NULL, parameters TEXT NOT NULL,\n                    request_key TEXT UNIQUE, state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,\n                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,\n                    owner TEXT, cancel_requested INTEGER NOT NULL DEFAULT 0,\n                    progress TEXT NOT NULL DEFAULT '{}', checkpoint TEXT NOT NULL DEFAULT '{}',\n                    result TEXT, error TEXT);",
+        "CREATE TABLE IF NOT EXISTS events(\n                    seq INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL,\n                    at TEXT NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL);",
+        "CREATE INDEX IF NOT EXISTS events_job_seq ON events(job_id,seq);"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
+    },
+    "legacy.runs": {
+      "source": "stock_predict_mailer/core.py",
+      "source_id": "625697ac2b5407e371e796f5c72c9ff57d2f8e0a85be9ae9c09866bcd79b0b69",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS runs (\n            id TEXT PRIMARY KEY, task TEXT NOT NULL, started_at TEXT NOT NULL,\n            finished_at TEXT, status TEXT NOT NULL, error TEXT);"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
+    },
+    "legacy.outbox": {
+      "source": "stock_predict_mailer/delivery.py",
+      "source_id": "b55f4588f4f959addc38d57aefc9013555d277554b9d9ee34b77f16335f471de",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS outbox (\n        id TEXT PRIMARY KEY, report_id TEXT NOT NULL, principal TEXT NOT NULL,\n        recipient TEXT NOT NULL, sender TEXT NOT NULL, status TEXT NOT NULL,\n        attempts INTEGER NOT NULL, next_attempt TEXT NOT NULL, updated_at TEXT NOT NULL,\n        message_id TEXT NOT NULL, eml_sha256 TEXT NOT NULL, error TEXT);"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
+    },
+    "legacy.authorizations": {
+      "source": "stock_predict_mailer/dataset_auth.py",
+      "source_id": "f30bcb9f462c8069681b8c30fcd6acae9a772b233a887cdf7e52159d7150f3af",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS dataset_authorizations (\n        snapshot_id TEXT NOT NULL, owner TEXT NOT NULL,\n        personal_training INTEGER NOT NULL, platform_training INTEGER NOT NULL,\n        note TEXT NOT NULL DEFAULT '', recorded_at TEXT NOT NULL,\n        PRIMARY KEY (snapshot_id, owner));"
+      ],
+      "additions": [
+        {
+          "id": "legacy.replay",
+          "table": "dataset_authorizations",
+          "column": "replay_enabled",
+          "sql": "ALTER TABLE dataset_authorizations ADD COLUMN replay_enabled INTEGER NOT NULL DEFAULT 0",
+          "data_sql": [
+            "UPDATE dataset_authorizations SET replay_enabled=1 WHERE platform_training=1"
+          ],
+          "data_effect": "enables_replay_for_existing_platform_training_grants"
+        }
+      ],
+      "initialize_when_absent": false,
+      "target_revision": "2"
+    },
+    "legacy.training": {
+      "source": "stock_predict_mailer/model_training.py",
+      "source_id": "71527c05af05c63ccaa4f7ffd8cf227c202b877ec9a75730d056158d68267332",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS training_specs (\n        spec_id TEXT PRIMARY KEY, owner TEXT NOT NULL, spec_sha256 TEXT NOT NULL,\n        parent_version TEXT NOT NULL, snapshot_id TEXT NOT NULL, contract_id TEXT NOT NULL,\n        contract TEXT NOT NULL, method TEXT NOT NULL, algorithm TEXT NOT NULL,\n        train_cutoff TEXT NOT NULL, max_seconds INTEGER NOT NULL, max_rows INTEGER NOT NULL,\n        allow_unverified_real INTEGER NOT NULL, created_at TEXT NOT NULL,\n        UNIQUE (owner, spec_sha256));",
+        "CREATE TABLE IF NOT EXISTS training_jobs (\n        job_id TEXT PRIMARY KEY, spec_id TEXT NOT NULL, owner TEXT NOT NULL,\n        status TEXT NOT NULL, stage TEXT NOT NULL, progress TEXT,\n        created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT, heartbeat_at TEXT,\n        cancel_requested INTEGER NOT NULL DEFAULT 0, worker_pid INTEGER,\n        error_category TEXT, error_message TEXT, result_version TEXT, result_sha256 TEXT);",
+        "CREATE TABLE IF NOT EXISTS model_comparisons (\n        id TEXT PRIMARY KEY, owner TEXT NOT NULL, candidate TEXT NOT NULL, baseline TEXT NOT NULL,\n        snapshot_id TEXT NOT NULL, cutoff TEXT NOT NULL, verdict TEXT NOT NULL,\n        sha256 TEXT NOT NULL, created_at TEXT NOT NULL);"
+      ],
+      "additions": [
+        {
+          "id": "legacy.additional_rounds",
+          "table": "training_specs",
+          "column": "additional_rounds",
+          "sql": "ALTER TABLE training_specs ADD COLUMN additional_rounds INTEGER NOT NULL DEFAULT 0",
+          "data_sql": [],
+          "data_effect": "adds_defaulted_or_nullable_column"
+        },
+        {
+          "id": "legacy.priority",
+          "table": "training_jobs",
+          "column": "priority",
+          "sql": "ALTER TABLE training_jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0",
+          "data_sql": [],
+          "data_effect": "adds_defaulted_or_nullable_column"
+        }
+      ],
+      "initialize_when_absent": false,
+      "target_revision": "2"
+    },
+    "legacy.knowledge": {
+      "source": "historical knowledge.py before bb8c104",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, logical_key TEXT NOT NULL, title TEXT NOT NULL, published_at TEXT NOT NULL, available_at TEXT NOT NULL, active INTEGER NOT NULL);",
+        "CREATE TABLE IF NOT EXISTS document_acl (document_id TEXT NOT NULL, principal TEXT NOT NULL, PRIMARY KEY (document_id, principal));",
+        "CREATE TABLE IF NOT EXISTS chunks (id INTEGER PRIMARY KEY, document_id TEXT NOT NULL, ordinal INTEGER NOT NULL, content TEXT NOT NULL, sha256 TEXT NOT NULL);",
+        "CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(terms);"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
+    },
+    "legacy.calendar": {
+      "source": "stock_predict_mailer/calendar.py",
+      "source_id": "5729fb5032a31a83fab31f34133f5bbf4c6edaf98225540d268248b36dd46891",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS exchange_calendars (\n        market TEXT NOT NULL, session TEXT NOT NULL, source TEXT NOT NULL,\n        certified_at TEXT NOT NULL, PRIMARY KEY (market, session));",
+        "CREATE TABLE IF NOT EXISTS corporate_actions (\n        security_id TEXT NOT NULL, ex_date TEXT NOT NULL, kind TEXT NOT NULL,\n        price_factor REAL NOT NULL, source TEXT NOT NULL, recorded_at TEXT NOT NULL,\n        PRIMARY KEY (security_id, ex_date, kind));"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
+    },
+    "legacy.updates": {
+      "source": "stock_predict_mailer/marketdata.py",
+      "source_id": "fcceea2d2ac4c1012f0dae2d46260b27aea0f348d54c4762ed9109d227f5eec8",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS data_updates (\n        update_id TEXT PRIMARY KEY, owner TEXT NOT NULL, base_snapshot TEXT,\n        result_snapshot TEXT NOT NULL, files TEXT NOT NULL, latest_session TEXT NOT NULL,\n        cutoff TEXT NOT NULL, stale_days INTEGER NOT NULL, verdict TEXT NOT NULL,\n        created_at TEXT NOT NULL);"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
+    },
+    "legacy.registry": {
+      "source": "stock_predict_mailer/model_registry.py",
+      "source_id": "690f365b7871f2987c5c567cad6d77b0ad63affa2053f9b3a13f680dddf86306",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS registry_models (\n        version TEXT PRIMARY KEY, owner TEXT NOT NULL, created_by TEXT NOT NULL,\n        scope TEXT NOT NULL, origin TEXT NOT NULL, status TEXT NOT NULL,\n        channel TEXT, manifest_sha256 TEXT NOT NULL, publication_sha256 TEXT);",
+        "CREATE TABLE IF NOT EXISTS registry_evaluations (\n        id TEXT PRIMARY KEY, model_version TEXT NOT NULL, owner TEXT NOT NULL,\n        sha256 TEXT NOT NULL);",
+        "CREATE TABLE IF NOT EXISTS registry_selection (\n        owner TEXT PRIMARY KEY, model_version TEXT NOT NULL, selected_at TEXT NOT NULL);"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
+    },
+    "legacy.drift": {
+      "source": "stock_predict_mailer/drift.py",
+      "source_id": "a19e76d3e59f82dbbdf679cbd15a427cbc2a8473f4ed270ae0bb78da8d60a27e",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS drift_reports (\n        drift_id TEXT PRIMARY KEY, owner TEXT NOT NULL, model_version TEXT NOT NULL,\n        reference_snapshot TEXT NOT NULL, current_snapshot TEXT NOT NULL, cutoff TEXT NOT NULL,\n        window_days INTEGER NOT NULL, sha256 TEXT NOT NULL, created_at TEXT NOT NULL);"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
+    },
+    "legacy.keys": {
+      "source": "stock_predict_mailer/keys.py",
+      "source_id": "13668d8367cd4da511fefbb8351465e8f26be4b07e0204e620a497848b5df9e3",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS key_revocations (\n        fingerprint TEXT PRIMARY KEY, owner TEXT NOT NULL, reason TEXT NOT NULL, revoked_at TEXT NOT NULL);"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
+    },
+    "legacy.retention": {
+      "source": "stock_predict_mailer/retention.py",
+      "source_id": "25cafbf619ae26d8e722078eb16a7c95c1cc97377c98b2280348a762d59c18fa",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS retention_actions (\n        action_id TEXT PRIMARY KEY, owner TEXT NOT NULL, model_version TEXT NOT NULL,\n        action TEXT NOT NULL, reason TEXT NOT NULL, created_at TEXT NOT NULL);"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
+    },
+    "legacy.shadow": {
+      "source": "stock_predict_mailer/shadow.py",
+      "source_id": "1079673d02018441aad6f981778e6f61df9bf24b490a0e7abcb053a9aadfc451",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS shadow_records (\n        prediction_id TEXT PRIMARY KEY, owner TEXT NOT NULL, model_version TEXT NOT NULL,\n        snapshot_id TEXT NOT NULL, prediction_date TEXT NOT NULL, payload TEXT NOT NULL,\n        created_at TEXT NOT NULL);",
+        "CREATE TABLE IF NOT EXISTS shadow_outcomes (\n        prediction_id TEXT PRIMARY KEY, owner TEXT NOT NULL, model_version TEXT NOT NULL,\n        prediction_date TEXT NOT NULL, rank_ic REAL NOT NULL, securities INTEGER NOT NULL,\n        evaluated_at TEXT NOT NULL);",
+        "CREATE TABLE IF NOT EXISTS stable_releases (\n        version TEXT PRIMARY KEY, owner TEXT NOT NULL, authorized_at TEXT NOT NULL, note TEXT NOT NULL,\n        revoked_at TEXT, revoke_reason TEXT);"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
+    }
+  },
+  "stores": {
+    "mail": {
+      "required": [
+        "mail.core"
+      ],
+      "groups": [
+        "mail.core",
+        "mail.bindings",
+        "mail.archive"
+      ]
+    },
+    "control": {
+      "required": [
+        "control.base"
+      ],
+      "groups": [
+        "control.base",
+        "control.memory",
+        "control.receipts",
+        "control.knowledge_owners"
+      ]
+    },
+    "knowledge": {
+      "required": [
+        "knowledge.core"
+      ],
+      "groups": [
+        "knowledge.core",
+        "knowledge.workers"
+      ]
+    },
+    "crawler": {
+      "required": [
+        "crawler.jobs"
+      ],
+      "groups": [
+        "crawler.jobs"
+      ]
+    },
+    "legacy": {
+      "required": [
+        "legacy.runs"
+      ],
+      "groups": [
+        "legacy.runs",
+        "legacy.outbox",
+        "legacy.authorizations",
+        "legacy.training",
+        "legacy.knowledge",
+        "legacy.calendar",
+        "legacy.updates",
+        "legacy.registry",
+        "legacy.drift",
+        "legacy.keys",
+        "legacy.retention",
+        "legacy.shadow"
+      ]
+    }
+  }
+}

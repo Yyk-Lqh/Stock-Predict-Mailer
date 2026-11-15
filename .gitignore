@@ -15,6 +15,7 @@ models/
 reports/
 logs/
 backups/
+*.spmbak
 *.log
 *.sqlite
 *.sqlite3

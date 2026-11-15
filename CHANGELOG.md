@@ -2,6 +2,12 @@
 
 ## 未发布（分支 `scene/56-agent-app`）
 
+- 检索证据界面补齐时间范围、返回上限与按版本槽位分组。
+  - `POST /api/knowledge/search` 结果新增 `logical`、`expired` 与 `groups`（`filename`/`document_date`/`available_date`/`valid_to`/`expired`/`hits`/`shown`），并回显 `as_of`/`start_date`/`limit`、给出 `logical_total`。
+  - 选片改为「先给每个版本一个名额，再按分数补齐」：一份多切片的长资料不再占满 `limit`，另一来源却被挤掉；`limit` 仍严格生效，组内顺序仍是分数序。
+  - `expired` 指 `valid_to < as_of`，只标记不排除——时点回放常需要过期资料；界面显示「已于 X 失效」，条目保留「仅作历史参考」警告。
+  - 控制台新增「文档日期不早于」与「返回片段数」（5/8/12/20），结果按 `logical` 分组渲染，命中多于显示时写明「命中 N 段，显示 M 段」，底部提示「另有 N 个版本命中」。
+  - 295 项 unittest 通过（新增 6 项：长资料不挤占、组内分数序、隐藏版本计数、过期标记、参数回显、空结果）。
 - 知识库队列与 worker 在线状态接入控制台：新增 `GET /api/knowledge/queue` 与 `workers` 心跳表。
   - worker 在每轮循环写心跳（`idle` / `busy` / `stopped`，含正在处理的资料与本次已处理份数），空闲时 10 秒节流一次；`--once` 退出前也写 `stopped`，因此「跑完即退」同样能解释队列为何不再推进。
   - 判定：`state != stopped` 且心跳在 90 秒内为在线。「从未启动」与「无响应」分开呈现——前者给命令，后者提示查进程；离线而仍有排队时，状态条直接给出 `knowledge-worker` 命令。

@@ -541,7 +541,7 @@ window.KnowledgeUI = (() => {
         <div id="knowledge-queue" class="queue-bar"></div>
         <div id="knowledge-list"></div><div id="knowledge-detail" class="knowledge-detail" hidden></div>
       </div>
-      <div data-kb-pane="search" hidden><form id="knowledge-search" class="stack"><label class="field"><span>查找证据</span><input id="knowledge-query" required maxlength="4000" placeholder="例如：营业收入、客户关系、供应链风险"></label><div class="grid-3"><label class="field"><span>截止日期</span><input id="knowledge-asof" type="date"></label><label class="field"><span>股票代码</span><input id="knowledge-stock" placeholder="600000.SH"></label><label class="field"><span>主体名称</span><input id="knowledge-entity" maxlength="200"></label></div><div><button type="submit" class="btn primary">检索证据</button></div></form><div id="knowledge-results" class="mt-26"></div></div>
+      <div data-kb-pane="search" hidden><form id="knowledge-search" class="stack"><label class="field"><span>查找证据</span><input id="knowledge-query" required maxlength="4000" placeholder="例如：营业收入、客户关系、供应链风险"></label><div class="grid-4"><label class="field"><span>截止日期</span><input id="knowledge-asof" type="date"></label><label class="field"><span>文档日期不早于</span><input id="knowledge-start" type="date"></label><label class="field"><span>股票代码</span><input id="knowledge-stock" placeholder="600000.SH"></label><label class="field"><span>主体名称</span><input id="knowledge-entity" maxlength="200"></label></div><div class="grid-2"><label class="field"><span>返回片段数</span><select id="knowledge-limit"><option value="5">5 段</option><option value="8" selected>8 段</option><option value="12">12 段</option><option value="20">20 段</option></select></label><div class="field"><span class="hint">同一版本先取一段，其余按分数补齐</span><button type="submit" class="btn primary">检索证据</button></div></div><p class="hint">截止日期决定「当时能看到什么」：晚于该日期才可用的资料不参与检索；「文档日期不早于」用于排除过旧资料，文档日期未知的条目会被一并排除。</p></form><div id="knowledge-results" class="mt-26"></div></div>
       <div data-kb-pane="processing" hidden><p class="hint">规则清洗和关键词检索无需模型。语义清洗模型与向量模型独立配置；保存配置不会自动执行资料处理。</p><div id="knowledge-configs"></div><div class="section-head mt-26"><h2>索引版本</h2><button id="knowledge-rebuild" type="button" class="btn">重建索引</button></div><div id="knowledge-indexes"></div></div>
     </div>`;
   document.querySelector('main').append(section);
@@ -747,22 +747,45 @@ window.KnowledgeUI = (() => {
   function renderEvidence(host, data) {
     host.replaceChildren();
     const found = data.citations || data.results || [];
-    text(host, 'h3', `来源证据 · ${found.length} 条`);
-    text(host, 'p', '来源声明与模型推断需要分别核对；日期未知、证据不足与冲突不代表事实已被确认。', 'hint');
+    const groups = data.groups || [];
+    text(host, 'h3', groups.length ? `来源证据 · ${found.length} 段 · ${groups.length} 个版本` : `来源证据 · ${found.length} 条`);
+    const scope = [`截止日期 ${data.as_of || '今天'}`];
+    if (data.start_date) scope.push(`文档日期不早于 ${data.start_date}`);
+    if (data.limit) scope.push(`片段上限 ${data.limit} 段`);
+    text(host, 'p', `${scope.join(' · ')}。来源声明与模型推断需要分别核对；日期未知、证据不足与冲突不代表事实已被确认。`, 'hint');
     if (!found.length) text(host, 'p', '没有找到满足权限与截止时间的证据。', 'empty');
-    for (const item of found) {
-      const article = document.createElement('article'); article.className = 'source-excerpt';
-      text(article, 'h4', item.filename || item.citation_id);
-      text(article, 'p', item.text || item.quote || '', 'source-text');
-      text(article, 'p', `${item.citation_id} · 文档日期 ${item.metadata?.document_date || '未知'} · ${JSON.stringify(item.location || {})}`, 'hint');
-      for (const warning of item.warnings || []) text(article, 'p', warning, 'note warn');
-      article.append(action('查看来源定位', async () => {
-        const cite = await api('knowledge/citations/' + item.citation_id);
-        const source = document.createElement('div');
-        text(source, 'p', `${cite.document.filename} · 版本 ${cite.document.id}`, 'hint');
-        chunkText(source, [cite.chunk]); article.append(source);
-      })); host.append(article);
+    const order = groups.length ? groups.map(group => group.logical) : [...new Set(found.map(item => item.logical || item.document_id))];
+    for (const slot of order) {
+      const items = found.filter(item => (item.logical || item.document_id) === slot);
+      if (!items.length) continue;
+      const group = groups.find(item => item.logical === slot) || {};
+      const wrap = document.createElement('section'); wrap.className = 'evidence-group';
+      const head = document.createElement('div'); head.className = 'section-head';
+      text(head, 'h4', group.filename || items[0].filename || slot);
+      const state = group.expired ? `已于 ${group.valid_to} 失效` : group.valid_to ? `有效期至 ${group.valid_to}` : '未声明有效期';
+      text(head, 'span', state, group.expired ? 'tag expired' : 'tag');
+      wrap.append(head);
+      const hits = group.hits ?? items.length, shown = group.shown ?? items.length;
+      const meta = [`文档日期 ${group.document_date || items[0].metadata?.document_date || '未知'}`];
+      if (group.available_date) meta.push(`可用 ${group.available_date}`);
+      meta.push(hits > shown ? `命中 ${hits} 段，显示 ${shown} 段` : `命中 ${shown} 段`, `槽位 ${slot}`);
+      text(wrap, 'p', meta.join(' · '), 'hint');
+      for (const item of items) {
+        const article = document.createElement('article'); article.className = 'source-excerpt';
+        text(article, 'h4', item.citation_id);
+        text(article, 'p', item.text || item.quote || '', 'source-text');
+        text(article, 'p', `文档日期 ${item.metadata?.document_date || '未知'} · ${JSON.stringify(item.location || {})}`, 'hint');
+        for (const warning of item.warnings || []) text(article, 'p', warning, 'note warn');
+        article.append(action('查看来源定位', async () => {
+          const cite = await api('knowledge/citations/' + item.citation_id);
+          const source = document.createElement('div');
+          text(source, 'p', `${cite.document.filename} · 版本 ${cite.document.id}`, 'hint');
+          chunkText(source, [cite.chunk]); article.append(source);
+        })); wrap.append(article);
+      }
+      host.append(wrap);
     }
+    if (data.logical_total && data.logical_total > groups.length) text(host, 'p', `另有 ${data.logical_total - groups.length} 个版本命中但未进入前 ${data.limit || ''} 段，可提高片段数或补充条件后再检索。`, 'hint');
     for (const warning of data.warnings || []) text(host, 'p', typeof warning === 'string' ? warning : JSON.stringify(warning), 'note warn');
     if (data.conflicts?.length) { const d = document.createElement('details'); text(d, 'summary', `冲突候选 ${data.conflicts.length} 项`); text(d, 'pre', JSON.stringify(data.conflicts, null, 2), 'mono'); host.append(d); }
   }
@@ -839,8 +862,8 @@ window.KnowledgeUI = (() => {
   $('knowledge-search').onsubmit = safe(async event => {
     event.preventDefault(); const button = event.currentTarget.querySelector('[type=submit]'); button.disabled = true;
     try {
-      const key = memoryKey, body = {query: $('knowledge-query').value, limit: 8};
-      for (const [name, id] of [['as_of', 'knowledge-asof'], ['stock_code', 'knowledge-stock'], ['entity', 'knowledge-entity']]) if ($(id).value) body[name] = $(id).value;
+      const key = memoryKey, body = {query: $('knowledge-query').value, limit: Number($('knowledge-limit').value) || 8};
+      for (const [name, id] of [['as_of', 'knowledge-asof'], ['start_date', 'knowledge-start'], ['stock_code', 'knowledge-stock'], ['entity', 'knowledge-entity']]) if ($(id).value) body[name] = $(id).value;
       const data = await api('knowledge/search', 'POST', body);
       if (key === memoryKey) renderEvidence($('knowledge-results'), data);
     } finally { button.disabled = false; }

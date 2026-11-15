@@ -670,7 +670,7 @@ class Knowledge:
                 if version["logical"] not in selected or key > selected[version["logical"]][0]:
                     selected[version["logical"]] = (key, version["id"])
             selected_ids = {v[1] for v in selected.values()}
-            rows = con.execute("SELECT c.id,c.doc,c.ordinal,c.body,d.filename,d.metadata,d.hash FROM chunks c JOIN documents d ON d.id=c.doc WHERE c.owner=? AND d.owner=?", (owner, owner)).fetchall()
+            rows = con.execute("SELECT c.id,c.doc,c.ordinal,c.body,d.filename,d.metadata,d.hash,d.logical FROM chunks c JOIN documents d ON d.id=c.doc WHERE c.owner=? AND d.owner=?", (owner, owner)).fetchall()
             rows = [r for r in rows if r["doc"] in selected_ids]
             relations = [dict(r) for r in con.execute("SELECT r.* FROM relations r JOIN documents d ON r.doc=d.id WHERE r.owner=? AND d.owner=?", (owner, owner)) if r["doc"] in selected_ids]
             active = con.execute("SELECT * FROM generations WHERE owner=? AND status='active'", (owner,)).fetchone()
@@ -749,6 +749,7 @@ class Knowledge:
                     if value and ((key == "valid_from" and value > as_of) or (key == "valid_to" and value < as_of)):
                         item_warnings.append(label + "，不得用作当前有效关系")
                 results.append({"citation_id": f"{row['doc']}:{row['ordinal']}", "document_id": row["doc"], "chunk_id": cid,
+                                "logical": row["logical"], "expired": bool(meta["valid_to"] and meta["valid_to"] < as_of),
                                 "filename": row["filename"], "text": row["text"], "location": row["location"],
                                 "fields": row["fields"], "extractions": row.get("extractions", []),
                                 "semantic_reviewed": row.get("semantic_reviewed", False), "metadata": {**meta, "data_date": row.get("data_date"),
@@ -756,9 +757,39 @@ class Knowledge:
                                 "citation_path": f"/api/knowledge/citations/{row['doc']}:{row['ordinal']}",
                                 "source_hash": row["hash"], "trust": "untrusted_source_material"})
         results.sort(key=lambda r: (-r["score"], r["citation_id"]))
-        chosen = results[:limit]
+        # 版本槽位优先：一份长资料的多个切片会占满名额，先把每个 logical 的最好一段纳入，
+        # 再按分数补齐剩余名额。limit 仍严格生效，结果集不会因此变大。
+        chosen, seen_logical = [], set()
+        for item in results:
+            if len(chosen) >= limit:
+                break
+            if item["logical"] not in seen_logical:
+                seen_logical.add(item["logical"])
+                chosen.append(item)
+        shown = {item["chunk_id"] for item in chosen}
+        for item in results:
+            if len(chosen) >= limit:
+                break
+            if item["chunk_id"] not in shown:
+                shown.add(item["chunk_id"])
+                chosen.append(item)
+        groups = []
+        for item in results:
+            group = next((g for g in groups if g["logical"] == item["logical"]), None)
+            if group is None:
+                meta = item["metadata"]
+                group = {"logical": item["logical"], "document_id": item["document_id"], "filename": item["filename"],
+                         "document_date": meta["document_date"], "available_date": meta["available_date"],
+                         "valid_to": meta["valid_to"], "expired": item["expired"],
+                         "hits": 0, "shown": 0, "best_citation": item["citation_id"]}
+                groups.append(group)
+            group["hits"] += 1
+            group["shown"] += 1 if item["chunk_id"] in shown else 0
+        order = {item["chunk_id"]: index for index, item in enumerate(chosen)}
+        chosen.sort(key=lambda item: (next(i for i, g in enumerate(groups) if g["logical"] == item["logical"]), order[item["chunk_id"]]))
         chosen_ids = {r["chunk_id"] for r in chosen}
-        return {"query": query, "as_of": as_of, "results": chosen,
+        return {"query": query, "as_of": as_of, "start_date": start_date, "results": chosen,
+                "groups": [g for g in groups if g["shown"]], "logical_total": len(groups), "limit": limit,
                 "relations": [r for r in edges if r["chunk"] in chosen_ids], "warnings": warnings}
 
     def answer(self, owner, query, **filters):

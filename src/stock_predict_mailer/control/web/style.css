@@ -723,6 +723,12 @@ body.inspector-expanded .report-inspector { width: calc(100vw - 232px); padding-
 .source-excerpt .hint { font-size: 11px; overflow-wrap: anywhere; }
 .source-excerpt pre { max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .review-group { margin-top: 30px; }
+/* 检索结果按版本槽位分组：先看清这段来自哪一份资料、是否已失效，再看原文 */
+.evidence-group { margin-top: 24px; }
+.evidence-group > .section-head { margin-bottom: 4px; align-items: baseline; }
+.evidence-group h4 { font-size: 13px; overflow-wrap: anywhere; }
+.evidence-group > .hint { font-size: 11px; }
+.tag.expired { color: var(--warn); border-color: var(--warn); }
 .error-text { color: var(--danger); }
 #knowledge-configs { margin-top: 24px; }
 #knowledge-configs .field:has(input[type="checkbox"]) { align-items: flex-start; }

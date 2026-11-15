@@ -1,0 +1,96 @@
+"""Search presentation: version slots, expiry marks and echoed filters."""
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from cryptography.fernet import Fernet
+
+from stock_predict_mailer.control.memory import Memory
+from stock_predict_mailer.control.store import Store
+from stock_predict_mailer.private_knowledge.service import Knowledge
+
+META = {"document_date": "2026-10-01", "available_date": "2026-10-01"}
+
+
+class Fixture:
+    def __init__(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.store = Store(self.root, Fernet.generate_key())
+        self.memory = Memory(self.store)
+        self.owner = self.memory.create_owner()["owner"]
+        self.kb = Knowledge(self.store)
+
+    def ready(self, name, raw, metadata=None, logical=None):
+        doc = self.kb.upload(self.owner, name, raw, metadata or META, logical)
+        result = self.kb.process_one()
+        if result is None or result["status"] != "ready":
+            raise AssertionError(result)
+        return doc["id"]
+
+    def close(self):
+        self.tmp.cleanup()
+
+
+class SearchGroupingTests(unittest.TestCase):
+    def setUp(self):
+        self.f = Fixture()
+        self.addCleanup(self.f.close)
+        self.kb, self.owner = self.f.kb, self.f.owner
+
+    def test_one_long_document_does_not_crowd_out_others(self):
+        long_id = self.f.ready('长报告.md', '\n'.join(f'供应链风险第{n}条：客户集中度上升' for n in range(6)).encode())
+        short_id = self.f.ready('短报告.md', '供应链风险提示：单一客户占比过高'.encode(), logical='其他资料')
+        found = self.kb.search(self.owner, '供应链风险', limit=2)
+        # 每份资料先占一个名额，否则一份多切片资料会把另一个来源整个挤掉。
+        self.assertEqual(len(found['results']), 2)
+        self.assertEqual({item['logical'] for item in found['results']}, {'长报告.md', '其他资料'})
+        self.assertEqual({item['document_id'] for item in found['results']}, {long_id, short_id})
+        self.assertEqual(found['logical_total'], 2)
+        group = next(g for g in found['groups'] if g['logical'] == '长报告.md')
+        self.assertEqual((group['hits'], group['shown']), (6, 1))
+        self.assertEqual(group['document_date'], '2026-10-01')
+
+    def test_grouping_keeps_score_order_within_a_version(self):
+        self.f.ready('多段.md', '\n'.join(f'营业收入 {n} 亿元，供应链稳定' for n in range(4)).encode())
+        found = self.kb.search(self.owner, '营业收入', limit=3)
+        scores = [item['score'] for item in found['results']]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+        self.assertEqual(len({item['logical'] for item in found['results']}), 1)
+
+    def test_hidden_versions_are_counted_not_silently_dropped(self):
+        for name in ('甲.md', '乙.md', '丙.md'):
+            self.f.ready(name, f'{name} 供应链 风险 提示'.encode())
+        found = self.kb.search(self.owner, '供应链', limit=2)
+        self.assertEqual((len(found['groups']), found['logical_total']), (2, 3))
+        self.assertTrue(all(group['shown'] for group in found['groups']))
+
+    def test_expired_document_is_marked_but_kept(self):
+        self.f.ready('季报.md', '营业收入 12 亿元'.encode(),
+                     {**META, 'valid_to': '2026-10-05'})
+        after = self.kb.search(self.owner, '营业收入', as_of='2026-11-01')
+        item, group = after['results'][0], after['groups'][0]
+        self.assertTrue(item['expired'])
+        self.assertTrue(group['expired'])
+        self.assertEqual((group['valid_to'], group['document_date']), ('2026-10-05', '2026-10-01'))
+        self.assertIn('资料已过有效期，仅作历史参考', item['warnings'])
+        before = self.kb.search(self.owner, '营业收入', as_of='2026-10-03')
+        self.assertFalse(before['results'][0]['expired'])
+        self.assertFalse(before['groups'][0]['expired'])
+
+    def test_filters_are_echoed_for_the_console(self):
+        self.f.ready('公告.md', '营业收入 12 亿元'.encode())
+        found = self.kb.search(self.owner, '营业收入', as_of='2026-11-01', start_date='2026-10-01', limit=5)
+        self.assertEqual((found['as_of'], found['start_date'], found['limit']), ('2026-11-01', '2026-10-01', 5))
+        self.assertEqual(self.kb.search(self.owner, '营业收入', start_date='2026-10-02')['results'], [])
+        self.assertEqual(self.kb.search(self.owner, '营业收入', start_date='2026-10-02')['groups'], [])
+
+    def test_empty_result_still_reports_scope(self):
+        found = self.kb.search(self.owner, '不存在的关键词')
+        self.assertEqual((found['results'], found['groups'], found['logical_total']), ([], [], 0))
+
+
+if __name__ == '__main__':
+    unittest.main()

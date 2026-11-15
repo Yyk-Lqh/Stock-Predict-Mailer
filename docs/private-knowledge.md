@@ -51,11 +51,13 @@ uv run stock-predict-mailer --config config/local.toml knowledge-worker --once
 先从同源本机控制台建立 session，读取 `GET /api/session` 的 csrf_token。创建身份：`POST /api/memory/access`（JSON `{}`），妥善保存返回 key。所有知识库接口都必须携带 `X-Memory-Key`；所有写操作还须携带 `X-CSRF-Token` 和同源 session cookie。不得在 query URL 中传访问密钥。以下路径均以 `/api/knowledge` 为前缀。
 
 - `POST /documents`：`{"filename":"report.csv","data":"<base64>","logical":"财报","metadata":{...}}`。原文件上限 10 MiB，JSON 请求上限 15 MiB；响应 202 只表示 pending。logical 省略时用文件名；更新时保持 logical，上传新字节或新元数据。原格式 `.doc/.xls` 不支持。
-- `GET /documents`：本用户所有版本、active 标记、上传时间、处理 status/step/error/error_message、warnings 和 needs_review。
+- `GET /documents?limit=50&offset=0&status=ready`：分页返回本用户的资料摘要（active 标记、上传时间、处理 status/step/error/error_message、warnings、needs_review），响应为 `{items,total,review,limit,offset}`。limit 1–500，缺省 50；status 取值见处理状态。分页只装配当前页，不再逐篇查询。
 - `GET /documents/{id}`：清洗前 original 摘录、清洗后 text、原始 fields、normalized_fields、结构标题与定位、实体和代码。长文本按结构分界与有限重叠切分，定位的 extracted_text_offset 是解析文本内字符位置，不是 PDF 二进制偏移。
+- `GET /documents/{id}/versions`：按同名 logical 列出全部版本的 id、status、active、上传时间。检索按截止日期选用当时有效的最新版本，下架不退回到旧版本。
+- `POST /documents/{id}/retire`：下架活动版本，不再参与检索与任务证据；加密原件、片段与历史引用保留，可重新对照。已是非活动版本或已删除时报 INVALID_STATE / NOT_FOUND。运维下架应使用此接口。
 - `GET /documents/{id}/original`：返回 filename 和 base64 原文件，供 PDF 页、工作表、重要数值对照。原件不能执行为工具。
 - `POST /documents/{id}/retry`：仅允许失败任务重排队；原文件不变，需更换文件则上传新版本。
-- `DELETE /documents/{id}`：删除此版本的原文件、片段、全部索引代向量、关系和 FTS。无跨请求检索缓存；删除活动版本不自动复活旧版本。旧的独立分析报告属于历史输出，需操作者另行管理，不会因资料删除被重写。
+- `DELETE /documents/{id}`：永久删除此版本的原文件、片段、全部索引代向量、关系和 FTS，不可恢复，无回收站。仅用于错传或误导入；日常下架请用 `retire`。删除活动版本不自动复活旧版本。旧的独立分析报告属于历史输出，需操作者另行管理，不会因资料删除被重写。
 - `GET/PUT /config`：查询/保存用户自己的 Embedding 配置。响应只含 has_secret；api_key 不回显。变更服务地址不自动沿用旧服务的认证 key。
 - `POST /test`：只发送两条固定测试文本，验证向量数量、维度、有限数值与非零向量。provider=none 返回 lexical_only。
 - `POST /rebuild`：同步构建新索引代，其他请求仍可查询旧代；完成后事务切换。资料或配置在重建期间变化会报 INDEX_CHANGED，需重新调用。失败重试不会覆盖旧代。
@@ -105,6 +107,18 @@ OpenAI 兼容服务（base_url 包含服务实际使用的 /v1 前缀；不是�
 ## 分析任务接入
 
 现有 POST /api/tasks 的私有 conversation_id 任务可增加 knowledge_query 字符串，返回结果的 knowledge 附录是同一私有检索接口生成的证据回答。默认 knowledge_to_model=false，不把资料内容发送给聊天模型；显式设 true 才以 source_material/untrusted_source_material 字段发送给已配置的主模型。外部聊天模型可能收到原文，须由操作者在任务级决定。资料不作为对话记忆条目自动入库，也不会获得工具或邮件权限。原有股票预测结论代码和证据校验保持约束，不允许模型借资料任意输出未校验的因果结论。
+
+## 命令行门面（kb-*）
+
+`kb-add` / `kb-search` / `kb-revoke` 与 `report` 保留原有命令行签名，内部经 `knowledge_api.py` 落到本知识库，不再有第二套存储。门面只做三次翻译：
+
+1. `Config` → `(Knowledge, owner)`。`principal` 第一次使用时映射到一个私有 owner 并记录在 `kb_owner_map`；设了 `STOCK_PREDICT_MAILER_KB_KEY` 则改用该密钥对应的 owner，与控制台看到同一份资料。工作区若曾用主密钥建库而当前未提供主密钥，门面直接报错，不会静默切到一个空库。
+2. 入队 → 同步。`upload()` 只入队（HTTP 202），命令行必须等流水线跑完才返回，失败或进入复核都抛错。
+3. 证据形状回译。`search()` 的 `text`/`filename`/`citation_id` 还原成旧的 `content`/`title`/`ordinal`/`sha256`，因此 `report.py`、`generation.py` 无需改动。
+
+已知行为变化：支持七种格式（原先仅 `.md`/`.txt`）；耗时由毫秒级变为秒级（解析 + 清洗 + 建索引）；需要 `knowledge` 可选依赖；多 `--allow` 生成多份加密副本，磁盘按 principal 数量放大；撤销改为 `retire`（保留原件），不再等于删除。
+
+`knowledge_api.py` 只由命令行使用，HTTP 接口直接走 `Knowledge`，两者共享同一个 `knowledge.sqlite3`，不要为命令行另建 workspace。
 
 ## 测试与未验证范围
 

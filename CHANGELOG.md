@@ -2,6 +2,21 @@
 
 ## 未发布（分支 `scene/56-agent-app`）
 
+- 知识库资料列表改为分页：`GET /api/knowledge/documents` 支持 `limit`（1–500，缺省 50）、`offset`、`status`，响应改为 `{items,total,review,limit,offset}`；控制台列表按页加载并提供「加载更多」。
+  - 原实现逐篇调用 `document()`，而它每次都执行 `ensure()` 的 `INSERT OR IGNORE` 写事务；200 篇资料实测 426 ms，400 篇 843 ms，且每次切换页签都会触发。改为单页一次查询后，首页 4.6 ms / 6.4 ms（约 90–130 倍）。
+  - `Knowledge.catalog()` 为新增分页接口，`listing()` 保留原签名与返回形状（全部版本），供既有调用方使用。
+- 知识库下架与版本历史接入控制台：新增 `POST /api/knowledge/documents/{id}/retire` 与 `GET /api/knowledge/documents/{id}/versions`。
+  - 此前控制台只有「删除」，走的是 `DELETE`：会 unlink 加密原件并清除片段/索引，不可恢复。现在「下架」为默认出口（保留原件、仅退出检索），永久删除改为需输入资料 ID 前 8 位确认的二步操作。
+  - 详情页显示失效日期与版本历史，并注明「检索按截止日期选用当时有效版本，下架不退回旧版本」。
+- 270 项 unittest 通过（新增 3 项：分页装配与参数校验、版本历史与下架保留原件、HTTP 路由与分页报错）。
+
+- 合并两套知识库实现：删除 `knowledge.py`（`state.sqlite3` 明文片段库），新增 `knowledge_api.py` 作为兼容门面，`kb-add` / `kb-search` / `kb-revoke` 与报告链路全部改落私有知识库，`state.sqlite3` 的知识表停用留档。
+  - 门面保留原有四个函数签名，`report.py`、`prediction_report.py`、`model_cli.py`、`legacy_cli.py` 各只改一行 import；`upload` 只入队，门面负责推完流水线并同步返回。
+  - `private_knowledge` 新增 `retire()`：撤销停用但保留加密原件（`delete` 不可恢复，语义过重）；新增 `versions()` 按逻辑槽位列版本。
+  - 行为变化：`kb-add` 支持七种格式、耗时变为秒级、需要 `knowledge` 可选依赖；多 `--allow` 生成多份加密副本；时间比较改为日粒度（最坏情况同日内资料提前约 1 天可用，与引擎口径一致，避免「检出却校验失败」）；64 位旧 `citation_id` 明确报错而不是静默引用错误文本。
+  - 未经 `MASTER_KEY` 而工作区已用主密钥建库时，命令行直接报错，不再静默切到空库。
+  - 267 项 unittest 通过（原 269 项中 2 项重复用例已并入 `tests/test_knowledge_api.py`）。
+
 - 项目名统一为 **Stock-Predict-Mailer**：新增 `naming.py` 作为专有名 / 发行名 / 导入名 / 环境变量前缀的唯一来源；
   `pyproject.toml` 改为从包内读取版本并使用 `stock-predict-mailer` 入口（旧的短命令别名退役）；
   环境变量前缀改为 `STOCK_PREDICT_MAILER_*`（旧 `SPM_*` 仍可读取）、会话 Cookie 与浏览器本地键同步改名；

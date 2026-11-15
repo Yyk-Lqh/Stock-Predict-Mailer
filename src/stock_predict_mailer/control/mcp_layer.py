@@ -85,11 +85,15 @@ class MCPLayer:
         self.store = store
 
     @asynccontextmanager
-    async def session(self, sid):
-        profile = self.store.get("mcp", sid)
+    async def session(self, sid, expected_endpoint=None):
+        from ..mail_core.bindings import endpoint_snapshot
+        with self.store.lock:
+            profile = self.store.get("mcp", sid)
+            secrets = self.store.secret("mcp", sid)
+            if expected_endpoint is not None and endpoint_snapshot(self.store, sid) != expected_endpoint:
+                raise ServiceError("MAIL_ENDPOINT_CHANGED", "MCP 实际会话端点与冻结绑定不同")
         if not profile["enabled"]:
             raise ServiceError("SERVICE_DISABLED", "MCP 服务已停用")
-        secrets = self.store.secret("mcp", sid)
         try:
             async with asyncio.timeout(profile["timeout_seconds"]), AsyncExitStack() as stack:
                 if profile["transport"] == "stdio":
@@ -138,7 +142,7 @@ class MCPLayer:
             return bounded({"status": "ok", "tools": tools, "resources": resources,
                             "protocol_version": info.protocolVersion, "server": info.serverInfo.model_dump(mode="json")})
 
-    async def call(self, sid, name, arguments, *, effect="read", role_tools=None):
+    async def call(self, sid, name, arguments, *, effect="read", role_tools=None, expected_endpoint=None, before_call=None):
         profile = self.store.get("mcp", sid)
         if name not in profile["allowed_tools"] or profile["effects"].get(name, "deny") != effect:
             raise ServiceError("PERMISSION_DENIED", "工具未授权或副作用类型不匹配")
@@ -150,12 +154,24 @@ class MCPLayer:
                 raise ServiceError("PERMISSION_DENIED", "不在邮件授权服务范围内")
             if arguments.get("recipient") not in policy["recipient_allowlist"]:
                 raise ServiceError("PERMISSION_DENIED", "收件人未授权")
-        async with self.session(sid) as (client, _, _):
+        async with self.session(sid, expected_endpoint) as (client, _, _):
             tools = await self.pages(client.list_tools)
             tool = next((t for t in tools if t["name"] == name), None)
             if tool is None:
                 raise ServiceError("TOOL_NOT_FOUND", "服务未提供此工具")
             validate_data(tool["inputSchema"], arguments)
+            if effect == "email":
+                from ..mail_core.bindings import endpoint_snapshot
+                current = self.store.get("mcp", sid)
+                policy = self.store.settings()["mail"]
+                if (not current["enabled"] or name not in current["allowed_tools"] or current["effects"].get(name) != "email"
+                        or policy["transport"] != "mcp" or policy["mcp_server_id"] != sid or policy["mcp_tool"] != name
+                        or arguments.get("recipient") not in policy["recipient_allowlist"]):
+                    raise ServiceError("PERMISSION_DENIED", "工具发现期间邮件授权已撤销")
+                if expected_endpoint is not None and endpoint_snapshot(self.store, sid) != expected_endpoint:
+                    raise ServiceError("MAIL_ENDPOINT_CHANGED", "工具发现期间 MCP 端点变化")
+            if before_call is not None:
+                before_call()
             response = await client.call_tool(name, arguments)
             if response.isError:
                 raise ServiceError("TOOL_FAILED", "外部工具执行失败")

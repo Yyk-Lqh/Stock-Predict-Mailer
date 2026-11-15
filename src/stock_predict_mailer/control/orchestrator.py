@@ -15,8 +15,9 @@ from ..agent_service.analysis import INFERENCES, RECOMMENDATIONS, AnalysisAgent,
 from ..agent_service.charts import build_charts, chart_data, chart_svg
 from ..agent_service.contracts import ServiceError, context, prediction, utcnow
 from ..agent_service.mail import MailService
-from ..agent_service.reporting import render, save_report
+from ..agent_service.reporting import save_report
 from ..delivery import address
+from ..mail_core.transports import MCPTransport
 from ..private_knowledge.service import Knowledge
 from .a2a import A2AClient
 from .execution import DEFAULT_EFFORT, LABELS, Effort, Progress, envelope
@@ -102,6 +103,7 @@ class Orchestrator:
         self.memory = Memory(store)
         self.knowledge = Knowledge(store)
         self.active = {}
+        self.accepting = True
         self.lock = threading.RLock()
         with self.store.db() as con:
             previous_tasks = con.execute("SELECT id,body FROM tasks").fetchall()
@@ -179,9 +181,16 @@ class Orchestrator:
                 raise ServiceError("PERMISSION_DENIED", "未授权合成报告邮件投递")
         return request
 
+    def close_admission(self):
+        with self.lock:
+            self.accepting = False
+            return list(self.active)
+
     def submit(self, raw, owner=None):
         tid, event = uuid.uuid4().hex, threading.Event()
         with self.lock:
+            if not self.accepting:
+                raise ServiceError("SERVICE_STOPPING", "控制台正在停止，不再接收新的分析任务", True)
             if len(self.active) >= 4:
                 raise ServiceError("BUSY", "最多同时运行 4 个主任务，请稍后再试", True)
             request = self.prepare(raw, owner)
@@ -584,30 +593,43 @@ class Orchestrator:
             budget.reserve()
             queued = service.enqueue(analysis, recipient)
             return await asyncio.to_thread(service.deliver, queued["id"])
+        from ..mail_core.bindings import mcp_profile
+        from ..mail_core.history import historical_result, require_new_prediction
         key = identity([analysis["analysis_id"], recipient, policy["sender"], policy["mcp_server_id"], policy["mcp_tool"]])
-        # Durable MCP mail marker. Ambiguous tool errors must never be retried automatically.
-        with self.store.db() as con:
-            con.execute("CREATE TABLE IF NOT EXISTS mcp_mail (id TEXT PRIMARY KEY,status TEXT)")
-            row = con.execute("SELECT status FROM mcp_mail WHERE id=?", (key,)).fetchone()
-            if row:
-                status = "uncertain" if row[0] == "sending" else row[0]
-                con.execute("UPDATE mcp_mail SET status=? WHERE id=?", (status, key))
-                return {"id": key, "status": status}
+        historical = historical_result(self.store.root, key)
+        if historical is not None:
+            return historical
+        service = MailService(self.store.root, policy)
+        require_new_prediction(service, analysis)
+        selected = mcp_profile(self.store, policy)
+        queued = service.enqueue(analysis, recipient, mcp_profile=selected)
+
+        def authorize():
+            budget.check()
+            current = self.store.settings()["mail"]
+            if (current["transport"] != "mcp" or current["sender"] != policy["sender"]
+                    or recipient not in current["recipient_allowlist"]
+                    or (analysis["prediction"]["synthetic"] and not current["allow_synthetic"])):
+                raise ServiceError("PERMISSION_DENIED", "邮件投递授权已经变化")
+            if mcp_profile(self.store, current) != selected:
+                raise ServiceError("MAIL_ENDPOINT_CHANGED", "邮件投递端点已经变化")
+            profile = self.store.get("mcp", selected["server_id"])
+            if not profile["enabled"] or selected["tool"] not in profile["allowed_tools"] or profile["effects"].get(selected["tool"]) != "email":
+                raise ServiceError("PERMISSION_DENIED", "MCP 邮件工具授权已经撤销")
+
+        async def bound_call(sid, tool, arguments, **kwargs):
+            return await self.mcp.call(sid, tool, arguments, expected_endpoint=selected["endpoint"], before_call=authorize, **kwargs)
+
+        if queued["status"] in ("pending", "retry"):
+            authorize()
             progress.tool_attempt()
-            con.execute("INSERT INTO mcp_mail VALUES (?,'sending')", (key,))
-        text, html = render(analysis)
-        progress.emit("tool", step="mail", status="running", label="调用已授权的 MCP 邮件工具")
+            progress.emit("tool", step="mail", status="running", label="调用已授权的 MCP 邮件工具")
         try:
-            result = await self.mcp.call(policy["mcp_server_id"], policy["mcp_tool"],
-                                         {"recipient": recipient, "subject": "预测分析报告", "text": text, "html": html, "idempotency_key": key}, effect="email")
-            status = ("submitted" if result.get("status") in ("submitted", "sent") else
-                      "simulated" if result.get("status") == "simulated" else "uncertain")
-        except (ServiceError, asyncio.CancelledError) as exc:
-            with self.store.db() as con:
-                con.execute("UPDATE mcp_mail SET status='uncertain' WHERE id=?", (key,))
-            if isinstance(exc, asyncio.CancelledError):
-                raise
-            raise ServiceError("MAIL_UNCERTAIN", "MCP 邮件投递结果不确定，保留报告供查看") from None
-        with self.store.db() as con:
-            con.execute("UPDATE mcp_mail SET status=? WHERE id=?", (status, key))
-        return {"id": key, "status": status}
+            return await service.deliver_mcp(queued["id"], selected,
+                MCPTransport(bound_call, selected["server_id"], selected["tool"]), authorize)
+        except ServiceError as exc:
+            if exc.code == "MAIL_UNCERTAIN":
+                return service.public(service.get(queued["id"]))
+            raise
+        except RuntimeError:
+            raise ServiceError("MAIL_BUSY", "另一个邮件投递正在执行，请稍后重试") from None

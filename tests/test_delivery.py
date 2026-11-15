@@ -4,8 +4,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from stock_predict_mailer.core import Config, connect
+from stock_predict_mailer.core import Config
 from stock_predict_mailer.delivery import address, deliver, enqueue, outbox, process_lock
+from stock_predict_mailer.mail_core import MailCore
 from stock_predict_mailer.pipeline import demo_run
 
 
@@ -33,11 +34,11 @@ class DeliveryTests(unittest.TestCase):
                 raise ConnectionRefusedError("private-server-details")
             with patch.dict(os.environ, {"SMTP_HOST": "smtp.example.com", "SMTP_USER": "u", "SMTP_PASSWORD": "p"}):
                 for expected in ("retry", "retry", "failed"):
-                    with connect(cfg) as con:
-                        con.execute("UPDATE outbox SET next_attempt='2000-01-01T00:00:00Z' WHERE id=?", (queued["id"],))
+                    with MailCore(cfg.workspace, {}).db() as con:
+                        con.execute("UPDATE mail SET next_attempt='2000-01-01T00:00:00Z' WHERE id=?", (queued["core_id"],))
                     self.assertEqual(deliver(cfg, queued["id"], allow_synthetic=True, allow_stale=True, factory=unavailable), expected)
-            with connect(cfg) as con:
-                con.execute("UPDATE outbox SET status='sending' WHERE id=?", (queued["id"],))
+            with MailCore(cfg.workspace, {}).db() as con:
+                con.execute("UPDATE mail SET status='sending' WHERE id=?", (queued["core_id"],))
             self.assertEqual(deliver(cfg, queued["id"]), "uncertain")
 
     def test_outbox_integrity_principal_scope_and_preview_guard(self):
@@ -69,8 +70,8 @@ class DeliveryTests(unittest.TestCase):
             env = {"SMTP_HOST": "smtp.example.com", "SMTP_USER": "user", "SMTP_PASSWORD": "private"}
             with patch.dict(os.environ, env), patch.object(FakeSMTP, "fail", True):
                 self.assertEqual(deliver(cfg, queued["id"], allow_synthetic=True, allow_stale=True, factory=FakeSMTP), "uncertain")
-            with connect(cfg) as con:
-                row = con.execute("SELECT status,error,attempts FROM outbox WHERE id=?", (queued["id"],)).fetchone()
+            with MailCore(cfg.workspace, {}).db() as con:
+                row = con.execute("SELECT status,error,attempts FROM mail WHERE id=?", (queued["core_id"],)).fetchone()
             self.assertEqual(tuple(row), ("uncertain", "TimeoutError", 1))
             self.assertEqual(deliver(cfg, queued["id"], allow_synthetic=True, allow_stale=True, factory=FakeSMTP), "uncertain")
 

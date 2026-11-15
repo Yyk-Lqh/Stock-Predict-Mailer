@@ -492,8 +492,9 @@ class OrchestrationTests(unittest.IsolatedAsyncioTestCase):
         self.f.store.save_settings(self.f.settings)
         result = self.result(await self.run_task(notify=True, recipient="preview@example.invalid"))
         self.assertEqual(result["mail"]["status"], "simulated")
-        with self.f.store.db() as con:
-            con.execute("UPDATE mcp_mail SET status='sending' WHERE id=?", (result["mail"]["id"],))
+        from stock_predict_mailer.mail_core import MailCore
+        with MailCore(self.f.root, {}).db() as con:
+            con.execute("UPDATE mail SET status='sending' WHERE id=?", (result["mail"]["id"],))
         again = self.result(await self.run_task(notify=True, recipient="preview@example.invalid"))
         self.assertEqual(again["mail"]["id"], result["mail"]["id"])
         self.assertEqual(again["mail"]["status"], "uncertain")

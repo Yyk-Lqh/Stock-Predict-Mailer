@@ -1,6 +1,6 @@
-# MailCore 合并方案（待单独迭代）
+# MailCore 合并方案（分批实施）
 
-本文件是方案，尚未实施数据库迁移或替换投递路径。
+当前完成 B1 与 B2 代码：内核/transport 提取、只读预演、显式隔离归档、冻结端点与 legacy/MCP 新写入口统一。历史资料没有自动迁移，运行中的旧进程没有自动切换。范围见 [B1 实施计划](mail-core-implementation.md)和[B2 切换计划](mail-cutover-plan.md)，用法见[迁移手册](mail-core-migration.md)。
 
 ## 进度
 
@@ -8,11 +8,13 @@
   - `tests/test_delivery.py` 补 EML 被篡改后拒绝投递、`outbox` 按 principal 隔离、`.invalid` 预览地址不能走 SMTP；
   - `tests/test_control.py` 补 MCP 崩溃标记：`mcp_mail` 停在 `sending` 时再次请求返回 `uncertain` 且不重发；
   - `tests/test_agent_service.py` 已覆盖队列幂等、payload 哈希校验、`sending` 恢复为 `uncertain` 与 `mail_audit` 审计。
-- 步骤 2 起（MailCore 提取、迁移命令、切换调用方）尚未实施。
+- 步骤 2 的核心/transport 已提取，原 MailService 兼容入口保留。
+- 步骤 3–5 已实现预演与隔离归档/ledger，历史来源只读，MCP 缺字段保留为 receipt；仅在临时测试目录演练导入。
+- B2 已实现：冻结公开端点及凭据引用、绑定计划确认、来源别名、MCP 原始请求及历史回执防重放。步骤 6 的新写入口代码切换完成，历史来源表保留只读；真实部署、历史绑定及邮件接收另行验收。
 
 ## 现状与选择
 
-delivery.py 的 state.sqlite3/outbox 保存旧报告、principal 和 EML；控制台的 mcp_mail 只保存 ID/status；agent-mail.sqlite3/mail 保存分析、信封地址、重试状态与 payload_hash。当前 MCP 身份还包含服务器和工具，不等同于新邮件四元组身份。
+原 delivery.py 的 state.sqlite3/outbox 保存旧报告、principal 和 EML；旧控制台 mcp_mail 只保存 ID/status；agent-mail.sqlite3/mail 保存分析、信封地址、重试状态与 payload_hash。历史 MCP 身份包含服务器和工具，新建 MCP 消息使用邮件四元组身份。新 legacy 消息以来源命名空间/principal/旧 ID 生成 Core 身份，不伪造分析对象。
 
 推荐以 agent-mail.sqlite3 扩展为唯一 MailCore 存储，保留旧入口兼容适配器。相比同时改写三种调用方，这样可以分步验收；相比直接把 MCP marker 复制进 mail，显式迁移能保留其缺失信息与不确定状态。
 

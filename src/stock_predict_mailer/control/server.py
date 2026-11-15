@@ -7,6 +7,7 @@ import binascii
 import hmac
 import json
 import secrets
+import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -16,6 +17,7 @@ from ..agent_service.contracts import ServiceError, decode
 from ..agent_service.mail import MailService
 from ..agent_service.reporting import render
 from ..naming import env
+from ..operations.components import Component
 from .a2a import SESSION_COOKIE, A2AService, card
 from .market_feed import MarketFeed
 from .orchestrator import Orchestrator
@@ -396,14 +398,27 @@ def make_server(root, port=8767, master_key=None, market=None):
     return server
 
 
-def serve(root, port=8767):
-    server = make_server(root, port)
-    print(f"配置控制台：http://127.0.0.1:{server.server_port}（仅本机）", flush=True)
-    if server.store.development_mode:
-        print("开发模式：无需主密钥环境变量，使用独立开发配置库和自动生成的本机开发密钥。", flush=True)
-    try:
-        server.serve_forever()
-    finally:
-        for tid in list(server.engine.active):
-            server.engine.cancel(tid)
-        server.server_close()
+def serve(root, port=8767, *, runtime_id=None):
+    config = {"port": port, "vault_mode": "production" if env("MASTER_KEY") else "development"}
+    with Component(root, "console", config, instance=runtime_id) as component:
+        server = make_server(root, port)
+        print(f"配置控制台：http://127.0.0.1:{server.server_port}（仅本机）", flush=True)
+        if server.store.development_mode:
+            print("开发模式：无需主密钥环境变量，使用独立开发配置库和自动生成的本机开发密钥。", flush=True)
+        server.timeout = .2
+        component.phase("running", port=server.server_port)
+        try:
+            while not component.should_stop():
+                server.handle_request()
+        finally:
+            component.phase("stopping")
+            active = server.engine.close_admission()
+            server.server_close()
+            for tid in active:
+                try:
+                    server.engine.cancel(tid)
+                except ServiceError:
+                    pass
+            # Keep the lease and heartbeat while async effects unwind. No force kill.
+            while server.engine.active:
+                time.sleep(.05)

@@ -48,6 +48,14 @@ def stock_codes(text, *, explicit=False):
     return sorted(codes)
 
 
+STATES = ("pending", "processing", "ready", "review", "failed", "rejected", "deleting")
+ERRORS = {"PARSE_OR_IMPORT_FAILED": "文件解析或导入失败，请检查格式和当前步骤",
+          "REVIEW_REQUIRED": "扫描件、缺失字段或复杂结构需要人工复核",
+          "PARSER_MISSING": "缺少解析依赖，请安装 knowledge extra",
+          "UNSUPPORTED_ENCODING": "文本不是 UTF-8，请转换编码后更新资料",
+          "INTERRUPTED": "工作进程中断，可重试已完成步骤之后的处理"}
+
+
 class Knowledge:
     def __init__(self, store, adapter=None, cleaner_adapter=None):
         self.store, self.root = store, store.root / "private-knowledge"
@@ -270,35 +278,63 @@ class Knowledge:
             raise ServiceError("NOT_FOUND", "资料不存在或无权访问")
         return row
 
+    def _summary(self, row, detail=False):
+        # Shared by document() and catalog(): one row in, the same list shape out.
+        result = {k: row[k] for k in ("id", "logical", "filename", "hash", "uploaded", "status", "step", "error", "active")}
+        result["metadata"] = json.loads(row["metadata"])
+        draft = json.loads(row["draft"]) if row["draft"] else {}
+        result["warnings"] = draft.get("warnings", [])
+        result["needs_review"] = bool(result["warnings"]) or row["status"] == "review"
+        result["extraction"] = json.loads(row["extraction"]) if detail and row["extraction"] else None
+        result["review"] = json.loads(row["review"]) if row["review"] else None
+        result["error_message"] = ERRORS.get(row["error"], row["error"])
+        return result
+
     def document(self, owner, did, detail=False):
         self.ensure(owner)
         with self.db() as con:
             row = dict(self._row(con, owner, did))
-            result = {k: row[k] for k in ("id", "logical", "filename", "hash", "uploaded", "status", "step", "error", "active")}
-            result["metadata"] = json.loads(row["metadata"])
-            draft = json.loads(row["draft"]) if row["draft"] else {}
-            result["warnings"] = draft.get("warnings", [])
-            result["needs_review"] = bool(result["warnings"]) or row["status"] == "review"
-            result["extraction"] = json.loads(row["extraction"]) if detail and row["extraction"] else None
-            result["review"] = json.loads(row["review"]) if row["review"] else None
-            reasons = {"PARSE_OR_IMPORT_FAILED": "文件解析或导入失败，请检查格式和当前步骤",
-                       "REVIEW_REQUIRED": "扫描件、缺失字段或复杂结构需要人工复核",
-                       "PARSER_MISSING": "缺少解析依赖，请安装 knowledge extra",
-                       "UNSUPPORTED_ENCODING": "文本不是 UTF-8，请转换编码后更新资料",
-                       "INTERRUPTED": "工作进程中断，可重试已完成步骤之后的处理"}
-            result["error_message"] = reasons.get(row["error"], row["error"])
+            result = self._summary(row, detail)
             if detail:
-                result["chunks"] = [json.loads(r[0]) for r in con.execute("SELECT body FROM chunks WHERE doc=? AND owner=? ORDER BY ordinal", (did, owner))]
-                if not result["chunks"]:
-                    result["chunks"] = draft.get("chunks", [])
+                chunks = [json.loads(r[0]) for r in con.execute("SELECT body FROM chunks WHERE doc=? AND owner=? ORDER BY ordinal", (did, owner))]
+                if not chunks and row["draft"]:
+                    chunks = json.loads(row["draft"]).get("chunks", [])
+                result["chunks"] = chunks
                 result["relations"] = [dict(r) for r in con.execute("SELECT * FROM relations WHERE doc=? AND owner=?", (did, owner))]
         return result
 
+    def catalog(self, owner, *, limit=50, offset=0, status=None):
+        # Paged summaries: one query per page instead of one query per document.
+        self.ensure(owner)
+        if limit is not None and (type(limit) is not int or not 1 <= limit <= 500):
+            raise ServiceError("INVALID_INPUT", "每页条数须为 1–500，或省略表示全部")
+        if type(offset) is not int or offset < 0:
+            raise ServiceError("INVALID_INPUT", "分页偏移须为非负整数")
+        if status is not None and status not in STATES:
+            raise ServiceError("INVALID_INPUT", "资料状态无效")
+        clause, params = "owner=?", [owner]
+        if status:
+            clause += " AND status=?"
+            params.append(status)
+        with self.db() as con:
+            total = con.execute(f"SELECT COUNT(*) FROM documents WHERE {clause}", params).fetchone()[0]
+            statement = f"SELECT * FROM documents WHERE {clause} ORDER BY uploaded DESC,id"
+            if limit is not None:
+                statement += " LIMIT ? OFFSET ?"
+                params += [limit, offset]
+            rows = [dict(row) for row in con.execute(statement, params)]
+            review = con.execute("SELECT COUNT(*) FROM documents WHERE owner=? AND status='review'", (owner,)).fetchone()[0]
+        return {"items": [self._summary(row) for row in rows], "total": total, "review": review,
+                "limit": limit, "offset": offset}
+
     def listing(self, owner):
+        return self.catalog(owner, limit=None)["items"]
+
+    def versions(self, owner, logical):
         self.ensure(owner)
         with self.db() as con:
-            ids = [r[0] for r in con.execute("SELECT id FROM documents WHERE owner=? ORDER BY uploaded DESC,id", (owner,))]
-        return [self.document(owner, did) for did in ids]
+            return [dict(row) for row in con.execute("SELECT id,logical,active,status,uploaded FROM documents WHERE owner=? AND logical=? ORDER BY uploaded,id",
+                                                     (owner, logical))]
 
     def citation(self, owner, citation_id):
         if not isinstance(citation_id, str) or not re.fullmatch(r"[a-f0-9]{32}:[0-9]{1,8}", citation_id):
@@ -501,6 +537,20 @@ class Knowledge:
         return [{**{k: row[k] for k in ("id", "status", "dimension", "error")},
                  "model": self.opened(row["config"])["model"], "version": self.opened(row["config"])["version"],
                  "fingerprint": hashlib.sha256(packed({k: v for k, v in self.opened(row["config"]).items() if k != "api_key"}).encode()).hexdigest()} for row in rows]
+
+    def retire(self, owner, did):
+        # Withdraws a version from retrieval while keeping its encrypted original:
+        # deletion cannot be undone, so "revoke" must not be mapped onto it. Older
+        # versions stay inactive because retirement is not a rollback.
+        self.ensure(owner)
+        with self.db() as con:
+            con.execute("BEGIN IMMEDIATE")
+            row = self._row(con, owner, did)
+            if not row["active"]:
+                raise ServiceError("INVALID_STATE", "该版本未激活，无需撤销")
+            con.execute("UPDATE documents SET active=0 WHERE id=? AND owner=?", (did, owner))
+            con.execute("UPDATE owners SET revision=revision+1 WHERE owner=?", (owner,))
+        return {"id": did, "status": "retired"}
 
     def delete(self, owner, did):
         self.ensure(owner)

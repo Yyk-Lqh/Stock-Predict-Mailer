@@ -505,7 +505,8 @@ window.Workbench = (() => {
 
 /* Private documents, evidence and review. Source text is always rendered as text. */
 window.KnowledgeUI = (() => {
-  let timer = null, epoch = 0, documents = [];
+  let timer = null, epoch = 0, documents = [], catalog = {total: 0, review: 0};
+  const PAGE = 50;
   const STATE = {pending: '已排队', processing: '处理中', ready: '已发布', review: '待审阅', failed: '处理失败', rejected: '已拒绝', deleting: '等待删除'};
   const STEP = {received: '已接收', parsed: '已解析', chunked: '已切分', extracted: '已提取', reviewed: '已审阅', published: '已发布'};
   const safe = fn => async event => { try { await fn(event); } catch (error) { notice(error.message, true); } };
@@ -548,32 +549,45 @@ window.KnowledgeUI = (() => {
   }
   function selection() { return {knowledge_query: $('task-knowledge-query').value.trim(), knowledge_to_model: $('task-knowledge-consent').checked}; }
   function restore(value) { $('task-knowledge-query').value = value.knowledge_query || ''; $('task-knowledge-consent').checked = Boolean(value.knowledge_to_model); }
-  async function load() {
+  function documentRow(item) {
+    const row = document.createElement('article'); row.className = 'document-row';
+    const name = document.createElement('div');
+    text(name, 'h3', item.logical);
+    text(name, 'p', `${item.filename} · ${fmt(item.uploaded)} · ${item.id.slice(0, 8)}`, 'hint');
+    row.append(name);
+    const status = document.createElement('div');
+    text(status, 'p', `${STATE[item.status] || item.status}${item.active ? ' · 活动版本' : ''}`);
+    text(status, 'p', item.error_message || STEP[item.step] || item.step, item.error ? 'error-text' : 'hint');
+    row.append(status, action(item.status === 'review' ? '审阅候选' : '查看资料', () => detail(item.id)));
+    return row;
+  }
+  function renderDocuments(items) {
+    const host = $('knowledge-list');
+    for (const item of items) host.append(documentRow(item));
+    $('knowledge-count').textContent = `${catalog.total} 个版本 · ${catalog.review} 待审阅${documents.length < catalog.total ? ` · 已显示 ${documents.length}` : ''}`;
+    const more = $('knowledge-more'); if (more) more.remove();
+    if (documents.length < catalog.total) {
+      const button = action(`加载更多 · 已显示 ${documents.length} / ${catalog.total}`, () => load(true));
+      button.id = 'knowledge-more'; host.append(button);
+    }
+    if (!documents.length) text(host, 'p', '上传第一份资料，建立可追溯的证据库。', 'empty');
+  }
+  async function load(append = false) {
     clearTimeout(timer);
+    const extend = append === true;
     const requestEpoch = ++epoch;
     const key = memoryKey;
     $('knowledge-access').hidden = Boolean(key); $('knowledge-body').hidden = !key;
     if (!key) { documents = []; $('knowledge-list').replaceChildren(); $('knowledge-detail').hidden = true; return; }
     try {
-      const data = await api('knowledge/documents');
+      const offset = extend ? documents.length : 0;
+      const limit = extend ? PAGE : Math.min(500, Math.max(PAGE, documents.length));
+      const data = await api(`knowledge/documents?limit=${limit}&offset=${offset}`);
       if (requestEpoch !== epoch || key !== memoryKey) return;
-      documents = data;
-      const host = $('knowledge-list'); host.replaceChildren();
-      $('knowledge-count').textContent = `${data.length} 个版本 · ${data.filter(item => item.status === 'review').length} 待审阅`;
-      if (!data.length) text(host, 'p', '上传第一份资料，建立可追溯的证据库。', 'empty');
-      for (const item of data) {
-        const row = document.createElement('article'); row.className = 'document-row';
-        const name = document.createElement('div');
-        text(name, 'h3', item.logical);
-        text(name, 'p', `${item.filename} · ${fmt(item.uploaded)} · ${item.id.slice(0, 8)}`, 'hint');
-        row.append(name);
-        const status = document.createElement('div');
-        text(status, 'p', `${STATE[item.status] || item.status}${item.active ? ' · 活动版本' : ''}`);
-        text(status, 'p', item.error_message || STEP[item.step] || item.step, item.error ? 'error-text' : 'hint');
-        row.append(status, action(item.status === 'review' ? '审阅候选' : '查看资料', () => detail(item.id)));
-        host.append(row);
-      }
-      if (!section.hidden && data.some(item => ['pending', 'processing'].includes(item.status))) timer = setTimeout(load, 4000);
+      if (!extend) { documents = []; $('knowledge-list').replaceChildren(); }
+      documents = documents.concat(data.items); catalog = data;
+      renderDocuments(data.items);
+      if (!section.hidden && data.items.some(item => ['pending', 'processing'].includes(item.status))) timer = setTimeout(() => load(), 4000);
     } catch (error) { if (requestEpoch === epoch) notice(error.message, true); }
   }
   function chunkText(host, chunks) {
@@ -591,12 +605,18 @@ window.KnowledgeUI = (() => {
   }
   async function detail(id) {
     const key = memoryKey;
-    const item = await api('knowledge/documents/' + id);
+    const [item, versions] = await Promise.all([api('knowledge/documents/' + id), api(`knowledge/documents/${id}/versions`)]);
     if (key !== memoryKey) return;
     const host = $('knowledge-detail'); host.replaceChildren(); host.hidden = false;
     text(host, 'h2', item.logical);
     text(host, 'p', `${STATE[item.status] || item.status} · ${item.active ? '活动版本' : '非活动版本'} · ${item.id}`, 'hint');
-    text(host, 'p', `来源：${item.metadata.source} · 文档日期 ${item.metadata.document_date || '未知'} · 可用日期 ${item.metadata.available_date}`, 'hint');
+    text(host, 'p', `来源：${item.metadata.source} · 文档日期 ${item.metadata.document_date || '未知'} · 可用日期 ${item.metadata.available_date} · 失效日期 ${item.metadata.valid_to || '未声明'}`, 'hint');
+    if (versions.length > 1) {
+      const history = document.createElement('details'); text(history, 'summary', `版本历史 · ${versions.length} 个版本`);
+      for (const version of versions) text(history, 'p', `${version.id.slice(0, 8)}${version.id === id ? '（当前查看）' : ''} · ${STATE[version.status] || version.status}${version.active ? ' · 活动版本' : ''} · ${fmt(version.uploaded)}`, 'hint');
+      text(history, 'p', '检索按截止日期选用当时有效的最新版本；下架不退回到旧版本。', 'hint');
+      host.append(history);
+    }
     for (const warning of item.warnings || []) text(host, 'p', typeof warning === 'string' ? warning : JSON.stringify(warning), 'note warn');
     const actions = document.createElement('div'); actions.className = 'actions mt-16';
     actions.append(action('下载原件', async () => {
@@ -611,8 +631,13 @@ window.KnowledgeUI = (() => {
       if (!confirm('重新提取会清除这个未发布版本的提取和审批检查点，保留原文件。继续？')) return;
       await api(`knowledge/documents/${id}/reextract`, 'POST', {}); await load(); await detail(id);
     }));
-    actions.append(action('删除此版本', async () => {
-      if (!confirm('删除此版本的原件与索引？已有历史分析报告会保留，旧版本不会自动恢复。')) return;
+    if (item.active) actions.append(action('下架此版本', async () => {
+      if (!confirm('下架后该版本不再参与检索与任务证据，加密原件与历史引用仍保留。下架不退回旧版本。继续？')) return;
+      await api(`knowledge/documents/${id}/retire`, 'POST', {}); await load(); await detail(id);
+    }));
+    actions.append(action('永久删除', async () => {
+      const badge = id.slice(0, 8);
+      if (prompt(`永久删除会销毁加密原件、片段与全部索引，无法恢复。输入资料 ID 前 8 位（${badge}）确认：`) !== badge) return;
       await api('knowledge/documents/' + id, 'DELETE'); host.hidden = true; await load();
     }));
     host.append(actions);
@@ -726,7 +751,7 @@ window.KnowledgeUI = (() => {
     const today = localInput(new Date()).slice(0, 10);
     $('knowledge-available').value = today; $('knowledge-asof').value = today;
   }
-  $('knowledge-refresh').onclick = safe(load);
+  $('knowledge-refresh').onclick = safe(() => load());
   $('knowledge-upload').onsubmit = safe(async event => {
     event.preventDefault();
     const button = event.currentTarget.querySelector('[type=submit]'); button.disabled = true;

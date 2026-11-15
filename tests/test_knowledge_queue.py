@@ -113,7 +113,7 @@ class QueueHTTPTests(unittest.TestCase):
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
-                with httpx.Client(base_url=f'http://127.0.0.1:{server.server_port}') as client:
+                with httpx.Client(base_url=f'http://127.0.0.1:{server.server_port}', trust_env=False) as client:
                     client.get('/')
                     client.headers['X-CSRF-Token'] = client.get('/api/session').json()['csrf_token']
                     client.headers['X-Memory-Key'] = client.post('/api/memory/access', json={}).json()['key']

@@ -139,7 +139,7 @@ class AnswerRouteTests(unittest.TestCase):
             server = make_server(Path(tmp), 0, Fernet.generate_key())
             threading.Thread(target=server.serve_forever, daemon=True).start()
             try:
-                with httpx.Client(base_url=f'http://127.0.0.1:{server.server_port}', timeout=30) as client:
+                with httpx.Client(base_url=f'http://127.0.0.1:{server.server_port}', timeout=30, trust_env=False) as client:
                     client.get('/')
                     client.headers['X-CSRF-Token'] = client.get('/api/session').json()['csrf_token']
                     client.headers['X-Memory-Key'] = client.post('/api/memory/access', json={}).json()['key']

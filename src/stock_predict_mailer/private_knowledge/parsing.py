@@ -151,6 +151,7 @@ def parse(filename, raw):
                 text = page.extract_text(extraction_mode="layout")
             except TypeError:  # 旧版 pypdf 没有布局模式：退回普通提取，表格按段落处理。
                 text = page.extract_text()
+            text = text or ""
             if not text.strip():
                 warnings.append(f"第 {number} 页无可提取文本，需要 OCR")
                 continue

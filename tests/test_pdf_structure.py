@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import unittest
+from unittest.mock import patch
 
 from stock_predict_mailer.private_knowledge.parsing import parse, pdf_blocks
 
@@ -73,6 +74,12 @@ class LayoutBlockTests(unittest.TestCase):
 
 @unittest.skipUnless(HAVE_PYPDF, 'knowledge extra required')
 class PdfTableParseTests(unittest.TestCase):
+    def test_none_from_pdf_extractor_keeps_ocr_review_error(self):
+        raw = pdf([('Item', 'Value', 'Change')])
+        with patch("pypdf._page.PageObject.extract_text", return_value=None):
+            with self.assertRaisesRegex(Exception, "OCR"):
+                parse("scan.pdf", raw)
+
     def test_rows_become_fields_with_page_and_row_locations(self):
         raw = pdf([('Item', 'Value', 'Change'), ('Revenue', '12.5', '3.1%'), ('Cost', '7.4', '-1.2%')])
         self.assertTrue(PdfReader(io.BytesIO(raw)).pages[0].extract_text(extraction_mode='layout'))

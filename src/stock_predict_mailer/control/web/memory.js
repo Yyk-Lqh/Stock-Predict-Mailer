@@ -509,6 +509,16 @@ window.KnowledgeUI = (() => {
   const PAGE = 50;
   const STATE = {pending: '已排队', processing: '处理中', ready: '已发布', review: '待审阅', failed: '处理失败', rejected: '已拒绝', deleting: '等待删除'};
   const STEP = {received: '已接收', parsed: '已解析', chunked: '已切分', extracted: '已提取', reviewed: '已审阅', published: '已发布'};
+  // 与后端 metadata() 白名单一致：四类标签键与对应的表单字段。
+  const TAGS = [['companies', 'knowledge-companies'], ['industries', 'knowledge-industries'], ['topics', 'knowledge-topics'], ['stock_codes', 'knowledge-codes']];
+  const TAG_LABEL = {companies: '主体', industries: '行业', topics: '主题', stock_codes: '代码'};
+  function tagValues(id) {
+    const values = [...new Set(String($(id).value || '').split(/[,，、;；]/).map(value => value.trim()).filter(Boolean))];
+    if (values.length > 40) throw new Error('单类标签最多 40 个');
+    const long = values.find(value => value.length > 100);
+    if (long) throw new Error(`标签「${long.slice(0, 12)}」超过 100 字符`);
+    return values;
+  }
   const safe = fn => async event => { try { await fn(event); } catch (error) { notice(error.message, true); } };
   const section = document.createElement('section');
   section.className = 'view'; section.dataset.viewPane = 'knowledge'; section.hidden = true;
@@ -522,8 +532,10 @@ window.KnowledgeUI = (() => {
         <details class="input-editor"><summary>上传资料 / 更新版本</summary><form id="knowledge-upload" class="card stack">
           <label class="field"><span>文件 · 最大 10 MiB</span><input id="knowledge-file" type="file" accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.json" required></label>
           <label class="field"><span>资料名称 <em>更新时使用相同名称</em></span><input id="knowledge-logical" maxlength="200" placeholder="留空时使用文件名"></label>
-          <div class="grid-3"><label class="field"><span>来源</span><input id="knowledge-source" value="用户上传" maxlength="200"></label><label class="field"><span>文档日期</span><input type="date" id="knowledge-date"></label><label class="field"><span>实际可用日期</span><input type="date" id="knowledge-available" required></label></div>
-          <p class="hint">支持 PDF、DOCX、TXT、Markdown、CSV、XLSX、JSON。上传后进入队列，由独立清洗进程处理。扫描件 OCR 暂不支持。</p>
+          <div class="grid-4"><label class="field"><span>来源</span><input id="knowledge-source" value="用户上传" maxlength="200"></label><label class="field"><span>文档日期</span><input type="date" id="knowledge-date"></label><label class="field"><span>实际可用日期</span><input type="date" id="knowledge-available" required></label><label class="field"><span>失效日期 <em>选填</em></span><input type="date" id="knowledge-valid"></label></div>
+          <div class="grid-3"><label class="field"><span>主体名称 <em>逗号分隔</em></span><input id="knowledge-companies" maxlength="400" placeholder="例如：甲公司, 乙公司"></label><label class="field"><span>行业 <em>逗号分隔</em></span><input id="knowledge-industries" maxlength="400" placeholder="例如：汽车零部件"></label><label class="field"><span>主题 <em>逗号分隔</em></span><input id="knowledge-topics" maxlength="400" placeholder="例如：产能扩张, 供应链"></label></div>
+          <label class="field"><span>股票代码 <em>逗号分隔，可写 600000.SH 或 600000</em></span><input id="knowledge-codes" maxlength="400" placeholder="例如：600000.SH, 000001.SZ"></label>
+          <p class="hint">支持 PDF、DOCX、TXT、Markdown、CSV、XLSX、JSON。上传后进入队列，由独立清洗进程处理。扫描件 OCR 暂不支持。标签用于检索前过滤，单类最多 40 个、每个不超过 100 字符；留空表示不限定。</p>
           <div><button type="submit" class="btn primary">上传并排队</button></div>
         </form></details>
         <p class="hint worker-note">排队不代表入库完成。清洗进程须在本机单独启动，当前页面无法确认它是否在线。</p>
@@ -611,6 +623,8 @@ window.KnowledgeUI = (() => {
     text(host, 'h2', item.logical);
     text(host, 'p', `${STATE[item.status] || item.status} · ${item.active ? '活动版本' : '非活动版本'} · ${item.id}`, 'hint');
     text(host, 'p', `来源：${item.metadata.source} · 文档日期 ${item.metadata.document_date || '未知'} · 可用日期 ${item.metadata.available_date} · 失效日期 ${item.metadata.valid_to || '未声明'}`, 'hint');
+    const tags = TAGS.filter(([key]) => (item.metadata[key] || []).length);
+    if (tags.length) text(host, 'p', tags.map(([key]) => `${TAG_LABEL[key]}：${item.metadata[key].join('、')}`).join(' · '), 'hint');
     if (versions.length > 1) {
       const history = document.createElement('details'); text(history, 'summary', `版本历史 · ${versions.length} 个版本`);
       for (const version of versions) text(history, 'p', `${version.id.slice(0, 8)}${version.id === id ? '（当前查看）' : ''} · ${STATE[version.status] || version.status}${version.active ? ' · 活动版本' : ''} · ${fmt(version.uploaded)}`, 'hint');
@@ -762,6 +776,8 @@ window.KnowledgeUI = (() => {
       for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
       const metadata = {source: $('knowledge-source').value || '用户上传', available_date: $('knowledge-available').value};
       if ($('knowledge-date').value) metadata.document_date = $('knowledge-date').value;
+      if ($('knowledge-valid').value) metadata.valid_to = $('knowledge-valid').value;
+      for (const [key, id] of TAGS) { const values = tagValues(id); if (values.length) metadata[key] = values; }
       await api('knowledge/documents', 'POST', {filename: file.name, data: btoa(binary), logical: $('knowledge-logical').value || file.name, metadata});
       $('knowledge-file').value = ''; notice('资料已排队，等待独立清洗进程处理。'); await load();
     } finally { button.disabled = false; }

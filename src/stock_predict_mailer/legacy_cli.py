@@ -46,7 +46,7 @@ def main(argv=None) -> int:
     research.add_argument("--cutoff", required=True)
     research.add_argument("--trees", action="store_true", help="Require optional LightGBM installation")
     research.add_argument("--allow-unverified-real", action="store_true", help="Explicitly allow uncertified user CSV for exploratory research only")
-    kb_add = sub.add_parser("kb-add", help="Index local Markdown or text with explicit ACL")
+    kb_add = sub.add_parser("kb-add", help="Index a local PDF/DOCX/TXT/MD/CSV/XLSX/JSON document with explicit ACL")
     kb_add.add_argument("path", type=Path)
     kb_add.add_argument("--published-at", required=True)
     kb_add.add_argument("--available-at", required=True)
@@ -121,7 +121,7 @@ def main(argv=None) -> int:
             return 0 if result["status"] == "submitted" else 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
     elif args.command in ("kb-add", "kb-search", "kb-revoke", "report"):
-        from .knowledge import ingest_document, retrieve, revoke
+        from .knowledge_api import ingest_document, retrieve, revoke
         from .report import build_report
         with tracked_run(cfg, args.command):
             if args.command == "kb-add":

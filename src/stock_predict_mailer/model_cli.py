@@ -174,7 +174,7 @@ def dispatch(cfg, args):
             from .generation import generate_brief
             from .prediction_report import build_prediction_report, load_prediction
             prediction = load_prediction(cfg, args.prediction_id)
-            from .knowledge import retrieve
+            from .knowledge_api import retrieve
             evidence = retrieve(cfg, args.query, prediction["cutoff"])
             brief = generate_brief(cfg, prediction, evidence, allow_generation=args.generate)
             result = build_prediction_report(cfg, args.prediction_id, args.query, generation=brief)

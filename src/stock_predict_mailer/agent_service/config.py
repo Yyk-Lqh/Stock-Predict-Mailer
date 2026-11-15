@@ -31,7 +31,8 @@ def load(path):
                 raise ValueError()
             for key, value in section.items():
                 if key in ("timeout_seconds", "max_age_seconds", "max_context_age_seconds", "retry_seconds", "max_attempts", "port"):
-                    if type(value) is not int or not 1 <= value <= (65535 if key == "port" else 604800):
+                    maximum = 315360000 if key == "max_context_age_seconds" else 65535 if key == "port" else 604800
+                    if type(value) is not int or not 1 <= value <= maximum:
                         raise ValueError()
                 elif key == "allow_synthetic":
                     if type(value) is not bool:
@@ -47,12 +48,14 @@ def load(path):
         for name in ("prediction", "context"):
             section = raw[name]
             kind = section.setdefault("adapter", "mock" if name == "prediction" else "none")
-            if kind not in (("mock", "file", "http") if name == "prediction" else ("none", "mock", "file", "http")):
+            if kind not in (("mock", "file", "http") if name == "prediction" else ("none", "mock", "file", "http", "crawler")):
                 raise ValueError()
-            if kind == "file":
+            if kind in ("file", "crawler"):
                 section["path"] = path.parent / section["path"]
             if kind == "http" and not section.get("url"):
                 raise ValueError()
+        if raw["context"]["adapter"] == "crawler" and raw["prediction"]["adapter"] == "mock":
+            raise ServiceError("CONFIG_ERROR", "采集上下文须显式配置 file/http 上游预测，不能回退为默认 Mock")
         if raw["agent"].setdefault("provider", "deterministic") not in ("deterministic", "http"):
             raise ValueError()
         if raw["agent"]["provider"] == "http" and not raw["agent"].get("url"):

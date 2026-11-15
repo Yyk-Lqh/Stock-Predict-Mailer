@@ -1,0 +1,24 @@
+# Edit the input paths for your upstream prediction and collected cutoff view.
+workspace = "../data/agent-local"
+timezone = "Asia/Shanghai"
+
+[prediction]
+adapter = "file"
+path = "../data/upstream/prediction.json"
+
+[context]
+adapter = "crawler"
+# Explicit snapshot choice; change this date to the actual collected view.
+path = "../data/crawler/data/fundamental_as_of_2026-11-15.csv"
+
+[agent]
+provider = "deterministic"
+max_age_seconds = 86400
+# Explicitly allow annual-age fundamentals; timestamps still use the report period.
+max_context_age_seconds = 31536000
+
+[mail]
+transport = "file"
+sender = "research@example.invalid"
+recipient = "preview@example.invalid"
+allow_synthetic = false

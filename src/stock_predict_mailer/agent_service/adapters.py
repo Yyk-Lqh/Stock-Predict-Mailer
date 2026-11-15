@@ -98,6 +98,11 @@ class MockContextAdapter:
 
 
 def adapter(kind, settings):
+    if kind == "crawler" and settings.get("role") == "context":
+        from .crawler_context import CrawlerContextAdapter
+        if not settings.get("prediction"):
+            raise ServiceError("CONFIG_ERROR", "采集上下文需要显式的上游预测")
+        return CrawlerContextAdapter(settings["path"], settings["prediction"], settings.get("max_age_seconds", 86400))
     if kind == "mock":
         return MockPredictionAdapter() if settings["role"] == "prediction" else MockContextAdapter()
     if kind == "file":

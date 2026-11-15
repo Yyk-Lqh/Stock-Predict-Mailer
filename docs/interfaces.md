@@ -8,6 +8,14 @@
 
 错误统一为 `{"error":{"code":"INVALID_INPUT","message":"…","retryable":false}}`，不包含原始 HTTP 响应、凭据、内部路径或异常文本。CLI 成功退出 0，错误退出 2；邮件 retry/not_due/uncertain/failed 退出 2。代码：INVALID_INPUT、STALE_RESULT、STALE_CONTEXT、UPSTREAM_UNAVAILABLE、AGENT_UNAVAILABLE、AGENT_INVALID、CONFIG_ERROR、LOCAL_IO、MAIL_CONFIG。HTTP 网络故障 retryable=true，格式错误及过期 false。HTTP 适配器只 GET 配置的地址（不添加 query），可从指定环境变量取 Bearer token，不跟随重定向；非 2xx / 非 JSON 均明确报错。部署端负责认证、限流和 HTTPS。预测服务不接受本系统加载模型文件的请求。
 
+运行诊断 `doctor` 使用独立的版本化预检报告：`{schema_version,version,generated_at,mode,workspace,crawler_workspace,status,summary,checks,limitations}`，逐项 `checks` 包含 component/code/status/message/details/action（action 可选）。诊断会按本机工具用途展示工作区路径，不包含任务内容或凭据。退出码 ok=0、warning=1、error=2；未完成检查明确为 warning/error，不能视为服务健康承诺。参数、WAL/Worker 边界见[运行诊断手册](runtime-diagnostics.md)。
+
+`runtime status/start/stop/logs <component>` 仅支持 console/knowledge_worker/crawler_worker。状态包含 state/ownership、已登记时的 instance/pid/phase/configuration/时间等公开字段；logs 返回白名单 events。stop 必须携带 `--instance`，只写实例匹配请求，不使用 PID 信号；非阻塞返回 stop_requested，等待超时返回 stopping/timed_out。正常/未登记/停止退出 0，未知/切换/等待超时退出 1，身份冲突/失败/非法记录及操作错误退出 2。登记和操作边界见[运行管理手册](runtime-lifecycle.md)。
+
+`backup plan/create/verify/restore` 提供独立数据保护入口。plan 返回 ready/blockers、文件范围/摘要、counts/limits/vaults 与 plan_id；create 必须携带 --expected-plan，仅发布不可覆盖的整体认证加密包。verify/restore 不依赖原 TOML，restore 仅支持全新隔离目录并暂停未决队列。备份密钥来自独立环境引用，外部 MASTER_KEY 不导出；成功退出 0，阻断/错误退出 2。范围、错误和容量限制见[备份恢复手册](workspace-backup.md)。
+
+`db status/plan` 返回独立的 schema_version=1 报告，包含 app_version/catalogue_id/sqlite_version、state/ready/changes、逐库 source_id/schema_id、结构推断 features 和已知固定 operations。未知结构/版本阻断；缺失库不创建。plan 增加 plan_id/requires_permission_review/ready_for_apply=false；`--rehearse --expected-plan` 只在一次性副本内事务执行、验证并回滚，返回 committed=false/source_writes=0。当前/缺失/演练成功退出 0，已知升级退出 1，阻断/错误退出 2。完整语义见[数据库结构手册](schema-planning.md)。
+
 ## 采集模块 → 系统
 
 顶层必填 schema_version、context_id、subject、facts。facts 为数组，可为空。每项必填 id（本批唯一）、name、value（有限数字或非空字符串）、unit、source、observed_at、available_at；无可选字段。subject 必须与预测对象一致。每条事实独立做 max_context_age_seconds 检查，不允许未来可用信息或静默丢弃过期事实。
@@ -30,9 +38,13 @@
 
 ## Agent → 邮件服务
 
+上下文另支持本地 `crawler` 适配器，读取有哈希元数据及完整任务标记的基本面视图；需要显式 file/http 预测。用法见[单标的分析](single-symbol-analysis.md)。可选 `input_evidence` 与 chart_data 一样位于严格 v1 context 之外，进入 analysis 后绑定原始预测、上下文和来源字段，参与 analysis_id 摘要并在报告与邮件中显示引用。原有 v1 字段与 file/http 行为保持兼容。
+
 分析结果由 `AnalysisAgent.analyze(prediction, context)` 生成。必填 schema_version、analysis_id（规范内容摘要）、generated_at（沿用预测生成时间以稳定幂等）、status（ok/degraded）、mode、prediction（完整标准化契约）、facts、inferences、recommendations、limitations、risks。facts 为已校验客观数据；inferences 每条含 code、text、evidence_ids；recommendations/limitations/risks 为字符串数组。报告摘要及时间显示不修改预测含义。degraded 明确说明 Agent 故障；confidence 缺失显示“未提供”，不推测。
 
 邮件调用 `MailService.enqueue(analysis, recipient)` → `{id,status,attempts,next_attempt,error}`；收件人必填且为单一邮箱，发件人来自配置，禁止头部换行。`deliver(id)` 返回相同状态。邮件内容由分析对象渲染 JSON + HTML，并生成 text/plain + text/html MIME；只接受通过分析输出验证的对象，内容摘要必须匹配。邮件状态：pending → sending → submitted（SMTP 接收）/simulated（file）/retry/failed/uncertain。下一次到期调用 send 重试；无内置后台调度器。消息以分析内容+收发件人+传输方式幂等，相同内容重复调用不会重新发送。分析身份不含邮件配置，同一分析可投递多个收件人。
+
+新消息冻结公开端点和凭据引用，漂移返回 MAIL_ENDPOINT_CHANGED；已有尝试但缺绑定的历史消息返回 MAIL_BINDING_REQUIRED。`binding_plan(id)` 只读，`bind(id, expected_plan)` 显式更新绑定且不发送、不清除 uncertain/attempts。legacy/MCP 新写入口共用 MailCore，保留原授权入口；通用 deliver/drain 不代替它们发送。旧 outbox/mcp_mail 只读，历史激活/回执时间界限须显式审阅。完整命令、边界及新增错误见[MailCore 手册](mail-core-migration.md)。
 
 ## 可选 HTTP Agent 策略接口
 

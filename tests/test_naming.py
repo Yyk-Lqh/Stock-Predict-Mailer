@@ -25,7 +25,11 @@ class NamingTest(unittest.TestCase):
     def test_pyproject_matches_the_naming_module(self):
         project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
         self.assertEqual(project["name"], naming.DISTRIBUTION_NAME)
-        self.assertEqual(project["scripts"], {naming.COMMAND: f"{naming.PACKAGE_NAME}.cli:main"})
+        self.assertEqual(project["scripts"], {
+            naming.COMMAND: f"{naming.PACKAGE_NAME}.cli:main",
+            naming.CRAWLER_COMMAND: "mcp_server.server:main",
+            naming.CRAWLER_VERIFY_COMMAND: "mcp_server.verify:main",
+        })
         # Version lives in the package, not in two places that can disagree.
         self.assertNotIn("version", project)
         self.assertIn("version", project["dynamic"])

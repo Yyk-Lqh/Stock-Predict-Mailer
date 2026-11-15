@@ -30,6 +30,8 @@ PROJECT_NAME = "Stock-Predict-Mailer"
 DISTRIBUTION_NAME = "stock-predict-mailer"
 PACKAGE_NAME = "stock_predict_mailer"
 COMMAND = "stock-predict-mailer"
+CRAWLER_COMMAND = f"{COMMAND}-crawler"
+CRAWLER_VERIFY_COMMAND = f"{CRAWLER_COMMAND}-verify"
 
 ENV_PREFIX = "STOCK_PREDICT_MAILER"
 LEGACY_ENV_PREFIX = "SPM"

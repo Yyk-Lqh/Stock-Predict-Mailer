@@ -75,7 +75,7 @@ uv run stock-predict-mailer --config config/local.toml knowledge-worker --poll 2
 uv run stock-predict-mailer --config config/local.toml knowledge-worker --once
 ```
 
-上传和管理当前通过后端 `/api/knowledge` 接口完成，前端暂未增加知识库页面。上传成功表示已排队，不代表完成入库。旧入口的 `kb-add` / `kb-search` / `kb-revoke`（须加 `legacy` 前缀）写入同一份存储，但会同步跑完流水线才返回，因此耗时从毫秒级变为秒级。
+控制台的「知识库」页签可上传资料、检索证据、配置索引与下架版本；后端接口是 `/api/knowledge`，上传成功表示已排队，不代表完成入库。整批导入用 `knowledge-import`（用法见 `docs/知识库与报告.md`）：先 `--write-manifest` 生成清单骨架，填好标签后 `--dry-run` 核对计划，再 `--process` 导入并处理。旧入口的 `kb-add` / `kb-search` / `kb-revoke`（须加 `legacy` 前缀）写入同一份存储，但会同步跑完流水线才返回，因此耗时从毫秒级变为秒级。
 
 模型分别配置，按需启用：
 

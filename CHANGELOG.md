@@ -2,6 +2,14 @@
 
 ## 未发布（分支 `scene/56-agent-app`）
 
+- 新增批量导入入口 `knowledge-import`：按目录或 CSV 清单一次导入整批资料，支持 `--dry-run`、`--limit`、`--write-manifest`、`--process`。
+  - 清单列 `path,logical,source,document_date,available_date,valid_to,companies,industries,topics,stock_codes`，与 `metadata()` 白名单一致；未知列直接报错，避免拼写错误静默丢标签。
+  - `available_date` 不会静默取当天：清单 → `--available` → `document_date` 依次兜底，三者皆无则逐文件失败；`--assume-available-today` 才用当天并计入 `warnings.available_date_inferred`。理由是该字段事后无法修复，填错会污染回测。
+  - 提供清单时以其为准：未登记文件跳过、登记但缺失的文件报失败，清单本身即入库台账。
+  - 幂等按 `(logical, 内容哈希)`：重复导入跳过，内容变化则成为同一槽位的新版本。
+  - `logical` 留空时按目录路径推导；超过 200 字符报错并提示用清单简写。
+  - 281 项 unittest 通过（新增 11 项：清单解析与权威性、日期兜底与失败、幂等、试运行、清单骨架拒绝覆盖、版本递进、`--limit`）。
+
 - 知识库资料列表改为分页：`GET /api/knowledge/documents` 支持 `limit`（1–500，缺省 50）、`offset`、`status`，响应改为 `{items,total,review,limit,offset}`；控制台列表按页加载并提供「加载更多」。
   - 原实现逐篇调用 `document()`，而它每次都执行 `ensure()` 的 `INSERT OR IGNORE` 写事务；200 篇资料实测 426 ms，400 篇 843 ms，且每次切换页签都会触发。改为单页一次查询后，首页 4.6 ms / 6.4 ms（约 90–130 倍）。
   - `Knowledge.catalog()` 为新增分页接口，`listing()` 保留原签名与返回形状（全部版本），供既有调用方使用。

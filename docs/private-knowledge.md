@@ -44,6 +44,8 @@ uv run stock-predict-mailer --config config/local.toml knowledge-worker --once
 
 只需知识库依赖时可用 `uv sync --extra knowledge --extra dev`；研究功能还需对应 research/trees extra。上传不会自动启动 worker。独立进程持有自己的 OS 锁，避免双 worker 恢复对方的运行任务；进程中断后再次启动将 processing 标为失败，需显式 retry。`--once` 有失败任务返回 2，否则返回 0；`--poll` 为 .1–60 秒。每次解析完成保存 parsed 检查点，清洗完成保存 chunked 检查点，重试从其后继续。向量/索引发布事务失败回滚，不暴露半成品。
 
+整批资料用 `knowledge-import <目录>`，同样只入队，`--process` 才顺带跑完队列：`--write-manifest` 生成清单骨架，填好后 `--dry-run` 核对计划，再正式导入。清单存在时以其为准，未登记文件不入库；`available_date` 依次取清单、`--available`、`document_date`，三者皆无则逐文件失败，`--assume-available-today` 是唯一显式覆盖方式。重复导入按 `(logical, 内容哈希)` 跳过。
+
 资料保存在 `<workspace>/private-knowledge/knowledge.sqlite3` 及用户子目录；与 control.sqlite3 的对话记忆不同。原文件和 API key 用现有主密钥加密，片段/FTS/元数据为本机明文索引，需依靠工作区磁盘权限保护。备份时须保留原文件、索引、control.sqlite3 的用户身份以及外部保存的原主密钥。逻辑删除会移除当前索引记录和加密文件，不宣称磁盘取证级安全擦除。
 
 ## HTTP 接口

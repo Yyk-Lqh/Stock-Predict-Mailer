@@ -635,7 +635,7 @@ window.KnowledgeUI = (() => {
       if (reload && waiting !== null && waiting > 0 && busy === 0) await load();
       waiting = busy;
     } catch (error) { /* 轮询失败保持上一次显示，网络抖动不该刷提示 */ }
-    queueTimer = setTimeout(() => queueStatus(), busy ? 4000 : 15000);
+    queueTimer = setTimeout(() => queueStatus(), busy ? 4000 : 8000);
   }
   async function load(append = false) {
     clearTimeout(timer);

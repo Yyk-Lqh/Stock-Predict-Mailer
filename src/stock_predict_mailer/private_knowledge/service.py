@@ -588,7 +588,8 @@ class Knowledge:
             counts = dict(con.execute("SELECT status, COUNT(*) FROM documents WHERE owner=? GROUP BY status", (owner,)))
             attention = []
             for row in con.execute("SELECT id,logical,filename,status,error,uploaded FROM documents "
-                                   "WHERE owner=? AND status IN ('failed','review') ORDER BY uploaded DESC, id LIMIT ?",
+                                   "WHERE owner=? AND status IN ('failed','review') "
+                                   "ORDER BY CASE status WHEN 'failed' THEN 0 ELSE 1 END, uploaded DESC, id LIMIT ?",
                                    (owner, limit)):
                 item = dict(row)
                 item["error_message"] = ERRORS.get(item["error"], item["error"])

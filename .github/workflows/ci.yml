@@ -26,6 +26,7 @@ jobs:
       - run: uv python install 3.11
       - run: uv sync --python 3.11 --locked
       - run: uv run python -m unittest discover -s tests -p test_agent_service.py -v
+      - run: uv run python -m unittest discover -s tests -p test_cli_encoding.py -v
       - run: uv run python -m unittest discover -s tests -p test_control.py -v
       - run: uv run python -m unittest discover -s tests -p test_crawler_service.py -v
       - run: uv run python -m unittest discover -s tests -p test_crawler_quality.py -v

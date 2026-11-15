@@ -729,6 +729,14 @@ body.inspector-expanded .report-inspector { width: calc(100vw - 232px); padding-
 .evidence-group h4 { font-size: 13px; overflow-wrap: anywhere; }
 .evidence-group > .hint { font-size: 11px; }
 .tag.expired { color: var(--warn); border-color: var(--warn); }
+/* 汇总回答：依据在前、推断在后，推断必须带 citation_id */
+.answer > h3 { font-size: 14px; }
+.answer > p.note { margin: 10px 0 2px; }
+.answer h4 { font-size: 12.5px; margin: 24px 0 6px; }
+.answer-edge, .answer-conflict { padding: 10px 0; border-bottom: 1px solid var(--rule); }
+.answer-edge:last-child, .answer-conflict:last-child { border-bottom: 0; }
+.answer-edge p, .answer-conflict p { font-size: 12px; line-height: 1.75; }
+.citation-pop { margin-top: 10px; padding: 10px 12px; background: var(--surface-2); border-radius: var(--radius-sm); }
 .error-text { color: var(--danger); }
 #knowledge-configs { margin-top: 24px; }
 #knowledge-configs .field:has(input[type="checkbox"]) { align-items: flex-start; }

@@ -1,13 +1,18 @@
 """Search presentation: version slots, expiry marks and echoed filters."""
 from __future__ import annotations
 
+import base64
+import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
+import httpx
 from cryptography.fernet import Fernet
 
 from stock_predict_mailer.control.memory import Memory
+from stock_predict_mailer.control.server import make_server
 from stock_predict_mailer.control.store import Store
 from stock_predict_mailer.private_knowledge.service import Knowledge
 
@@ -90,6 +95,41 @@ class SearchGroupingTests(unittest.TestCase):
     def test_empty_result_still_reports_scope(self):
         found = self.kb.search(self.owner, '不存在的关键词')
         self.assertEqual((found['results'], found['groups'], found['logical_total']), ([], [], 0))
+
+
+class AnswerRouteTests(unittest.TestCase):
+    """The answer pane reads fields, not the joined text; keep that contract explicit."""
+
+    def test_answer_route_returns_structured_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server = make_server(Path(tmp), 0, Fernet.generate_key())
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                with httpx.Client(base_url=f'http://127.0.0.1:{server.server_port}', timeout=30) as client:
+                    client.get('/')
+                    client.headers['X-CSRF-Token'] = client.get('/api/session').json()['csrf_token']
+                    client.headers['X-Memory-Key'] = client.post('/api/memory/access', json={}).json()['key']
+                    rows = [{'subject': '甲公司', 'predicate': '供应商', 'object': '乙公司',
+                             'valid_from': '2026-01-01', 'valid_to': '2026-12-31'}]
+                    for name, body in (('关系.json', json.dumps(rows, ensure_ascii=False)),
+                                       ('事件.txt', '乙公司发生停产事件，交期可能延长。')):
+                        client.post('/api/knowledge/documents', json={'filename': name,
+                            'data': base64.b64encode(body.encode()).decode(), 'metadata': META})
+                    self.assertEqual(server.engine.knowledge.process_one()['status'], 'ready')
+                    self.assertEqual(server.engine.knowledge.process_one()['status'], 'ready')
+                    data = client.post('/api/knowledge/answer',
+                                       json={'query': '甲公司供应链风险', 'limit': 4, 'as_of': '2026-11-01'}).json()
+                    self.assertEqual(data['mode'], 'evidence_extract')
+                    self.assertTrue(data['results'] and data['relations'] and data['inferences'])
+                    self.assertTrue(all({'text', 'evidence_ids', 'kind'} <= set(item) for item in data['inferences']))
+                    self.assertTrue(all({'doc', 'chunk', 'subject', 'predicate', 'object'} <= set(item) for item in data['relations']))
+                    self.assertTrue(data['answer'])
+                    self.assertTrue(data['warnings'])
+                    self.assertEqual(client.post('/api/knowledge/answer', json={'query': ''}).status_code, 400)
+                    self.assertEqual(client.post('/api/knowledge/answer', json={'query': '甲公司', 'limit': 0}).status_code, 400)
+            finally:
+                server.shutdown()
+                server.server_close()
 
 
 if __name__ == '__main__':

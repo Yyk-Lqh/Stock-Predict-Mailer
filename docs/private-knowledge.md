@@ -66,7 +66,7 @@ uv run stock-predict-mailer --config config/local.toml knowledge-worker --once
 - `POST /rebuild`：同步构建新索引代，其他请求仍可查询旧代；完成后事务切换。资料或配置在重建期间变化会报 INDEX_CHANGED，需重新调用。失败重试不会覆盖旧代。
 - `GET /indexes`：查询各代状态、失败码、模型、声明版本、维度与不含凭据的配置指纹。
 - `POST /search`：`{"query":"营业收入","as_of":"2026-11-07","start_date":"2026-01-01","stock_code":"600000.SH","entity":"甲公司","limit":8}`，可选条件按 AND 组合，limit 1–20。文档日期、资料可用时间及记录的 data_date/date/日期/数据日期会按截止时间过滤；未知文档日期标记警告。结构化日期支持 YYYY-MM-DD 和 YYYY/MM/DD，原字段保留。代码按 A 股 SH/SZ/BJ 六位规则规范；不宣称其他市场代码自动识别。返回 `as_of`/`start_date`/`limit` 回显、`results`（含 `logical`、`expired`）、`groups`（按版本槽位聚合的 filename、日期、`valid_to`、`expired`、`hits`/`shown`）与 `logical_total`。选片时先给每个版本一个名额、再按分数补齐，因此一份多切片的长资料不会占满结果；`hits > shown` 表示该版本还有命中未返回。`expired` 指 `valid_to < as_of`，只做标记，不排除——历史回放常需要过期资料。
-- `POST /answer`：相同查询参数，返回摘录、条件性推断、逐条 citation_id、来源日期、定位、冲突候选、过期/不足说明。使用确定性有界规则，不需要配置聊天模型。
+- `POST /answer`：相同查询参数，返回 `results`/`groups` 之外还有 `answer`（拼接文本）、`relations`、`inferences`（`text`/`evidence_ids`/`kind=bounded_rule_inference`）、`conflicts`（`sources` 逐条给 value 与 citation_id）、`mode=evidence_extract`。使用确定性有界规则，不需要配置聊天模型；没有证据时只说「证据不足」，不补造引用。条件性推断要求同时命中供应商关系与停产/延期/短缺/制裁/火灾事件，且两侧无警告；冲突不自动择一。
 - `GET /citations/{document_id}:{ordinal}`：按当前用户权限定位片段和源版本；退休版本仍可对照，已删除则不存在。
 
 metadata 支持 source、document_date、available_date、valid_to、companies、industries、topics、stock_codes。默认 available_date 为上传当天；历史回放需填写真实可用日期，不能把文件里出现的未来时间当作当时已知。document_date 缺失会提示未知，不自动从文件名猜测。单位保留在字段名与原始文本，不做金额换算；JSON 数字按词法字符串保留，避免小数精度在清洗时变化。

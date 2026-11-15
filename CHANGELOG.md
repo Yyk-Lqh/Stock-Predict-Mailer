@@ -2,6 +2,11 @@
 
 ## 未发布（分支 `scene/56-agent-app`）
 
+- 控制台新增「汇总并回答」入口：`POST /api/knowledge/answer` 早就实现但没有界面，现在与检索共用筛选条件。
+  - 结果拆成四段而不是一段文字：关系证据（含有效期与来源片段）、条件性推断（逐条列 `evidence_ids`，可展开依据原文）、冲突候选（不自动择一）、警告。
+  - 明确标注 `mode=evidence_extract`「规则汇总，非模型生成」：没有配置聊天模型也能用；检索为空时只说证据不足，不补造引用。
+  - 底部两个折叠项：复用分组视图的「展开 N 段来源原文」、可直接粘进报告的「纯文本」。
+  - 296 项 unittest 通过（新增 1 项接口契约：`mode`/`relations`/`inferences`/`conflicts` 字段与空查询、`limit=0` 的 400）。
 - 检索证据界面补齐时间范围、返回上限与按版本槽位分组。
   - `POST /api/knowledge/search` 结果新增 `logical`、`expired` 与 `groups`（`filename`/`document_date`/`available_date`/`valid_to`/`expired`/`hits`/`shown`），并回显 `as_of`/`start_date`/`limit`、给出 `logical_total`。
   - 选片改为「先给每个版本一个名额，再按分数补齐」：一份多切片的长资料不再占满 `limit`，另一来源却被挤掉；`limit` 仍严格生效，组内顺序仍是分数序。

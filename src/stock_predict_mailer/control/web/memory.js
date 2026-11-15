@@ -541,7 +541,7 @@ window.KnowledgeUI = (() => {
         <div id="knowledge-queue" class="queue-bar"></div>
         <div id="knowledge-list"></div><div id="knowledge-detail" class="knowledge-detail" hidden></div>
       </div>
-      <div data-kb-pane="search" hidden><form id="knowledge-search" class="stack"><label class="field"><span>查找证据</span><input id="knowledge-query" required maxlength="4000" placeholder="例如：营业收入、客户关系、供应链风险"></label><div class="grid-4"><label class="field"><span>截止日期</span><input id="knowledge-asof" type="date"></label><label class="field"><span>文档日期不早于</span><input id="knowledge-start" type="date"></label><label class="field"><span>股票代码</span><input id="knowledge-stock" placeholder="600000.SH"></label><label class="field"><span>主体名称</span><input id="knowledge-entity" maxlength="200"></label></div><div class="grid-2"><label class="field"><span>返回片段数</span><select id="knowledge-limit"><option value="5">5 段</option><option value="8" selected>8 段</option><option value="12">12 段</option><option value="20">20 段</option></select></label><div class="field"><span class="hint">同一版本先取一段，其余按分数补齐</span><button type="submit" class="btn primary">检索证据</button></div></div><p class="hint">截止日期决定「当时能看到什么」：晚于该日期才可用的资料不参与检索；「文档日期不早于」用于排除过旧资料，文档日期未知的条目会被一并排除。</p></form><div id="knowledge-results" class="mt-26"></div></div>
+      <div data-kb-pane="search" hidden><form id="knowledge-search" class="stack"><label class="field"><span>查找证据</span><input id="knowledge-query" required maxlength="4000" placeholder="例如：营业收入、客户关系、供应链风险"></label><div class="grid-4"><label class="field"><span>截止日期</span><input id="knowledge-asof" type="date"></label><label class="field"><span>文档日期不早于</span><input id="knowledge-start" type="date"></label><label class="field"><span>股票代码</span><input id="knowledge-stock" placeholder="600000.SH"></label><label class="field"><span>主体名称</span><input id="knowledge-entity" maxlength="200"></label></div><div class="grid-2"><label class="field"><span>返回片段数</span><select id="knowledge-limit"><option value="5">5 段</option><option value="8" selected>8 段</option><option value="12">12 段</option><option value="20">20 段</option></select></label><div class="field"><span class="hint">汇总不是模型结论，只按「摘录 → 关系 → 推断」顺序拼接</span><div class="actions"><button type="submit" class="btn primary">检索证据</button><button type="button" id="knowledge-answer" class="btn">汇总并回答</button></div></div></div><p class="hint">截止日期决定「当时能看到什么」：晚于该日期才可用的资料不参与检索；「文档日期不早于」用于排除过旧资料，文档日期未知的条目会被一并排除。</p></form><div id="knowledge-results" class="mt-26"></div><div id="knowledge-answer-result" class="mt-26"></div></div>
       <div data-kb-pane="processing" hidden><p class="hint">规则清洗和关键词检索无需模型。语义清洗模型与向量模型独立配置；保存配置不会自动执行资料处理。</p><div id="knowledge-configs"></div><div class="section-head mt-26"><h2>索引版本</h2><button id="knowledge-rebuild" type="button" class="btn">重建索引</button></div><div id="knowledge-indexes"></div></div>
     </div>`;
   document.querySelector('main').append(section);
@@ -556,7 +556,7 @@ window.KnowledgeUI = (() => {
   function reset() { $('task-knowledge-query').value = ''; $('task-knowledge-consent').checked = false; }
   function identityReset() {
     ++epoch; clearTimeout(timer); clearTimeout(queueTimer); waiting = null; documents = [];
-    for (const id of ['knowledge-list', 'knowledge-results', 'knowledge-configs', 'knowledge-indexes', 'knowledge-detail', 'knowledge-queue']) $(id).replaceChildren();
+    for (const id of ['knowledge-list', 'knowledge-results', 'knowledge-answer-result', 'knowledge-configs', 'knowledge-indexes', 'knowledge-detail', 'knowledge-queue']) $(id).replaceChildren();
     $('knowledge-detail').hidden = true; reset();
   }
   function selection() { return {knowledge_query: $('task-knowledge-query').value.trim(), knowledge_to_model: $('task-knowledge-consent').checked}; }
@@ -744,16 +744,8 @@ window.KnowledgeUI = (() => {
     }));
     group.append(actions); host.append(group);
   }
-  function renderEvidence(host, data) {
-    host.replaceChildren();
-    const found = data.citations || data.results || [];
-    const groups = data.groups || [];
-    text(host, 'h3', groups.length ? `来源证据 · ${found.length} 段 · ${groups.length} 个版本` : `来源证据 · ${found.length} 条`);
-    const scope = [`截止日期 ${data.as_of || '今天'}`];
-    if (data.start_date) scope.push(`文档日期不早于 ${data.start_date}`);
-    if (data.limit) scope.push(`片段上限 ${data.limit} 段`);
-    text(host, 'p', `${scope.join(' · ')}。来源声明与模型推断需要分别核对；日期未知、证据不足与冲突不代表事实已被确认。`, 'hint');
-    if (!found.length) text(host, 'p', '没有找到满足权限与截止时间的证据。', 'empty');
+  function renderGroups(container, data) {
+    const found = data.results || data.citations || [], groups = data.groups || [];
     const order = groups.length ? groups.map(group => group.logical) : [...new Set(found.map(item => item.logical || item.document_id))];
     for (const slot of order) {
       const items = found.filter(item => (item.logical || item.document_id) === slot);
@@ -783,11 +775,103 @@ window.KnowledgeUI = (() => {
           chunkText(source, [cite.chunk]); article.append(source);
         })); wrap.append(article);
       }
-      host.append(wrap);
+      container.append(wrap);
     }
-    if (data.logical_total && data.logical_total > groups.length) text(host, 'p', `另有 ${data.logical_total - groups.length} 个版本命中但未进入前 ${data.limit || ''} 段，可提高片段数或补充条件后再检索。`, 'hint');
+    if (data.logical_total && data.logical_total > groups.length) text(container, 'p', `另有 ${data.logical_total - groups.length} 个版本命中但未进入前 ${data.limit || ''} 段，可提高片段数或补充条件后再检索。`, 'hint');
+  }
+  function renderEvidence(host, data) {
+    host.replaceChildren();
+    const found = data.citations || data.results || [];
+    const groups = data.groups || [];
+    text(host, 'h3', groups.length ? `来源证据 · ${found.length} 段 · ${groups.length} 个版本` : `来源证据 · ${found.length} 条`);
+    const scope = [`截止日期 ${data.as_of || '今天'}`];
+    if (data.start_date) scope.push(`文档日期不早于 ${data.start_date}`);
+    if (data.limit) scope.push(`片段上限 ${data.limit} 段`);
+    text(host, 'p', `${scope.join(' · ')}。来源声明与模型推断需要分别核对；日期未知、证据不足与冲突不代表事实已被确认。`, 'hint');
+    if (!found.length) text(host, 'p', '没有找到满足权限与截止时间的证据。', 'empty');
+    renderGroups(host, data);
     for (const warning of data.warnings || []) text(host, 'p', typeof warning === 'string' ? warning : JSON.stringify(warning), 'note warn');
     if (data.conflicts?.length) { const d = document.createElement('details'); text(d, 'summary', `冲突候选 ${data.conflicts.length} 项`); text(d, 'pre', JSON.stringify(data.conflicts, null, 2), 'mono'); host.append(d); }
+  }
+  /* 汇总回答：把 search 的结构化结果排成「摘录 → 关系 → 推断」，
+     推断永远带 citation_id，且明确标注它是规则推断而不是模型结论。 */
+  function renderAnswer(host, data) {
+    host.replaceChildren();
+    const found = data.results || [], groups = data.groups || [], relations = data.relations || [];
+    const wrap = document.createElement('section'); wrap.className = 'answer';
+    text(wrap, 'h3', `汇总回答 · ${found.length} 段证据 · ${groups.length} 个版本`);
+    const scope = [`截止日期 ${data.as_of || '今天'}`];
+    if (data.start_date) scope.push(`文档日期不早于 ${data.start_date}`);
+    if (data.limit) scope.push(`片段上限 ${data.limit} 段`);
+    scope.push(data.mode === 'evidence_extract' ? '规则汇总，非模型生成' : String(data.mode || '规则汇总'));
+    text(wrap, 'p', scope.join(' · '), 'hint');
+    if (!found.length) {
+      text(wrap, 'p', '证据不足：未找到当前权限与截止时间范围内的资料。可放宽截止日期、去掉股票代码或主体限制后重试；没有证据时不生成结论。', 'note warn');
+      host.append(wrap); return;
+    }
+    text(wrap, 'p', '下面按固定顺序拼接：关系证据 → 条件性推断 → 冲突。推断都标明了依据片段，但不等于事实；影响规模、因果关系和收益都无法由此得出。', 'note');
+
+    text(wrap, 'h4', `关系证据 · ${relations.length} 条`);
+    if (!relations.length) text(wrap, 'p', '本次没有命中带有效期的关系证据。', 'hint');
+    for (const edge of relations) {
+      const row = document.createElement('div'); row.className = 'answer-edge';
+      text(row, 'p', `${edge.subject} —${edge.predicate}→ ${edge.object}`);
+      text(row, 'p', `有效期 ${edge.valid_from || '未知'} 至 ${edge.valid_to || '未声明'} · [${edge.doc}:${edge.chunk}]`, 'hint');
+      wrap.append(row);
+    }
+
+    const inferences = data.inferences || [];
+    text(wrap, 'h4', `条件性推断 · ${inferences.length} 条`);
+    if (!inferences.length) text(wrap, 'p', '本次未触发条件性推断：需要同时命中「供应商关系」与停产、延期、短缺、制裁、火灾一类事件证据，且两侧都没有警告。', 'hint');
+    for (const item of inferences) {
+      const card = document.createElement('article'); card.className = 'answer-edge';
+      text(card, 'p', item.text);
+      text(card, 'p', `依据 ${item.evidence_ids.join('、')} · ${item.kind === 'bounded_rule_inference' ? '有界规则推断' : item.kind}`, 'hint');
+      card.append(action('查看依据原文', async () => {
+        if (card.querySelector('.citation-pop')) return;
+        const pop = document.createElement('div'); pop.className = 'citation-pop';
+        for (const ref of item.evidence_ids) {
+          const cite = await api('knowledge/citations/' + ref);
+          text(pop, 'p', `${ref} · ${cite.document.filename} · 文档日期 ${cite.document.metadata?.document_date || '未知'}`, 'hint');
+          chunkText(pop, [cite.chunk]);
+        }
+        card.append(pop);
+      }));
+      wrap.append(card);
+    }
+
+    const conflicts = data.conflicts || [];
+    if (conflicts.length) {
+      text(wrap, 'h4', `冲突候选 · ${conflicts.length} 项（不自动择一）`);
+      for (const item of conflicts) {
+        const row = document.createElement('div'); row.className = 'answer-conflict';
+        const label = item.field || [item.subject, item.field, item.period, item.unit].filter(Boolean).join(' · ');
+        text(row, 'p', item.status === 'same_period_unit_different_source_values'
+          ? `${label}：同主体、同周期、同单位，不同来源数值不同`
+          : `${label}：取值不同，可能是周期或口径不同`);
+        for (const source of item.sources || []) text(row, 'p', `${JSON.stringify(source.value)} · ${source.document_date || '日期未知'} · ${source.citation_id}`, 'hint');
+        wrap.append(row);
+      }
+    }
+
+    if (data.warnings?.length) {
+      const box = document.createElement('div'); box.className = 'note warn';
+      text(box, 'h4', '需要注意');
+      for (const warning of data.warnings) text(box, 'p', typeof warning === 'string' ? warning : JSON.stringify(warning));
+      wrap.append(box);
+    }
+
+    const details = document.createElement('details');
+    text(details, 'summary', `展开 ${found.length} 段来源原文`);
+    renderGroups(details, data);
+    wrap.append(details);
+    if (data.answer) {
+      const raw = document.createElement('details');
+      text(raw, 'summary', '纯文本（可复制进报告）');
+      text(raw, 'pre', data.answer, 'mono');
+      wrap.append(raw);
+    }
+    host.append(wrap); host.scrollIntoView({block: 'start'});
   }
   function evidence(data) {
     let host = $('knowledge-report-evidence');
@@ -859,13 +943,25 @@ window.KnowledgeUI = (() => {
       $('knowledge-file').value = ''; notice('资料已排队，等待独立清洗进程处理。'); await load();
     } finally { button.disabled = false; }
   });
+  function searchFilters() {
+    const body = {query: $('knowledge-query').value, limit: Number($('knowledge-limit').value) || 8};
+    for (const [name, id] of [['as_of', 'knowledge-asof'], ['start_date', 'knowledge-start'], ['stock_code', 'knowledge-stock'], ['entity', 'knowledge-entity']]) if ($(id).value) body[name] = $(id).value;
+    return body;
+  }
   $('knowledge-search').onsubmit = safe(async event => {
     event.preventDefault(); const button = event.currentTarget.querySelector('[type=submit]'); button.disabled = true;
     try {
-      const key = memoryKey, body = {query: $('knowledge-query').value, limit: Number($('knowledge-limit').value) || 8};
-      for (const [name, id] of [['as_of', 'knowledge-asof'], ['start_date', 'knowledge-start'], ['stock_code', 'knowledge-stock'], ['entity', 'knowledge-entity']]) if ($(id).value) body[name] = $(id).value;
-      const data = await api('knowledge/search', 'POST', body);
+      const key = memoryKey, data = await api('knowledge/search', 'POST', searchFilters());
       if (key === memoryKey) renderEvidence($('knowledge-results'), data);
+    } finally { button.disabled = false; }
+  });
+  $('knowledge-answer').onclick = safe(async () => {
+    const button = $('knowledge-answer'), host = $('knowledge-answer-result');
+    if (!$('knowledge-query').value.trim()) { notice('先填写要查的问题。', true); $('knowledge-query').focus(); return; }
+    button.disabled = true;
+    try {
+      const key = memoryKey, data = await api('knowledge/answer', 'POST', searchFilters());
+      if (key === memoryKey) renderAnswer(host, data);
     } finally { button.disabled = false; }
   });
   $('knowledge-rebuild').onclick = safe(async () => {

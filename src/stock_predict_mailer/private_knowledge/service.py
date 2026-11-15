@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ..agent_service.contracts import ServiceError, utcnow
 from ..core import atomic_write
+from .aliases import expand
 from .cleaner import CleanerAdapter, cleaner_config, extract, fingerprint
 from .embedding import EmbeddingAdapter, configuration
 from .parsing import FORMATS, clean, parse
@@ -706,7 +707,12 @@ class Knowledge:
                 if stock_code and not set(stock_codes(stock_code, explicit=True)) & set(meta["stock_codes"] + chunk.get("stock_codes", [])):
                     continue
                 eligible.append({**dict(row), **chunk, "metadata": meta})
+            # 别名只扩展查询词，索引仍保存原文写法：加一条说法不需要重建索引，
+            # 扩展也不可能把资料里没有的内容「造」出来。
+            expanded, aliases = expand(query)
             query_terms = terms(query)[:80]
+            if aliases:
+                query_terms = sorted(set(query_terms) | set(terms(expanded)))
             ranks = {}
             if query_terms:
                 expression = " OR ".join('"' + t.replace('"', '""') + '"' for t in query_terms)
@@ -806,7 +812,7 @@ class Knowledge:
         order = {item["chunk_id"]: index for index, item in enumerate(chosen)}
         chosen.sort(key=lambda item: (next(i for i, g in enumerate(groups) if g["logical"] == item["logical"]), order[item["chunk_id"]]))
         chosen_ids = {r["chunk_id"] for r in chosen}
-        return {"query": query, "as_of": as_of, "start_date": start_date, "results": chosen,
+        return {"query": query, "aliases": aliases, "as_of": as_of, "start_date": start_date, "results": chosen,
                 "groups": [g for g in groups if g["shown"]], "logical_total": len(groups), "limit": limit,
                 "domains": sorted(allowed_domains) if allowed_domains is not None else None,
                 "relations": [r for r in edges if r["chunk"] in chosen_ids], "warnings": warnings}

@@ -779,6 +779,13 @@ window.KnowledgeUI = (() => {
     }
     if (data.logical_total && data.logical_total > groups.length) text(container, 'p', `另有 ${data.logical_total - groups.length} 个版本命中但未进入前 ${data.limit || ''} 段，可提高片段数或补充条件后再检索。`, 'hint');
   }
+  /* 别名扩展必须回显：出现了「用口语问、按全称命中」的结果时，
+     使用者要知道是词表在起作用，而不是以为检索在乱猜。 */
+  function aliasHint(host, data) {
+    if (!data.aliases?.length) return;
+    const pairs = data.aliases.map(item => `${item.alias} → ${item.canonical.join(' / ')}`).join('；');
+    text(host, 'p', `已按别名扩展查询：${pairs}。资料按原文写法入库，扩词只发生在查询侧。`, 'hint');
+  }
   function renderEvidence(host, data) {
     host.replaceChildren();
     const found = data.citations || data.results || [];
@@ -788,6 +795,7 @@ window.KnowledgeUI = (() => {
     if (data.start_date) scope.push(`文档日期不早于 ${data.start_date}`);
     if (data.limit) scope.push(`片段上限 ${data.limit} 段`);
     text(host, 'p', `${scope.join(' · ')}。来源声明与模型推断需要分别核对；日期未知、证据不足与冲突不代表事实已被确认。`, 'hint');
+    aliasHint(host, data);
     if (!found.length) text(host, 'p', '没有找到满足权限与截止时间的证据。', 'empty');
     renderGroups(host, data);
     for (const warning of data.warnings || []) text(host, 'p', typeof warning === 'string' ? warning : JSON.stringify(warning), 'note warn');
@@ -805,6 +813,7 @@ window.KnowledgeUI = (() => {
     if (data.limit) scope.push(`片段上限 ${data.limit} 段`);
     scope.push(data.mode === 'evidence_extract' ? '规则汇总，非模型生成' : String(data.mode || '规则汇总'));
     text(wrap, 'p', scope.join(' · '), 'hint');
+    aliasHint(wrap, data);
     if (!found.length) {
       text(wrap, 'p', '证据不足：未找到当前权限与截止时间范围内的资料。可放宽截止日期、去掉股票代码或主体限制后重试；没有证据时不生成结论。', 'note warn');
       host.append(wrap); return;

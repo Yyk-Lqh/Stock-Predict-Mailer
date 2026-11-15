@@ -121,6 +121,19 @@ class RoleConfig(Closed):
     endpoint_id: str | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
     tools: list[str] = Field(default_factory=list)
+    # A2A 知识检索的一级域白名单（logical 第一段）。空表示禁止该角色读取任何资料。
+    knowledge_domains: list[str] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def scopes(self):
+        cleaned = []
+        for domain in self.knowledge_domains:
+            if not isinstance(domain, str) or not 1 <= len(domain.strip()) <= 20 or "/" in domain:
+                raise ValueError("资料域须为一级域名，不含 /，长度 1–20")
+            if domain.strip() not in cleaned:
+                cleaned.append(domain.strip())
+        self.knowledge_domains = cleaned
+        return self
 
 
 class Limits(Closed):

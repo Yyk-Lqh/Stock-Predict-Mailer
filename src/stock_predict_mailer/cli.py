@@ -66,6 +66,9 @@ def main(argv=None):
     importer.add_argument("--shallow", action="store_true", help="只扫当前目录，不递归")
     importer.add_argument("--process", action="store_true", help="导入后立即处理队列")
     importer.add_argument("--quiet", action="store_true", help="不打印逐文件进度")
+    acl = sub.add_parser("knowledge-acl", help="查看或设置 A2A 角色可读的知识库一级域")
+    acl.add_argument("--role", choices=("main", "prediction", "risk", "advice"), help="角色；查询时留空表示列出全部")
+    acl.add_argument("--domains", help="逗号分隔的一级域；传空字符串表示清空，该角色立即失去读取权")
     console = sub.add_parser("console", help="启动本机模型、MCP 与 Agent 配置控制台")
     console.add_argument("--port", type=int, default=8767)
     args = parser.parse_args(argv)
@@ -88,6 +91,23 @@ def main(argv=None):
         if args.command == "console":
             from .control.server import serve
             serve(cfg["workspace"], args.port)
+            return 0
+        if args.command == "knowledge-acl":
+            from .control.store import Store
+            store = Store(Path(cfg["workspace"]))
+            settings = store.settings()
+            if args.domains is None:
+                for role, conf in settings["agents"].items():
+                    if args.role and role != args.role:
+                        continue
+                    print(f"{role}: {','.join(conf['knowledge_domains']) or '（未授权，A2A 检索会拒绝）'}")
+                return 0
+            if not args.role:
+                raise ServiceError("INVALID_INPUT", "设置 --domains 时必须指定 --role")
+            settings["agents"][args.role]["knowledge_domains"] = [d.strip() for d in args.domains.split(",") if d.strip()]
+            store.save_settings(settings)
+            granted = settings["agents"][args.role]["knowledge_domains"]
+            print(f"{args.role}: {','.join(granted) or '（已清空，该角色不能读取任何资料）'}")
             return 0
         if args.command == "knowledge-import":
             from .private_knowledge.importer import run as import_knowledge

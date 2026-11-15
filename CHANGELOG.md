@@ -2,6 +2,13 @@
 
 ## 未发布（分支 `scene/56-agent-app`）
 
+- 新增 A2A 只读知识检索 `knowledge/search`，按角色白名单限定可读的一级域。
+  - `POST /a2a/{main|prediction|risk|advice}` 新增 JSON-RPC 方法，参数与 `/api/knowledge/search` 同名同义；返回体额外回显 `role`、`effect="read"`、`domains`。
+  - 三道门：必须带 `X-Memory-Key`（Bearer 令牌不携带资料身份）、角色白名单非空（默认为空即拒绝）、白名单只能由 `knowledge-acl` 改（请求里带 `domains` 报 INVALID_PARAMS）。
+  - 域过滤发生在排名与 `limit` 之前，越权资料不占名额，`logical_total`/`groups` 只统计允许的版本；拒绝不返回空结果，避免对端误判「库里没有」。
+  - 新增 `knowledge-acl` 命令查看/设置角色域白名单（`--domains ""` 收回权限）；`RoleConfig` 增加 `knowledge_domains` 字段并校验格式。
+  - Agent Card 增加 `knowledge.search` 技能声明，描述里写明需要 `X-Memory-Key` 与角色授权。
+  - 303 项 unittest 通过（新增 7 项：全员默认拒绝、域收窄、限额只数允许版本、未知角色/缺密钥/错密钥、参数校验、Card 声明、service 层 `domains` 过滤与空列表语义）。
 - 控制台新增「汇总并回答」入口：`POST /api/knowledge/answer` 早就实现但没有界面，现在与检索共用筛选条件。
   - 结果拆成四段而不是一段文字：关系证据（含有效期与来源片段）、条件性推断（逐条列 `evidence_ids`，可展开依据原文）、冲突候选（不自动择一）、警告。
   - 明确标注 `mode=evidence_extract`「规则汇总，非模型生成」：没有配置聊天模型也能用；检索为空时只说证据不足，不补造引用。

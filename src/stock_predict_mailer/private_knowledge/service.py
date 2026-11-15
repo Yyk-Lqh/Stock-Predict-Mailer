@@ -39,6 +39,19 @@ def day(value):
         raise ServiceError("INVALID_INPUT", "日期须为 YYYY-MM-DD") from None
 
 
+def domain(logical):
+    """一级域取 logical 的第一段（`研报/中金/跟踪` → `研报`），与受控词表一致。"""
+    return logical.split("/", 1)[0].strip()
+
+
+def domain_scope(domains):
+    if domains is None:
+        return None
+    if not isinstance(domains, (list, tuple, set)) or any(not isinstance(item, str) for item in domains):
+        raise ServiceError("INVALID_INPUT", "资料域白名单须为字符串列表")
+    return {item.strip() for item in domains if item.strip()}
+
+
 def stock_codes(text, *, explicit=False):
     codes = set()
     pattern = r"(?<![A-Z0-9])(\d{6})(?:[. ]?(SH|SZ|BJ))?(?![A-Z0-9])" if explicit else r"(?<![A-Z0-9])(\d{6})[. ]?(SH|SZ|BJ)(?![A-Z0-9])"
@@ -648,12 +661,14 @@ class Knowledge:
         # Deletion does not reactivate older versions.
         return {"status": "deleted", "id": did}
 
-    def search(self, owner, query, *, as_of=None, start_date=None, stock_code=None, entity=None, limit=8):
+    def search(self, owner, query, *, as_of=None, start_date=None, stock_code=None, entity=None, limit=8, domains=None):
         self.ensure(owner)
         if not isinstance(query, str) or not 1 <= len(query.strip()) <= 4000 or type(limit) is not int or not 1 <= limit <= 20:
             raise ServiceError("INVALID_INPUT", "查询须非空且 limit 为 1–20")
         as_of = day(as_of or utcnow().date().isoformat())
         start_date = day(start_date) if start_date else None
+        # 空列表代表「什么都不许读」，与 None（不限制）必须区分开。
+        allowed_domains = domain_scope(domains)
         if stock_code is not None and (not isinstance(stock_code, str) or not stock_codes(stock_code, explicit=True)):
             raise ServiceError("INVALID_INPUT", "股票代码无效")
         if entity is not None and (not isinstance(entity, str) or len(entity) > 200):
@@ -663,6 +678,9 @@ class Knowledge:
             versions = con.execute("SELECT id,logical,metadata,uploaded FROM documents WHERE owner=? AND status='ready' AND logical IN (SELECT logical FROM documents WHERE owner=? AND active=1)", (owner, owner)).fetchall()
             selected = {}
             for version in versions:
+                # 权限过滤必须在排名与 limit 之前：先筛再截断，才不会被越权资料占用名额。
+                if allowed_domains is not None and domain(version["logical"]) not in allowed_domains:
+                    continue
                 meta = json.loads(version["metadata"])
                 if meta["available_date"] > as_of or (meta["document_date"] and meta["document_date"] > as_of):
                     continue
@@ -790,6 +808,7 @@ class Knowledge:
         chosen_ids = {r["chunk_id"] for r in chosen}
         return {"query": query, "as_of": as_of, "start_date": start_date, "results": chosen,
                 "groups": [g for g in groups if g["shown"]], "logical_total": len(groups), "limit": limit,
+                "domains": sorted(allowed_domains) if allowed_domains is not None else None,
                 "relations": [r for r in edges if r["chunk"] in chosen_ids], "warnings": warnings}
 
     def answer(self, owner, query, **filters):

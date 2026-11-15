@@ -121,7 +121,9 @@ def make_server(root, port=8767, master_key=None, market=None):
                     return
                 if method == "POST" and path.startswith("/a2a/"):
                     role = path.split("/")[-1]
-                    self.output(asyncio.run(A2AService(engine).dispatch(self.body(), role)))
+                    # 记忆密钥只用于知识检索这类按 owner 隔离的读取；编排入口不依赖它。
+                    self.output(asyncio.run(A2AService(engine).dispatch(self.body(), role,
+                                                                       owner_key=self.headers.get("X-Memory-Key", ""))))
                     return
                 parts = path.strip("/").split("/")
                 if len(parts) < 2 or parts[0] != "api":

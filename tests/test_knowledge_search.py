@@ -11,6 +11,7 @@ from pathlib import Path
 import httpx
 from cryptography.fernet import Fernet
 
+from stock_predict_mailer.agent_service.contracts import ServiceError
 from stock_predict_mailer.control.memory import Memory
 from stock_predict_mailer.control.server import make_server
 from stock_predict_mailer.control.store import Store
@@ -95,6 +96,18 @@ class SearchGroupingTests(unittest.TestCase):
     def test_empty_result_still_reports_scope(self):
         found = self.kb.search(self.owner, '不存在的关键词')
         self.assertEqual((found['results'], found['groups'], found['logical_total']), ([], [], 0))
+
+    def test_domain_scope_filters_before_ranking(self):
+        self.f.ready('回购.md', '供应链 风险 提示'.encode(), logical='公告/甲公司/回购')
+        self.f.ready('跟踪.md', '供应链 风险 提示'.encode(), logical='研报/中金/跟踪')
+        allowed = self.kb.search(self.owner, '供应链风险', domains=['研报'])
+        self.assertEqual({item['logical'] for item in allowed['results']}, {'研报/中金/跟踪'})
+        self.assertEqual((allowed['domains'], allowed['logical_total']), (['研报'], 1))
+        # 空列表表示什么都不许读，与「不限制」必须区分开。
+        self.assertEqual(self.kb.search(self.owner, '供应链风险', domains=[])['results'], [])
+        self.assertIsNone(self.kb.search(self.owner, '供应链风险')['domains'])
+        with self.assertRaises(ServiceError):
+            self.kb.search(self.owner, '供应链风险', domains='研报')
 
 
 class AnswerRouteTests(unittest.TestCase):

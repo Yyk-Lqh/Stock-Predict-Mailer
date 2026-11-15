@@ -62,7 +62,25 @@ uv run python -m unittest discover -s tests -p test_agent_service.py -v
 
 完整回归需要 research/trees 可选依赖；执行 `uv run python -m unittest discover -s tests -v`。项目继续使用 unittest，不引入新的服务框架。
 
+启动排查可运行 `uv run stock-predict-mailer --config config/agent-example.toml doctor`，只读检查工作区、队列、密钥和端口。结果及处理边界见[运行诊断手册](docs/runtime-diagnostics.md)；诊断不会自动启动 Worker 或恢复、重发任务。
+
+组件身份、心跳、显式后台启动、实例匹配停止和有界事件日志见[运行管理手册](docs/runtime-lifecycle.md)。可先使用 `runtime status console` 查询；未登记的旧进程不会被自动接管。
+
+加密快照、WAL 合并、密钥配套及全新目录恢复见[备份恢复手册](docs/workspace-backup.md)。`backup plan` 默认只读，`create` 需要已审阅摘要；恢复会暂停未决任务，不自动启动或重发。
+
+`db status` / `db plan` 可识别六处数据库的已知结构与升级步骤，`--rehearse --expected-plan` 只在副本中演练并回滚。参数和边界见[数据库结构手册](docs/schema-planning.md)；当前不提供原库升级操作。
+
+2026-11-15 已同步远程知识库构建更新，并适配现有运行管理、备份和结构识别。功能变化及验证见[远程更新记录](docs/remote-update-2026-11-15.md)。批量导入的 `--dry-run` 使用临时副本，不初始化来源数据库；新 owner 仅为预演身份。
+
 ## 私有知识库与独立清洗 Agent
+
+邮件统一内核、端点冻结、新旧入口兼容、历史绑定及隔离归档见[MailCore 手册](docs/mail-core-migration.md)。新邮件状态统一存储，历史记录不会自动进入待发队列。
+
+采集长任务的提交、进度、取消和恢复见[独立 Worker 手册](docs/crawler-jobs.md)；提交不联网，执行需要显式启动 Worker。
+
+单标的采集视图 → 上游预测 → 报告与本地通知的运行步骤见[单标的分析](docs/single-symbol-analysis.md)。
+
+可选股票采集 MCP 服务的安装、工作区迁移及离线验证见[采集服务手册](docs/crawler-service.md)。分阶段优化范围及验收标准见[优化路线](docs/optimization-roadmap.md)。
 
 支持数字 PDF、DOCX、UTF-8 TXT/Markdown/CSV/JSON 与 XLSX。原文件按用户加密保留，更新生成新版本；知识资料与对话记忆分开存储，复用私有访问密钥做权限隔离。检索结合关键词、可选 Embedding 和带来源及有效期的关系表，返回页码、段落或单元格位置。
 
@@ -117,4 +135,4 @@ python scripts/check_repo_hygiene.py
 - [原始审查发现与逐项修复证据](docs/backend-audit-2026-11-08.md)
 - [修复计划与实施记录](docs/backend-repair-plan-2026-11-08.md)
 
-本地验收为231项 stdlib unittest 通过，并通过实际本地 HTTP、Mock 模型和 file transport 模拟 EML 链路；不代表真实模型质量、第三方服务或邮箱收件已验证。MailCore 三队列合并保留为[独立迭代](docs/mail-core-plan.md)，上游配置测试接口、OCR 与复杂版式能力尚未实现。默认入口消费严格 v1 预测结果，不加载上游权重，知识资料不自动进入训练快照。
+控制台原验收为231项 stdlib unittest 通过，并通过实际本地 HTTP、Mock 模型和 file transport 模拟 EML 链路；后续采集与邮件迭代结果见[优化路线](docs/optimization-roadmap.md)，不代表真实模型质量、第三方服务或邮箱收件已验证。MailCore 新写入口统一已实现，历史切换边界见[邮件计划](docs/mail-core-plan.md)。上游配置测试接口、OCR 与复杂版式能力尚未实现。默认入口消费严格 v1 预测结果，不加载上游权重，知识资料不自动进入训练快照。

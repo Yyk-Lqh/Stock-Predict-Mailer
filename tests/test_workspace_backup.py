@@ -45,7 +45,7 @@ class BackupTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.base = Path(temporary.name)
+        self.base = Path(temporary.name).resolve()
         self.app, self.crawler = self.base / "app", self.base / "crawler"
         self.app.mkdir()
         self.crawler.mkdir()

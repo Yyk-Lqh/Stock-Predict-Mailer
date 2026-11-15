@@ -41,7 +41,7 @@ class SchemaTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.base = Path(temporary.name)
+        self.base = Path(temporary.name).resolve()
         self.app, self.crawler = self.base / "app", self.base / "crawler"
         self.config = self.base / "agent.toml"
         self.config.write_text('workspace="app"\n[mail]\ntransport="file"\nsender="preview@example.invalid"\n', encoding="utf-8")

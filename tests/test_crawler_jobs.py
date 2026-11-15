@@ -44,7 +44,7 @@ class QueueTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name) / "workspace"
+        self.root = Path(temporary.name).resolve() / "workspace"
         self.store = JobStore(self.root)
 
     def test_readonly_operations_create_nothing(self):
@@ -298,7 +298,7 @@ class FundamentalJobTests(unittest.TestCase):
         self.fund = fund
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
         self.store = JobStore(self.root)
         self.store.data.mkdir()
         for field, value in (("DATA_DIR", str(self.store.data)), ("POOL_FILE", str(self.store.data / "stock_data117.csv")),
@@ -410,7 +410,7 @@ class FundamentalJobTests(unittest.TestCase):
 class JobProtocolTests(unittest.IsolatedAsyncioTestCase):
     async def test_stdio_submit_read_cancel_without_worker(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary) / "workspace"
+            root = Path(temporary).resolve() / "workspace"
             args = StdioServerParameters(command=sys.executable, args=["-m", "mcp_server.server"],
                                          env=dict(os.environ, **{ENV_KEY: str(root)}))
             async with asyncio.timeout(25), stdio_client(args) as streams, ClientSession(streams[0], streams[1]) as client:

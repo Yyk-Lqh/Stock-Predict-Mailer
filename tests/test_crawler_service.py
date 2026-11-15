@@ -36,7 +36,7 @@ class CrawlerContractTests(unittest.TestCase):
 
             with patch.dict(os.environ, {ENV_KEY: str(target)}), patch("builtins.__import__", side_effect=guarded):
                 status = json.loads(server.crawler_status())
-            self.assertEqual(Path(status["pool_file"]), target / "data" / "stock_data117.csv")
+            self.assertEqual(Path(status["pool_file"]), target.resolve() / "data" / "stock_data117.csv")
             self.assertFalse(status["pool_exists"])
             self.assertEqual(status["date_policy"], "current_date")
             self.assertFalse(target.exists())
@@ -105,7 +105,7 @@ class CrawlerTransportTests(unittest.IsolatedAsyncioTestCase):
             result = await client.call_tool("crawler_status", {})
             self.assertFalse(result.isError)
             status = json.loads(result.content[0].text)
-            self.assertEqual(Path(status["pool_file"]), target / "data" / "stock_data117.csv")
+            self.assertEqual(Path(status["pool_file"]), target.resolve() / "data" / "stock_data117.csv")
             self.assertFalse(status["pool_exists"])
             self.assertFalse(target.exists())
 

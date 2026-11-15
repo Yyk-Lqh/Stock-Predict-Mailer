@@ -124,7 +124,7 @@ class CatalogTests(unittest.TestCase):
         self.catalog = catalog_crawler
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
         self.cache, self.output = self.root / "cache.json", self.root / "stocks.csv"
         for target, value in (("CACHE_FILE", str(self.cache)), ("OUTPUT_FILE", str(self.output))):
             context = patch.object(self.catalog, target, value)
@@ -254,7 +254,7 @@ class FundamentalTests(unittest.TestCase):
         self.addCleanup(context.stop)
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
         for target, value in (("DATA_DIR", str(self.root)), ("POOL_FILE", str(self.root / "pool.csv")),
                               ("OUTPUT_FILE", str(self.root / "master.csv")), ("LOG_FILE", str(self.root / "log.txt"))):
             context = patch.object(self.fund, target, value)

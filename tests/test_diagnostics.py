@@ -37,7 +37,7 @@ class DoctorTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.parent = Path(tmp.name)
+        self.parent = Path(tmp.name).resolve()
         self.root = self.parent / "app"
         self.crawler = self.parent / "crawler"
         self.cfg = {"workspace": self.root, "mail": {"transport": "file"}}

@@ -31,7 +31,7 @@ class CrawlerAnalysisTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
         self.now = utcnow().replace(microsecond=0) - timedelta(seconds=1)
         today = self.now.astimezone(ZoneInfo("Asia/Shanghai")).date()
         quarter = (today.month - 1) // 3

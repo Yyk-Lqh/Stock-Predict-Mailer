@@ -1,128 +1,128 @@
 {
   "version": 1,
-  "note": "种子库评测用例集（M9）。前 20 条对应种子库清单模板第八节的查询，可按语料改写。expect.logical 留空时只判「命中期望域 + 关键词」；灌完库后把真实槽位（如 公告/600000.SH/2026年第三季度报告）填进去，判定会收紧为槽位召回。critical 表示结构性硬指标：任何一条失败，整轮直接判 fail。",
+  "note": "种子库评测用例集（M9）。前 20 条对应种子库清单模板第八节的查询，槽位按 2026-11-15 的 70 份语料标注：`expect.logical` 一旦填上，判定从「命中期望域 + 关键词」收紧为「该槽位必须在结果里」，`min_recall` 默认 1.0；换语料时槽位不存在记 `blocked`，不计入通过率。`critical` 表示结构性硬指标：任何一条失败，整轮直接判 fail。70 份语料基线为 17/20（MRR 0.95、槽位召回 0.85）：q02、q14、q18 三条已知漏检均源于查询里没有实体锚点，用 note 记录根因而不改判定，避免把「用例太松」当成「检索可用」；q12、q17 的期望槽位在扩容后被证伪并已改正。",
   "cases": [
     {
       "id": "q01",
       "query": "浦发银行 2026 年三季度不良率",
-      "expect": {"domains": ["公告", "财报"], "keywords": ["不良率"]},
+      "expect": {"logical": ["公告/600000.SH/2026年第三季度报告"], "domains": ["公告", "财报"], "keywords": ["不良率"]},
       "note": "单指标"
     },
     {
       "id": "q02",
       "query": "该公司三季报营收同比增速",
-      "expect": {"domains": ["财报"], "keywords": ["营业收入"]},
-      "note": "单指标"
+      "expect": {"logical": ["财报/600000.SH/2026Q3"], "domains": ["财报"], "keywords": ["营业收入"]},
+      "note": "单指标。70 份语料后为已知漏检：『该公司』无实体锚点；且口语「三季报/营收」不命中结构化槽位（xlsx 写作 2026Q3、正文写「营业收入」），Top-8 被 15 份公告占满"
     },
     {
       "id": "q03",
       "query": "半导体设备国产化率最新进展",
-      "expect": {"domains": ["研报"], "keywords": ["国产化率"]},
+      "expect": {"logical": ["研报/中金公司/半导体设备国产化率跟踪"], "domains": ["研报"], "keywords": ["国产化率"]},
       "note": "主题召回，硬指标",
       "critical": true
     },
     {
       "id": "q04",
       "query": "动力电池产能利用率与扩产节奏",
-      "expect": {"domains": ["产业"], "keywords": ["产能利用率"]},
+      "expect": {"logical": ["产业/电力设备/动力电池产能格局"], "domains": ["产业"], "keywords": ["产能利用率"]},
       "note": "主题"
     },
     {
       "id": "q05",
       "query": "利率走廊上限工具的利率是多少",
-      "expect": {"domains": ["宏观"], "keywords": ["利率走廊"]},
+      "expect": {"logical": ["宏观/货币政策/利率走廊机制说明"], "domains": ["宏观"], "keywords": ["利率走廊"]},
       "note": "机制"
     },
     {
       "id": "q06",
       "query": "中微公司的关键零部件是否单一来源",
-      "expect": {"domains": ["供应链"], "keywords": ["供应商"], "relation": true},
+      "expect": {"logical": ["供应链/中微公司/关键零部件供应关系"], "domains": ["供应链"], "keywords": ["供应商"], "relation": true},
       "note": "关系检索，硬指标：要求返回结构化关系证据",
       "critical": true
     },
     {
       "id": "q07",
-      "query": "哪些公司被列为某公司的前五大供应商",
-      "expect": {"domains": ["供应链"], "keywords": ["供应商"], "relation": true},
-      "note": "反向关系，硬指标：供应商关系表须能被关系检索命中",
+      "query": "中微公司的前五大供应商是哪些公司",
+      "expect": {"logical": ["供应链/中微公司/关键零部件供应关系"], "domains": ["供应链"], "keywords": ["供应商"], "relation": true},
+      "note": "反向关系，硬指标：以客户为锚点反查供应商。原写法「某公司」是占位符——关系图只从问题里出现过的实体向外扩散，锚点缺失时必然取不到关系行（2026-11-15 试灌暴露）",
       "critical": true
     },
     {
       "id": "q08",
       "query": "资料评级 A/B/C 的判定标准",
-      "expect": {"domains": ["制度"], "keywords": ["评级"]},
+      "expect": {"logical": ["制度/合规/资料评级与引用规范"], "domains": ["制度"], "keywords": ["评级"]},
       "note": "规则"
     },
     {
       "id": "q09",
       "query": "引用过期资料需要怎么标注",
-      "expect": {"domains": ["制度"], "keywords": ["过期"]},
+      "expect": {"logical": ["制度/合规/资料评级与引用规范"], "domains": ["制度"], "keywords": ["过期"]},
       "note": "规则"
     },
     {
       "id": "q10",
       "query": "自由现金流折现的永续增长率取值口径",
-      "expect": {"domains": ["方法"], "keywords": ["永续增长率"]},
+      "expect": {"logical": ["方法/估值/自由现金流折现口径"], "domains": ["方法"], "keywords": ["永续增长率"]},
       "note": "口径"
     },
     {
       "id": "q11",
       "query": "毛利率是否包含运费",
-      "expect": {"domains": ["方法"], "keywords": ["运费"]},
+      "expect": {"logical": ["方法/估值/自由现金流折现口径"], "domains": ["方法"], "keywords": ["运费"]},
       "note": "口径"
     },
     {
       "id": "q12",
       "query": "2026 年集采对医药行业的影响",
-      "expect": {"domains": ["产业", "研报"], "keywords": ["集采"]},
-      "note": "主题"
+      "expect": {"logical": ["产业/医药生物/集采常态化影响", "研报/招商证券/医药集采续约规则变化"], "domains": ["产业", "研报"], "keywords": ["集采"]},
+      "note": "主题。70 份语料后改正槽位：集采已有专门文档（产业/医药生物 + 招商证券研报），原期望的「动力电池产能格局」只是 10 份语料期唯一提到集采的地方"
     },
     {
       "id": "q13",
       "query": "出口管制对设备交付的影响",
-      "expect": {"domains": ["产业", "供应链"], "keywords": ["出口管制"]},
+      "expect": {"logical": ["研报/中金公司/半导体设备国产化率跟踪"], "domains": ["产业", "供应链"], "keywords": ["出口管制"]},
       "note": "风险"
     },
     {
       "id": "q14",
       "query": "该公司是否存在商誉减值风险",
-      "expect": {"domains": ["公告", "财报"], "keywords": ["商誉"]},
-      "note": "风险"
+      "expect": {"logical": ["财报/600000.SH/2026Q3"], "domains": ["公告", "财报"], "keywords": ["商誉"]},
+      "note": "风险。70 份语料后为已知漏检：指代「该公司」缺失；且「商誉」只出现在财报 csv 的零值说明里，公告正文不含该词"
     },
     {
       "id": "q15",
       "query": "控股股东是否发生变更",
-      "expect": {"domains": ["公告"], "keywords": ["控股股东"]},
+      "expect": {"logical": ["公告/600000.SH/2026年第三季度报告"], "domains": ["公告"], "keywords": ["控股股东"]},
       "note": "事件"
     },
     {
       "id": "q16",
       "query": "定增募资的用途",
-      "expect": {"domains": ["公告"], "keywords": ["募集资金"]},
+      "expect": {"logical": ["公告/600000.SH/2026年第三季度报告"], "domains": ["公告"], "keywords": ["募集资金"]},
       "note": "事件"
     },
     {
       "id": "q17",
       "query": "CPI 分项权重怎么调整的",
-      "expect": {"domains": ["宏观"], "keywords": ["权重"]},
-      "note": "机制"
+      "expect": {"logical": ["宏观/物价/CPI分项权重调整说明"], "domains": ["宏观"], "keywords": ["权重"]},
+      "note": "机制。70 份语料后改正槽位：CPI 权重有专门文档，原期望的「利率走廊机制说明」只是把 CPI 当成第四节塞进去的临时写法"
     },
     {
       "id": "q18",
       "query": "某产品价格今年涨了多少",
-      "expect": {"domains": ["产业"], "keywords": ["价格"]},
-      "note": "数据"
+      "expect": {"logical": ["产业/电力设备/动力电池产能格局"], "domains": ["产业"], "keywords": ["价格"]},
+      "note": "数据。70 份语料后为已知漏检：「某产品/今年」无锚点，光伏、快递、稀土任何一份产业资料都算可比，期望槽位不再唯一"
     },
     {
       "id": "q19",
       "query": "库存周期当前处于什么阶段",
-      "expect": {"domains": ["产业", "研报"], "keywords": ["库存"]},
+      "expect": {"logical": ["产业/电力设备/动力电池产能格局"], "domains": ["产业", "研报"], "keywords": ["库存"]},
       "note": "判断"
     },
     {
       "id": "q20",
       "query": "回测时如何判断资料当时可用",
-      "expect": {"domains": ["方法", "制度"], "keywords": ["回测", "可用"]},
+      "expect": {"logical": ["制度/合规/资料评级与引用规范", "方法/估值/自由现金流折现口径"], "domains": ["方法", "制度"], "keywords": ["回测", "可用"]},
       "note": "口径，硬指标：检验 available_date 口径是否真的被检索利用",
       "critical": true
     }

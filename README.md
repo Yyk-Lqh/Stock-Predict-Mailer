@@ -91,6 +91,8 @@ uv run stock-predict-mailer --config config/local.toml knowledge-worker --once
 - [私有知识库：导入、索引、检索和删除](docs/private-knowledge.md)
 - [语义清洗：模型配置、证据校验与审批](docs/cleaning-agent.md)
 - [清洗模型实施计划与边界](docs/cleaning-model-plan.md)
+- [试灌报告：10 份样本 × 7 种格式](docs/试灌报告.md)
+- [语料扩容报告：70 份语料下的检索基线](docs/语料扩容报告.md)
 
 扫描件 OCR、复杂版式与表格的自动准确解析、简称消歧和真实模型准确率仍需后续验证；当前协议验收使用本地模拟服务与合成资料。单机工作区的片段和全文索引为明文，应保留本机磁盘访问控制，不宣称互联网多租户隔离或磁盘取证级擦除。
 

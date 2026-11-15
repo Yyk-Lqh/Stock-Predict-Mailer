@@ -2,6 +2,18 @@
 
 ## 未发布（分支 `scene/56-agent-app`）
 
+- 种子库试灌跑通「dry-run 四数 → 正式导入 → 评测」全流程，10 份样本覆盖 8 个域与 7 种格式。
+  - dry-run：`scanned=10`、`queued=10`、`skipped=0`、`failed=0`、`available_date_inferred=0`，四项都过模板的通过线；正式导入 9 份 `ready`，扫描件按设计 `REVIEW_REQUIRED`（不算通过，也不算静默失败）。
+  - `examples/knowledge-eval/cases.json` 的 20 条用例补上真实槽位：只判域 + 关键词时 `mean_recall` 无处可算，填了槽位后才真正校验「取回的是不是那一份」。
+  - q07 的查询从「某公司」改为点名实体：关系图只从问题里出现过的实体向外扩散，占位符锚点为空，`relation` 断言必然失败。
+  - 新增 `docs/试灌报告.md`：格式 × 结果 × 切片数、dry-run 四个数、时点边界、以及 6 条问题（PDF 表格失去字段对应、`.xlsx` 实际读取全部 sheet、按行切片导致「文档里有但检索里没有」等）。
+- 种子库语料扩容到 70 份（公告 15 / 财报 12 / 研报 12 / 产业 10 / 宏观 8 / 供应链 5 / 制度 4 / 方法 4），并重跑同一份评测用例。
+  - dry-run 四个数与 10 份口径一致：`scanned=70`、`queued=70`、`skipped=0`、`failed=0`、`available_date_inferred=0`；正式导入 69 份 `ready` + 1 份扫描件 `REVIEW_REQUIRED`，580 个切片、26 条关系行。
+  - 首次在真实规模下验证到三件事：同一 `logical` 的修订版自动顶替旧版（制度槽位 2 版 1 活动）、过期资料被标 `expired` 但不被排除、关系表只从结构化文件产生。
+  - 评测基线由 20/20 回落到 **17/20（MRR 0.95、槽位召回 0.85）**，四条 `critical` 全过、无时点泄漏。三条漏检（q02/q14/q18）根因均为查询缺实体锚点与口语别名，已在用例 `note` 中记录，不改判定以免把「用例太松」误当「检索可用」。
+  - q12「集采」与 q17「CPI 权重」的期望槽位被扩容证伪并改正：原来指向的只是 10 份语料里唯一提及该话题的文件。
+  - 新增 `docs/语料扩容报告.md`：规模结构、四个数、分域通过率、三条漏检根因、切片粒度不均（1–24 片）导致的排序偏差。
+- 323 项 unittest 通过；ruff、仓库卫生与控制台 bundle 检查通过。
 - 新增 `knowledge-eval`：用标注用例集给检索打分，输出可重复的通过率、MRR 与按域分布。
   - 用例文件为 `{"version":1,"cases":[...]}`，支持 `expect.logical`（可写前缀）、`expect.domains`、`expect.keywords`、`expect.relation`/`inference`/`conflict`、`min_recall`、`critical`；未知字段与重复 id 直接报错，避免拼错键被当成未命中。
   - 语料里没有的槽位记为 `blocked` 并排除在通过率之外，与 `fail` 分开：补语料与调检索是相反的修法。`blocked` 区分 `absent`、`pending` 等真实状态。

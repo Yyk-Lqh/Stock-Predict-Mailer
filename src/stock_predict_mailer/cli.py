@@ -10,7 +10,7 @@ from pathlib import Path
 from .agent_service.adapters import adapter
 from .agent_service.analysis import AnalysisAgent
 from .agent_service.config import load
-from .agent_service.contracts import ServiceError
+from .agent_service.contracts import ServiceError, prediction
 from .agent_service.mail import MailService
 from .agent_service.reporting import save_report
 from .naming import COMMAND, PROJECT_NAME, SUMMARY_ZH, banner
@@ -45,6 +45,27 @@ def main(argv=None):
     listing = sub.add_parser("mail-list", help="列出邮件队列（最新入队优先）")
     listing.add_argument("--limit", type=int, default=20)
     listing.add_argument("--status", choices=("pending", "retry", "failed", "uncertain", "submitted", "simulated"))
+    migration = sub.add_parser("mail-migrate", help="默认只读迁移预演；显式 apply 仅导入隔离归档，不投递")
+    migration.add_argument("--source-workspace", type=Path)
+    migration.add_argument("--principal", default="owner")
+    migration.add_argument("--limit", type=int, default=1000)
+    migration.add_argument("--apply", action="store_true")
+    migration.add_argument("--target-workspace", type=Path)
+    migration.add_argument("--expected-plan")
+    archive = sub.add_parser("mail-archive", help="只读列出隔离归档，不进入待发队列")
+    archive.add_argument("--target-workspace", type=Path)
+    archive.add_argument("--principal", default="owner")
+    archive.add_argument("--limit", type=int, default=20)
+    for name in ("mail-binding-plan", "mail-bind", "legacy-binding-plan", "legacy-bind"):
+        command = sub.add_parser(name, help="只读审阅或显式确认端点绑定；不投递邮件")
+        command.add_argument("message_id")
+        command.add_argument("--principal", default="owner")
+        if name.endswith("-bind"):
+            command.add_argument("--expected-plan", required=True)
+    sub.add_parser("mail-history-plan", help="只读核对旧 MCP 回执切换界限")
+    history_ack = sub.add_parser("mail-history-ack", help="显式记录旧 MCP 回执及新预测时间界限；不投递")
+    history_ack.add_argument("--expected-plan", required=True)
+    history_ack.add_argument("--not-before", required=True)
     drain = sub.add_parser("mail-drain", help="投递所有到期邮件；由调度器周期调用")
     drain.add_argument("--limit", type=int, default=20)
     resolve = sub.add_parser("mail-resolve", help="人工确认 uncertain 邮件的真实结果")
@@ -79,8 +100,56 @@ def main(argv=None):
     acl.add_argument("--domains", help="逗号分隔的一级域；传空字符串表示清空，该角色立即失去读取权")
     console = sub.add_parser("console", help="启动本机模型、MCP 与 Agent 配置控制台")
     console.add_argument("--port", type=int, default=8767)
+    doctor = sub.add_parser("doctor", help="只读检查工作区、数据库、任务、密钥与端口；不启动或恢复服务")
+    doctor.add_argument("--port", type=int, default=8767)
+    doctor.add_argument("--crawler-workspace", type=Path)
+    doctor.add_argument("--skip-port-check", action="store_true")
+    runtime = sub.add_parser("runtime", help="组件状态、显式后台启动、实例匹配停止与有界生命周期日志")
+    runtime_sub = runtime.add_subparsers(dest="runtime_action", required=True)
+    for name in ("status", "start", "stop", "logs"):
+        command = runtime_sub.add_parser(name)
+        command.add_argument("component", choices=("console", "knowledge_worker", "crawler_worker"))
+        command.add_argument("--crawler-workspace", type=Path)
+        if name == "start":
+            command.add_argument("--port", type=int, default=8767)
+            command.add_argument("--poll", type=float, default=2)
+        if name == "stop":
+            command.add_argument("--instance", required=True)
+            command.add_argument("--wait", type=float, default=10)
+        if name == "logs":
+            command.add_argument("--limit", type=int, default=50)
+    backup = sub.add_parser("backup", help="只读备份计划、显式加密快照、认证校验及隔离恢复")
+    backup_sub = backup.add_subparsers(dest="backup_action", required=True)
+    for name in ("plan", "create", "verify", "restore"):
+        command = backup_sub.add_parser(name)
+        if name in ("plan", "create"):
+            command.add_argument("--crawler-workspace", type=Path)
+            command.add_argument("--port", type=int, default=8767)
+        if name == "create":
+            command.add_argument("--output", type=Path, required=True)
+            command.add_argument("--expected-plan", required=True)
+        if name in ("verify", "restore"):
+            command.add_argument("--archive", type=Path, required=True)
+        if name == "restore":
+            command.add_argument("--target", type=Path, required=True)
+        if name != "plan":
+            command.add_argument("--key-env")
+    db = sub.add_parser("db", help="只读数据库结构/版本报告、已知迁移计划及隔离副本演练")
+    db_sub = db.add_subparsers(dest="db_action", required=True)
+    for name in ("status", "plan"):
+        command = db_sub.add_parser(name)
+        command.add_argument("--store", choices=("all", "mail", "control", "development", "knowledge", "legacy", "crawler"), default="all")
+        command.add_argument("--crawler-workspace", type=Path)
+        if name == "plan":
+            command.add_argument("--rehearse", action="store_true")
+            command.add_argument("--expected-plan")
     args = parser.parse_args(argv)
     try:
+        if args.command == "backup" and args.backup_action in ("verify", "restore"):
+            from .operations import backup
+            result = backup.verify(args.archive, key_env=args.key_env) if args.backup_action == "verify" else backup.restore(args.archive, args.target, key_env=args.key_env)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
         if args.command == "predict-rf":
             from .agent_service.random_forest import MODEL_PATH, predict_file
             from .core import atomic_write
@@ -93,6 +162,61 @@ def main(argv=None):
             print(json.dumps(result, ensure_ascii=False))
             return 0
         cfg = load(args.config)
+        if args.command == "db":
+            from .operations import schema_planning
+            if args.db_action == "status":
+                result = schema_planning.report(cfg, crawler_workspace=args.crawler_workspace, store=args.store)
+            else:
+                result = schema_planning.plan(cfg, crawler_workspace=args.crawler_workspace, store=args.store, rehearse=args.rehearse, expected_plan=args.expected_plan)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 2 if not result["ready"] else 0 if result["mode"] == "isolated_rehearsal" else 1 if result["changes"] else 0
+        if args.command == "backup":
+            from .operations import backup
+            if args.backup_action == "plan":
+                result = backup.plan(cfg, args.config, crawler_workspace=args.crawler_workspace, port=args.port)
+            else:
+                result = backup.create(cfg, args.config, args.output, args.expected_plan, crawler_workspace=args.crawler_workspace, port=args.port, key_env=args.key_env)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0 if result.get("ready", True) else 2
+        if args.command == "runtime":
+            from .operations import components, lifecycle
+            root = lifecycle.selected_root(cfg, args.component, args.crawler_workspace)
+            if args.runtime_action == "start":
+                result = lifecycle.start(cfg, args.config, args.component, crawler_workspace=args.crawler_workspace, port=args.port, poll=args.poll)
+            elif args.runtime_action == "stop":
+                result = lifecycle.stop(root, args.component, args.instance, args.wait)
+            elif args.runtime_action == "logs":
+                result = {"events": components.logs(root, args.component, args.limit)}
+            else:
+                result = components.status(root, args.component)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            state = result.get("state")
+            if state in ("invalid_record", "different_host", "pid_reused", "failed", "dead"):
+                return 2
+            return 1 if result.get("timed_out") or state in ("unknown", "stale", "clock_skew", "starting", "transition", "stopping", "instance_changed") else 0
+        if args.command == "doctor":
+            from .operations.diagnostics import diagnose
+            result = diagnose(cfg, crawler_workspace=args.crawler_workspace, port=args.port, check_port=not args.skip_port_check)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return {"ok": 0, "warning": 1, "error": 2}[result["status"]]
+        if args.command == "mail-migrate":
+            from .mail_core.migration import import_archive, plan_migration
+            source = args.source_workspace or cfg["workspace"]
+            if args.apply:
+                if not args.target_workspace or not args.expected_plan:
+                    raise ServiceError("INVALID_INPUT", "apply 需要独立 target-workspace 与已审阅 expected-plan")
+                result = import_archive(source, args.target_workspace, args.expected_plan, args.principal, args.limit)
+                print(json.dumps({"mode": "archive_import", "result": result}, ensure_ascii=False, indent=2))
+                return 0
+            if args.target_workspace or args.expected_plan:
+                raise ServiceError("INVALID_INPUT", "target-workspace/expected-plan 仅用于显式 apply")
+            plan = plan_migration(source, args.principal, args.limit)
+            print(json.dumps({"mode": "dry_run", "plan": plan}, ensure_ascii=False, indent=2))
+            return 0 if plan["ready"] else 2
+        if args.command == "mail-archive":
+            from .mail_core.migration import list_archive
+            print(json.dumps(list_archive(args.target_workspace or cfg["workspace"], args.principal, args.limit), ensure_ascii=False, indent=2))
+            return 0
         if args.command == "knowledge-worker":
             from .private_knowledge.worker import run
             return run(cfg["workspace"], once=args.once, poll=args.poll)
@@ -135,17 +259,37 @@ def main(argv=None):
             print(json.dumps(report, ensure_ascii=False, indent=2))
             return 0 if report["verdict"] == "pass" else 2
         mail = MailService(cfg["workspace"], cfg["mail"], cfg["timezone"], analysis_settings=cfg["agent"])
+        if args.command in ("mail-history-plan", "mail-history-ack"):
+            from .mail_core.history import acknowledge, review
+            result = review(cfg["workspace"]) if args.command == "mail-history-plan" else acknowledge(mail, args.expected_plan, args.not_before)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+        if args.command in ("mail-binding-plan", "mail-bind", "legacy-binding-plan", "legacy-bind"):
+            from .core import Config
+            mail.cfg = Config(cfg["workspace"], principal=args.principal)
+            if args.command.startswith("legacy-"):
+                from .mail_core.legacy import bind_old, binding_plan
+                result = binding_plan(mail.cfg, args.message_id) if args.command.endswith("-plan") else bind_old(mail.cfg, args.message_id, args.expected_plan)
+            else:
+                result = mail.binding_plan(args.message_id) if args.command.endswith("-plan") else mail.bind(args.message_id, args.expected_plan)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
         if args.command == "run":
             p = adapter(cfg["prediction"]["adapter"], {**cfg["prediction"], "role": "prediction"}).fetch()
+            p = prediction(p, max_age=cfg["agent"].get("max_age_seconds", 86400))
             ctx = cfg["context"]
-            c = None if ctx["adapter"] == "none" else adapter(ctx["adapter"], {**ctx, "role": "context"}).fetch()
+            c = None if ctx["adapter"] == "none" else adapter(ctx["adapter"], {
+                **ctx, "role": "context", "prediction": p, "max_age_seconds": cfg["agent"].get("max_age_seconds", 86400)}).fetch()
             analysis = AnalysisAgent(cfg["agent"]).analyze(p, c)
             folder = save_report(cfg["workspace"], analysis, cfg["timezone"])
             result = mail.enqueue(analysis, args.recipient or cfg["mail"]["recipient"])
             if args.send:
                 result = mail.deliver(result["id"])
-            print(json.dumps({"analysis_id": analysis["analysis_id"], "analysis_status": analysis["status"],
-                              "report": str(folder / "report.html"), "mail": result}, ensure_ascii=False, indent=2))
+            output = {"analysis_id": analysis["analysis_id"], "analysis_status": analysis["status"],
+                      "report": str(folder / "report.html"), "mail": result}
+            if "input_evidence" in analysis:
+                output["input_snapshot"] = str(cfg["workspace"] / "input-snapshots" / (analysis["input_evidence"]["snapshot_id"] + ".json"))
+            print(json.dumps(output, ensure_ascii=False, indent=2))
             return 0 if result["status"] in ("pending", "submitted", "simulated") else 2
         if args.command == "mail-list":
             print(json.dumps(mail.listing(args.limit, args.status), ensure_ascii=False, indent=2))

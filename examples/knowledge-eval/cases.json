@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "note": "种子库评测用例集（M9）。前 20 条对应种子库清单模板第八节的查询，可按语料改写。expect.logical 留空时只判「命中期望域 + 关键词」；灌完库后把真实槽位（如 公告/600000.SH/2026年第三季度报告）填进去，判定会收紧为槽位召回。critical 表示结构性硬指标：任何一条失败，整轮直接判 fail。",
+  "cases": [
+    {
+      "id": "q01",
+      "query": "浦发银行 2026 年三季度不良率",
+      "expect": {"domains": ["公告", "财报"], "keywords": ["不良率"]},
+      "note": "单指标"
+    },
+    {
+      "id": "q02",
+      "query": "该公司三季报营收同比增速",
+      "expect": {"domains": ["财报"], "keywords": ["营业收入"]},
+      "note": "单指标"
+    },
+    {
+      "id": "q03",
+      "query": "半导体设备国产化率最新进展",
+      "expect": {"domains": ["研报"], "keywords": ["国产化率"]},
+      "note": "主题召回，硬指标",
+      "critical": true
+    },
+    {
+      "id": "q04",
+      "query": "动力电池产能利用率与扩产节奏",
+      "expect": {"domains": ["产业"], "keywords": ["产能利用率"]},
+      "note": "主题"
+    },
+    {
+      "id": "q05",
+      "query": "利率走廊上限工具的利率是多少",
+      "expect": {"domains": ["宏观"], "keywords": ["利率走廊"]},
+      "note": "机制"
+    },
+    {
+      "id": "q06",
+      "query": "中微公司的关键零部件是否单一来源",
+      "expect": {"domains": ["供应链"], "keywords": ["供应商"], "relation": true},
+      "note": "关系检索，硬指标：要求返回结构化关系证据",
+      "critical": true
+    },
+    {
+      "id": "q07",
+      "query": "哪些公司被列为某公司的前五大供应商",
+      "expect": {"domains": ["供应链"], "keywords": ["供应商"], "relation": true},
+      "note": "反向关系，硬指标：供应商关系表须能被关系检索命中",
+      "critical": true
+    },
+    {
+      "id": "q08",
+      "query": "资料评级 A/B/C 的判定标准",
+      "expect": {"domains": ["制度"], "keywords": ["评级"]},
+      "note": "规则"
+    },
+    {
+      "id": "q09",
+      "query": "引用过期资料需要怎么标注",
+      "expect": {"domains": ["制度"], "keywords": ["过期"]},
+      "note": "规则"
+    },
+    {
+      "id": "q10",
+      "query": "自由现金流折现的永续增长率取值口径",
+      "expect": {"domains": ["方法"], "keywords": ["永续增长率"]},
+      "note": "口径"
+    },
+    {
+      "id": "q11",
+      "query": "毛利率是否包含运费",
+      "expect": {"domains": ["方法"], "keywords": ["运费"]},
+      "note": "口径"
+    },
+    {
+      "id": "q12",
+      "query": "2026 年集采对医药行业的影响",
+      "expect": {"domains": ["产业", "研报"], "keywords": ["集采"]},
+      "note": "主题"
+    },
+    {
+      "id": "q13",
+      "query": "出口管制对设备交付的影响",
+      "expect": {"domains": ["产业", "供应链"], "keywords": ["出口管制"]},
+      "note": "风险"
+    },
+    {
+      "id": "q14",
+      "query": "该公司是否存在商誉减值风险",
+      "expect": {"domains": ["公告", "财报"], "keywords": ["商誉"]},
+      "note": "风险"
+    },
+    {
+      "id": "q15",
+      "query": "控股股东是否发生变更",
+      "expect": {"domains": ["公告"], "keywords": ["控股股东"]},
+      "note": "事件"
+    },
+    {
+      "id": "q16",
+      "query": "定增募资的用途",
+      "expect": {"domains": ["公告"], "keywords": ["募集资金"]},
+      "note": "事件"
+    },
+    {
+      "id": "q17",
+      "query": "CPI 分项权重怎么调整的",
+      "expect": {"domains": ["宏观"], "keywords": ["权重"]},
+      "note": "机制"
+    },
+    {
+      "id": "q18",
+      "query": "某产品价格今年涨了多少",
+      "expect": {"domains": ["产业"], "keywords": ["价格"]},
+      "note": "数据"
+    },
+    {
+      "id": "q19",
+      "query": "库存周期当前处于什么阶段",
+      "expect": {"domains": ["产业", "研报"], "keywords": ["库存"]},
+      "note": "判断"
+    },
+    {
+      "id": "q20",
+      "query": "回测时如何判断资料当时可用",
+      "expect": {"domains": ["方法", "制度"], "keywords": ["回测", "可用"]},
+      "note": "口径，硬指标：检验 available_date 口径是否真的被检索利用",
+      "critical": true
+    }
+  ]
+}

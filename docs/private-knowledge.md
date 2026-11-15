@@ -46,6 +46,8 @@ uv run stock-predict-mailer --config config/local.toml knowledge-worker --once
 
 整批资料用 `knowledge-import <目录>`，同样只入队，`--process` 才顺带跑完队列：`--write-manifest` 生成清单骨架，填好后 `--dry-run` 核对计划，再正式导入。清单存在时以其为准，未登记文件不入库；`available_date` 依次取清单、`--available`、`document_date`，三者皆无则逐文件失败，`--assume-available-today` 是唯一显式覆盖方式。重复导入按 `(logical, 内容哈希)` 跳过。
 
+质量基线用 `knowledge-eval <用例.json>`：逐条跑 `search()`（加 `--answer` 则跑 `answer()`）并按标注判分，输出 `totals`/`metrics`/`by_domain`/`gates`。语料里没有的槽位记为 `blocked` 且不计入通过率，与 `fail` 分开；返回内容若违反 `as_of` 过滤则整体判 `unsafe`。判分只用字符串匹配，不调用模型。用例格式与指标含义见 `docs/知识库与报告.md`。
+
 资料保存在 `<workspace>/private-knowledge/knowledge.sqlite3` 及用户子目录；与 control.sqlite3 的对话记忆不同。原文件和 API key 用现有主密钥加密，片段/FTS/元数据为本机明文索引，需依靠工作区磁盘权限保护。备份时须保留原文件、索引、control.sqlite3 的用户身份以及外部保存的原主密钥。逻辑删除会移除当前索引记录和加密文件，不宣称磁盘取证级安全擦除。
 
 ## HTTP 接口

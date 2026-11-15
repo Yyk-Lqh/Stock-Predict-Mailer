@@ -2,6 +2,14 @@
 
 ## 未发布（分支 `scene/56-agent-app`）
 
+- 新增 `knowledge-eval`：用标注用例集给检索打分，输出可重复的通过率、MRR 与按域分布。
+  - 用例文件为 `{"version":1,"cases":[...]}`，支持 `expect.logical`（可写前缀）、`expect.domains`、`expect.keywords`、`expect.relation`/`inference`/`conflict`、`min_recall`、`critical`；未知字段与重复 id 直接报错，避免拼错键被当成未命中。
+  - 语料里没有的槽位记为 `blocked` 并排除在通过率之外，与 `fail` 分开：补语料与调检索是相反的修法。`blocked` 区分 `absent`、`pending` 等真实状态。
+  - `gates` 单独断言时点过滤：任何返回片段的 `available_date` 晚于 `as_of` 即判 `unsafe`，因为泄漏意味着回测无法复现，不该只是扣分。
+  - `critical` 用例失败即整轮 `fail`；退出码 0 仅对应 `pass`，其余返回 2，可直接进流水线。
+  - `--answer` 改评 `answer()`，额外校验 `mode=evidence_extract`、推断与冲突字段；判分全部是字符串匹配，不调用模型。
+  - 附 `examples/knowledge-eval/cases.json`：种子库清单模板第八节 20 条查询的机器可读版本，其中 3/6/7/20 标为 `critical`。
+  - 323 项 unittest 通过（新增 20 项：槽位前缀、域不符、部分召回、blocked 三态、待处理修订不遮蔽活动版本、泄漏门、关系与推断断言、阈值与 critical 判定、用例与代码校验、示例集可解析）。
 - 新增 A2A 只读知识检索 `knowledge/search`，按角色白名单限定可读的一级域。
   - `POST /a2a/{main|prediction|risk|advice}` 新增 JSON-RPC 方法，参数与 `/api/knowledge/search` 同名同义；返回体额外回显 `role`、`effect="read"`、`domains`。
   - 三道门：必须带 `X-Memory-Key`（Bearer 令牌不携带资料身份）、角色白名单非空（默认为空即拒绝）、白名单只能由 `knowledge-acl` 改（请求里带 `domains` 报 INVALID_PARAMS）。

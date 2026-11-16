@@ -19,6 +19,9 @@ from ..agent_service.reporting import render
 from ..naming import env
 from ..operations.components import Component
 from .a2a import SESSION_COOKIE, A2AService, card
+from .forecast_preview import preview as forecast_preview
+from .forecast_views import detail as forecast_detail
+from .forecast_views import listing as forecast_listing
 from .market_feed import MarketFeed
 from .orchestrator import Orchestrator
 from .store import Store
@@ -131,6 +134,20 @@ def make_server(root, port=8767, master_key=None, market=None):
                 if len(parts) < 2 or parts[0] != "api":
                     raise ServiceError("NOT_FOUND", "接口不存在")
                 kind = parts[1]
+                if kind == "forecasts":
+                    if method != "GET" or len(parts) != 2:
+                        raise ServiceError("NOT_FOUND", "预测列表仅支持只读查询")
+                    query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                    if set(query) - {"before", "limit", "state"} or any(len(values) != 1 for values in query.values()):
+                        raise ServiceError("INVALID_INPUT", "预测列表参数无效")
+                    try:
+                        before = int(query.get("before", [str(2**63 - 1)])[0])
+                        limit = int(query.get("limit", ["20"])[0])
+                    except ValueError:
+                        raise ServiceError("INVALID_INPUT", "分页参数须为整数") from None
+                    owner = engine.memory.owner(self.headers["X-Memory-Key"]) if self.headers.get("X-Memory-Key") else None
+                    self.output(forecast_listing(store, owner, before=before, limit=limit, state=query.get("state", ["all"])[0]))
+                    return
                 if kind == "knowledge":
                     owner = engine.memory.owner(self.headers.get("X-Memory-Key", ""))
                     kb, route = engine.knowledge, parts[2:]
@@ -272,7 +289,15 @@ def make_server(root, port=8767, master_key=None, market=None):
                     if len(parts) >= 3 and (owner := engine.memory.task_owner(parts[2])):
                         if engine.memory.owner(self.headers.get("X-Memory-Key", "")) != owner:
                             raise ServiceError("FORBIDDEN", "此任务属于其他会话所有者")
-                    if method == "POST" and len(parts) == 2:
+                    if method == "POST" and len(parts) == 5 and parts[3:] == ["forecast", "preview"]:
+                        if urlsplit(self.path).query:
+                            raise ServiceError("INVALID_INPUT", "预览参数须通过 JSON 请求体提供")
+                        self.output(forecast_preview(store, parts[2], self.body()))
+                    elif method == "GET" and len(parts) == 4 and parts[3] == "forecast":
+                        if urlsplit(self.path).query:
+                            raise ServiceError("INVALID_INPUT", "任务预测详情不接受查询参数")
+                        self.output(forecast_detail(store, parts[2]))
+                    elif method == "POST" and len(parts) == 2:
                         payload = self.body()
                         owner = engine.memory.owner(self.headers.get("X-Memory-Key", "")) if payload.get("conversation_id") is not None else None
                         self.output(engine.submit(payload, owner), 202)

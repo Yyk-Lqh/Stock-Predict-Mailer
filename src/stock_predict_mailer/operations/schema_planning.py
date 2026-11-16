@@ -138,8 +138,8 @@ def report(cfg, *, crawler_workspace=None, store="all"):
     return {"schema_version": "1", "app_version": version(), "catalogue_revision": catalog["catalogue_revision"], "catalogue_id": identity(catalog),
             "sqlite_version": sqlite3.sqlite_version, "generated_at": utcnow().isoformat(), "mode": "read_only_schema_report", "state": state,
             "ready": not blocked, "changes": pending, "databases": databases, "source_writes": 0,
-            "limitations": ["版本为已知结构推断，未给来源写入版本标记。", "不验证业务正文或解密列；各库分别取副本，不保证跨库同一时点。",
-                            "未知对象、约束/索引漂移或未登记版本会阻断；未使用的可选组不强制初始化。", "没有 apply 操作；实际迁移需要独立备份、停写和显式事务方案。"]}
+            "limitations": ["未登记版本使用结构推断，已登记版本仍需结构验证；本报告不写来源。", "不验证业务正文或解密列；各库分别取副本，不保证跨库同一时点。",
+                            "未知对象、约束/索引漂移或未登记版本会阻断；未使用的可选组不强制初始化。", "真实迁移仅通过 db migrate 显式执行，需匹配备份与预检、停写及单库事务。"]}
 
 
 def _plan_id(value):

@@ -7,6 +7,7 @@ from ..core import digest
 from .adapters import http_json
 from .charts import build_charts, chart_data
 from .contracts import ServiceError, context, fail, keys, prediction
+from .forecast_contracts import binding as forecast_binding
 from .input_evidence import validate as validate_input_evidence
 
 INFERENCES = {
@@ -30,8 +31,16 @@ class AnalysisAgent:
     def __init__(self, settings=None):
         self.settings = settings or {}
 
-    def analyze(self, raw_prediction, raw_context=None):
+    def analyze(self, raw_prediction, raw_context=None, *, forecast_record=None):
         p = prediction(raw_prediction, max_age=self.settings.get("max_age_seconds", 86400))
+        forecast_evidence = None
+        if forecast_record is not None:
+            # Validate the entire supplied record before any analysis provider call.
+            from .forecast_contracts import registration
+            record = registration(forecast_record)
+            if identity(record["prediction"]) != identity(p):
+                fail("归档预测与本次分析输入不同")
+            forecast_evidence = forecast_binding({k: v for k, v in record.items() if k != "prediction"}, p)
         evidence_present = isinstance(raw_context, dict) and "input_evidence" in raw_context
         evidence = raw_context.get("input_evidence") if evidence_present else None
         if evidence_present:
@@ -95,6 +104,8 @@ class AnalysisAgent:
             result["limitations"] += chart_notes
         if evidence_present:
             result["input_evidence"] = evidence
+        if forecast_evidence is not None:
+            result["forecast_evidence"] = forecast_evidence
         result["analysis_id"] = identity(result)
         return result
 
@@ -102,7 +113,7 @@ class AnalysisAgent:
 def validate_analysis(value, settings=None):
     settings = settings or {}
     keys(value, ("schema_version", "analysis_id", "generated_at", "status", "mode", "prediction", "facts", "inferences",
-                 "recommendations", "limitations", "risks"), ("charts", "report_format", "user_constraints", "knowledge_evidence", "input_evidence"))
+                 "recommendations", "limitations", "risks"), ("charts", "report_format", "user_constraints", "knowledge_evidence", "input_evidence", "forecast_evidence"))
     if "knowledge_evidence" in value:
         evidence = value["knowledge_evidence"]
         keys(evidence, ("as_of", "results", "used_ids"))
@@ -124,6 +135,8 @@ def validate_analysis(value, settings=None):
     if identity(unsigned) != value["analysis_id"] or value["schema_version"] != "1" or value["status"] not in ("ok", "degraded"):
         fail("分析摘要、版本或状态无效")
     prediction(value["prediction"], max_age=settings.get("max_age_seconds", 86400))
+    if "forecast_evidence" in value:
+        forecast_binding(value["forecast_evidence"], value["prediction"])
     if "charts" in value:
         if not isinstance(value["charts"], list) or len(value["charts"]) > 2:
             fail("图表数量无效")

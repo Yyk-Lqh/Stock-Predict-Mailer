@@ -14,6 +14,8 @@ from pydantic import Field, ValidationError
 from ..agent_service.analysis import INFERENCES, RECOMMENDATIONS, AnalysisAgent, identity, validate_analysis
 from ..agent_service.charts import build_charts, chart_data, chart_svg
 from ..agent_service.contracts import ServiceError, context, prediction, utcnow
+from ..agent_service.forecast_archive import ForecastArchive
+from ..agent_service.forecast_contracts import definition as forecast_definition
 from ..agent_service.mail import MailService
 from ..agent_service.reporting import save_report
 from ..delivery import address
@@ -32,6 +34,7 @@ UNCERTAINTY = {"NO_CONFIDENCE": "上游未提供置信度。", "NO_CONTEXT": "�
 
 class TaskRequest(Closed):
     prediction: dict | None = None
+    evaluation_definition: dict | None = None
     context: dict | None = None
     complexity: Literal["auto", "simple", "complex"] = "auto"
     notify: bool = False
@@ -146,6 +149,8 @@ class Orchestrator:
         if request["prediction"] is None:
             raise ServiceError("INVALID_INPUT", "请先提供该会话的预测结果")
         request["prediction"] = prediction(request["prediction"])
+        if request["evaluation_definition"] is not None:
+            request["evaluation_definition"] = forecast_definition(request["evaluation_definition"], request["prediction"], utcnow())
         if any(not item or len(item) > 240 for item in request["constraints"]):
             raise ServiceError("INVALID_INPUT", "每条约束须为 1 至 240 字符")
         request["context"] = context(request["context"], request["prediction"]["subject"])
@@ -371,11 +376,8 @@ class Orchestrator:
         return facts, series
 
     async def analyze(self, tid, request, settings, budget, progress):
-        knowledge_result = None
-        if request.get("knowledge_query"):
-            knowledge_result = await asyncio.to_thread(self.knowledge.answer, request["_owner"], request["knowledge_query"],
-                                                        as_of=request["prediction"]["generated_at"][:10])
         p, c = request["prediction"], request["context"]
+        forecast = None
         facts = c["facts"] if c else []
         notes, children, results, conflicts = [], [], [], []
         tools = settings["agents"]["main"]["tools"]
@@ -388,6 +390,8 @@ class Orchestrator:
         plan = [("validate", "校验预测与数据"), ("main", "主 Agent 分析"), ("charts", "生成分析图表"), ("report", "汇总并保存报告")]
         if tools:
             plan.insert(1, ("tools", "通过 MCP 补充数据"))
+        if request.get("evaluation_definition") is not None:
+            plan.insert(1, ("forecast", "固定预测与评价定义"))
         if request["notify"]:
             plan.append(("mail", "按授权交付邮件"))
         mid = settings["agents"]["main"]["model_id"] or settings["default_model_id"]
@@ -401,6 +405,16 @@ class Orchestrator:
         with progress.step("validate", f"校验 {subject} 未来 {p['horizon']['value']} {p['horizon']['unit']} 的预测结果"):
             prediction(p)
             context(c, p["subject"])
+        if request.get("evaluation_definition") is not None:
+            with progress.step("forecast", "归档本次预测与事前评价定义"):
+                forecast = ForecastArchive(self.store.root).register(p, request["evaluation_definition"])
+            progress.emit("forecast", step="forecast", label="事前预测已归档", forecast_id=forecast["record"]["forecast_id"],
+                          created=forecast["created"])
+        budget.check()
+        knowledge_result = None
+        if request.get("knowledge_query"):
+            knowledge_result = await asyncio.to_thread(self.knowledge.answer, request["_owner"], request["knowledge_query"],
+                                                        as_of=p["generated_at"][:10])
         if tools:
             with progress.step("tools", f"为 {subject} 补充行情与事实"):
                 if checkpoint.get("tools") == tools and "facts" in checkpoint:
@@ -508,7 +522,7 @@ class Orchestrator:
                 results.append(merged)
             except ServiceError as exc:
                 notes.append(exc.code + "：汇总调用失败，采用经过校验的已有结论。")
-        analysis = AnalysisAgent().analyze(p, c)
+        analysis = AnalysisAgent().analyze(p, c, forecast_record=forecast["record"] if forecast else None)
         expected = "MODEL_" + p["direction"].upper() if "direction" in p else None
         accepted = set()
         for result in results:

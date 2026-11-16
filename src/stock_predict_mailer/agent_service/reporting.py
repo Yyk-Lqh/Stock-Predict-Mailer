@@ -22,6 +22,17 @@ def render(analysis, timezone="Asia/Shanghai", *, charts="inline"):
     lines += [f"[{f['id']}] {f['name']}：{f['value']} {f['unit']}；来源：{f['source']}；观测：{f['observed_at']}；可用：{f['available_at']}"
               for f in analysis["facts"]] or ["无可用上下文。"]
     lines += ["Agent 推断"] + [f"{i['text']}（依据：{', '.join(i['evidence_ids'])}）" for i in analysis["inferences"]]
+    if analysis.get("forecast_evidence"):
+        evidence = analysis["forecast_evidence"]
+        d, r = evidence["definition"], evidence["definition"]["reference"]
+        lines += ["事前预测归档与评价定义", f"预测归档 ID：{evidence['forecast_id']}；注册：{evidence['registered_at']}",
+                  f"目标时点：{d['target_at']}；时区：{d['timezone']}；指标：{d['metric']}；单位：{d['unit']}",
+                  f"比较基准：{r['value']} {d['unit']}；来源声明：{r['source']}；观测：{r['observed_at']}；可用：{r['available_at']}",
+                  f"平盘阈值（含边界）：{d['flat_tolerance']} {d['unit']}",
+                  f"预测与定义内容摘要：{evidence['content_id']}；注册记录摘要：{evidence['integrity_id']}",
+                  "此报告仅包含事前定义，未读取事后观测或评估结果；摘要不代表来源认证。"]
+        if "calendar" in d:
+            lines += [f"交易日历声明来源：{d['calendar']['source']}；后续交易日：{', '.join(d['calendar']['sessions'])}"]
     if analysis.get("user_constraints"):
         lines += ["本轮用户约束", *analysis["user_constraints"]]
     for title, key in (("不确定性与限制", "limitations"), ("风险提示", "risks"), ("建议（不作收益保证）", "recommendations")):

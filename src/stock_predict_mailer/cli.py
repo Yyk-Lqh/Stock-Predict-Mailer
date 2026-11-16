@@ -10,13 +10,18 @@ from pathlib import Path
 from .agent_service.adapters import adapter
 from .agent_service.analysis import AnalysisAgent
 from .agent_service.config import load
-from .agent_service.contracts import ServiceError, prediction
+from .agent_service.contracts import ServiceError, decode, prediction
 from .agent_service.mail import MailService
 from .agent_service.reporting import save_report
 from .cli_io import utf8_console
 from .naming import COMMAND, PROJECT_NAME, SUMMARY_ZH, banner
 
 MANIFEST_COLUMNS = "path,logical,source,document_date,available_date,valid_to,companies,industries,topics,stock_codes"
+
+
+def read_json(path):
+    with path.open("rb") as stream:
+        return decode(stream.read(1024 * 1024 + 1))
 
 
 def main(argv=None):
@@ -36,10 +41,27 @@ def main(argv=None):
     run = sub.add_parser("run", help="接入、分析、报告并入队；--send 执行配置的投递")
     run.add_argument("--recipient")
     run.add_argument("--send", action="store_true")
+    run.add_argument("--evaluation-definition", type=Path, help="显式提供评价定义，先归档本次预测再分析")
     forest = sub.add_parser("predict-rf", help="用交付的随机森林与月频特征导出 v1 预测 JSON")
     forest.add_argument("--features", type=Path, required=True)
     forest.add_argument("--model", type=Path, help="已交付模型文件的位置")
     forest.add_argument("--output", type=Path, required=True)
+    forecasts = sub.add_parser("forecast", help="显式归档预测、查询到期状态并按事前定义离线评估")
+    forecast_sub = forecasts.add_subparsers(dest="forecast_action", required=True)
+    register = forecast_sub.add_parser("register")
+    register.add_argument("--prediction", type=Path, required=True)
+    register.add_argument("--definition", type=Path, required=True)
+    for name in ("list", "show", "evaluate"):
+        command = forecast_sub.add_parser(name)
+        if name != "list":
+            command.add_argument("forecast_id")
+        command.add_argument("--as-of")
+        if name == "list":
+            command.add_argument("--limit", type=int, default=50)
+            command.add_argument("--offset", type=int, default=0)
+        if name == "evaluate":
+            command.add_argument("--observation", type=Path)
+            command.add_argument("--dry-run", action="store_true")
     send = sub.add_parser("send", help="发送或重试一条已入队邮件")
     send.add_argument("message_id")
     status = sub.add_parser("mail-status", help="查询邮件状态")
@@ -136,12 +158,22 @@ def main(argv=None):
             command.add_argument("--target", type=Path, required=True)
         if name != "plan":
             command.add_argument("--key-env")
-    db = sub.add_parser("db", help="只读数据库结构/版本报告、已知迁移计划及隔离副本演练")
+    db = sub.add_parser("db", help="结构报告、迁移预检/演练及显式单库事务迁移")
     db_sub = db.add_subparsers(dest="db_action", required=True)
-    for name in ("status", "plan"):
+    for name in ("status", "plan", "preflight", "migrate"):
         command = db_sub.add_parser(name)
-        command.add_argument("--store", choices=("all", "mail", "control", "development", "knowledge", "legacy", "crawler"), default="all")
+        if name == "migrate":
+            command.add_argument("--store", choices=("mail", "control", "development", "knowledge", "legacy", "crawler"), required=True)
+            command.add_argument("--expected-preflight", required=True)
+            command.add_argument("--accept-authorization-change", action="store_true")
+        elif name != "preflight":
+            command.add_argument("--store", choices=("all", "mail", "control", "development", "knowledge", "legacy", "crawler"), default="all")
         command.add_argument("--crawler-workspace", type=Path)
+        if name in ("preflight", "migrate"):
+            command.add_argument("--archive", type=Path, required=True)
+            command.add_argument("--expected-plan", required=True)
+            command.add_argument("--port", type=int, default=8767)
+            command.add_argument("--key-env")
         if name == "plan":
             command.add_argument("--rehearse", action="store_true")
             command.add_argument("--expected-plan")
@@ -164,14 +196,39 @@ def main(argv=None):
             print(json.dumps(result, ensure_ascii=False))
             return 0
         cfg = load(args.config)
+        if args.command == "forecast":
+            from .agent_service.forecast_archive import ForecastArchive
+            archive = ForecastArchive(cfg["workspace"])
+            if args.forecast_action == "register":
+                result = archive.register(read_json(args.prediction), read_json(args.definition))
+            elif args.forecast_action == "list":
+                result = archive.listing(as_of=args.as_of, limit=args.limit, offset=args.offset)
+            elif args.forecast_action == "show":
+                result = archive.show(args.forecast_id, as_of=args.as_of)
+            else:
+                result = archive.evaluate(args.forecast_id, read_json(args.observation) if args.observation else None,
+                                          as_of=args.as_of, dry_run=args.dry_run)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 1 if result.get("state") in ("not_due", "awaiting_observation") else 0
         if args.command == "db":
             from .operations import schema_planning
-            if args.db_action == "status":
+            if args.db_action == "migrate":
+                from .operations.migration import apply
+                result = apply(cfg, args.config, args.archive, args.expected_plan, args.expected_preflight, store=args.store,
+                               crawler_workspace=args.crawler_workspace, port=args.port, key_env=args.key_env,
+                               accept_authorization_change=args.accept_authorization_change)
+            elif args.db_action == "preflight":
+                from .operations.migration_preflight import check
+                result = check(cfg, args.config, args.archive, args.expected_plan, crawler_workspace=args.crawler_workspace,
+                               port=args.port, key_env=args.key_env)
+            elif args.db_action == "status":
                 result = schema_planning.report(cfg, crawler_workspace=args.crawler_workspace, store=args.store)
             else:
                 result = schema_planning.plan(cfg, crawler_workspace=args.crawler_workspace, store=args.store, rehearse=args.rehearse, expected_plan=args.expected_plan)
             print(json.dumps(result, ensure_ascii=False, indent=2))
-            return 2 if not result["ready"] else 0 if result["mode"] == "isolated_rehearsal" else 1 if result["changes"] else 0
+            if args.db_action == "migrate":
+                return 0
+            return 2 if not result["ready"] else 0 if result["mode"] in ("isolated_rehearsal", "read_only_migration_preflight") else 1 if result["changes"] else 0
         if args.command == "backup":
             from .operations import backup
             if args.backup_action == "plan":
@@ -279,10 +336,14 @@ def main(argv=None):
         if args.command == "run":
             p = adapter(cfg["prediction"]["adapter"], {**cfg["prediction"], "role": "prediction"}).fetch()
             p = prediction(p, max_age=cfg["agent"].get("max_age_seconds", 86400))
+            forecast = None
+            if args.evaluation_definition is not None:
+                from .agent_service.forecast_archive import ForecastArchive
+                forecast = ForecastArchive(cfg["workspace"]).register(p, read_json(args.evaluation_definition))
             ctx = cfg["context"]
             c = None if ctx["adapter"] == "none" else adapter(ctx["adapter"], {
                 **ctx, "role": "context", "prediction": p, "max_age_seconds": cfg["agent"].get("max_age_seconds", 86400)}).fetch()
-            analysis = AnalysisAgent(cfg["agent"]).analyze(p, c)
+            analysis = AnalysisAgent(cfg["agent"]).analyze(p, c, forecast_record=forecast["record"] if forecast else None)
             folder = save_report(cfg["workspace"], analysis, cfg["timezone"])
             result = mail.enqueue(analysis, args.recipient or cfg["mail"]["recipient"])
             if args.send:
@@ -291,6 +352,8 @@ def main(argv=None):
                       "report": str(folder / "report.html"), "mail": result}
             if "input_evidence" in analysis:
                 output["input_snapshot"] = str(cfg["workspace"] / "input-snapshots" / (analysis["input_evidence"]["snapshot_id"] + ".json"))
+            if forecast is not None:
+                output["forecast"] = {"created": forecast["created"], **analysis["forecast_evidence"]}
             print(json.dumps(output, ensure_ascii=False, indent=2))
             return 0 if result["status"] in ("pending", "submitted", "simulated") else 2
         if args.command == "mail-list":

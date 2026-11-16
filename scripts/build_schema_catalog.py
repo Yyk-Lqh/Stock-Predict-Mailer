@@ -102,7 +102,8 @@ def build():
     version_tree = ast.parse((ROOT / "src/stock_predict_mailer/__init__.py").read_text(encoding="utf-8"))
     version = next(node.value.value for node in version_tree.body if isinstance(node, ast.Assign) and
                    any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets))
-    return {"schema_version": "1", "catalogue_revision": "2", "app_version": version, "groups": groups,
+    return {"schema_version": "1", "catalogue_revision": "3", "app_version": version,
+            "database_markers": {"application_id": 0x53504D31, "user_version": 1}, "groups": groups,
             "stores": {
                 "mail": {"required": ["mail.core"], "groups": ["mail.core", "mail.bindings", "mail.archive"]},
                 "control": {"required": ["control.base"], "groups": ["control.base", "control.memory", "control.receipts", "control.knowledge_owners"]},

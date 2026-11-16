@@ -13,6 +13,8 @@ INTERNAL = {"sqlite_sequence", "sqlite_stat1", "sqlite_stat3", "sqlite_stat4"}
 MAX_OBJECTS = 256
 MAX_COLUMNS = 128
 MAX_SQL_BYTES = 512 * 1024
+APPLICATION_ID = 0x53504D31
+DATABASE_VERSION = 1
 TOKEN = re.compile(r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|`(?:``|[^`])*`|\[[^\]]*\]|--[^\n]*|/\*.*?\*/|[\w]+|[^\s]", re.S)
 
 
@@ -35,6 +37,8 @@ def catalogue():
     try:
         value = json.loads(files(__package__).joinpath("schema_catalog.json").read_text(encoding="utf-8"))
         if value["schema_version"] != "1" or value["app_version"] != version():
+            raise ValueError()
+        if value["database_markers"] != {"application_id": APPLICATION_ID, "user_version": DATABASE_VERSION}:
             raise ValueError()
         return value
     except (OSError, ValueError, KeyError, TypeError):
@@ -94,9 +98,12 @@ def classify(con, family):
               "application_id": con.execute("PRAGMA application_id").fetchone()[0],
               "schema_cookie": con.execute("PRAGMA schema_version").fetchone()[0], "version_source": "structural_inference",
               "features": [], "operations": [], "issues": [], "objects": len(source)}
-    if record["user_version"] != 0:
+    registered = (record["application_id"], record["user_version"]) == (APPLICATION_ID, DATABASE_VERSION)
+    if registered:
+        record["version_source"] = "registered_and_structurally_verified"
+    if record["user_version"] != 0 and not registered:
         record["issues"].append({"code": "UNREGISTERED_USER_VERSION"})
-    if record["application_id"] != 0:
+    if record["application_id"] != 0 and not registered:
         record["issues"].append({"code": "FOREIGN_APPLICATION_ID"})
     definition = catalogue()["stores"][family]
     known_keys = set()
@@ -143,6 +150,8 @@ def classify(con, family):
             if addition["id"] in missing_adds:
                 record["operations"].append({"id": addition["id"], "feature": name, "statements": [addition["sql"], *addition["data_sql"]],
                     "data_effect": addition["data_effect"], "requires_permission_review": bool(addition["data_sql"])})
+    if registered and record["operations"]:
+        record["issues"].append({"code": "REGISTERED_SCHEMA_INCOMPLETE"})
     if record["issues"]:
         record["state"], record["operations"] = "blocked", []
     else:

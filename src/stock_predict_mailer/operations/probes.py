@@ -67,7 +67,9 @@ def lock_state(root, relative):
         contained(root, path)
         if not path.exists():
             return "absent"
-        if path.stat().st_size == 0:
+        # POSIX flock locks the file description even when the file is empty.
+        # Windows byte-range probing still needs an existing lock byte.
+        if os.name == "nt" and path.stat().st_size == 0:
             return "unknown"
         with path.open("rb") as handle:
             acquired = False

@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from cryptography.fernet import Fernet
@@ -213,10 +214,25 @@ class DoctorTests(unittest.TestCase):
     def test_empty_and_unreadable_locks_are_unknown(self):
         self.root.mkdir()
         (self.root / "empty.lock").touch()
-        self.assertEqual(probes.lock_state(self.root, "empty.lock"), "unknown")
+        self.assertEqual(probes.lock_state(self.root, "empty.lock"), "unknown" if os.name == "nt" else "available")
         with patch.object(Path, "open", side_effect=PermissionError("private-path")):
             self.assertEqual(probes.lock_state(self.root, "empty.lock"), "unknown")
         self.assertEqual(probes.lock_state(self.root, "absent.lock"), "absent")
+
+    def test_empty_posix_lock_is_probed_without_writing_and_busy_is_preserved(self):
+        import errno
+        from unittest.mock import Mock
+        self.root.mkdir()
+        path = self.root / "empty.lock"
+        path.touch()
+        flock = Mock()
+        module = SimpleNamespace(LOCK_SH=1, LOCK_NB=4, LOCK_UN=8, flock=flock)
+        with patch.object(probes, "os", SimpleNamespace(name="posix")), patch.dict("sys.modules", {"fcntl": module}):
+            self.assertEqual(probes.lock_state(self.root, "empty.lock"), "available")
+            self.assertEqual(flock.call_count, 2)
+            flock.side_effect = BlockingIOError(errno.EAGAIN, "held by writer")
+            self.assertEqual(probes.lock_state(self.root, "empty.lock"), "busy")
+        self.assertEqual(path.read_bytes(), b"")
 
     def test_running_crawler_with_no_lock_is_suspected_not_recovered(self):
         store = JobStore(self.crawler)

@@ -1,6 +1,6 @@
 # 数据库结构识别与迁移演练
 
-`db status` 和 `db plan` 可识别当前已知结构，展示旧库升级步骤。`--rehearse` 在一次性副本中执行并回滚步骤，验证升级后的结构。当前没有实际升级入口；不会给原库写版本号、创建数据库、生成密钥、修改授权或恢复任务。
+`db status` 和 `db plan` 可识别当前已知结构，展示旧库升级步骤。`--rehearse` 在一次性副本中执行并回滚步骤，验证升级后的结构。这些命令不会给原库写版本号、创建数据库、生成密钥、修改授权或恢复任务；实际升级须另用 [db migrate](database-migration.md)。
 
 ## 查看与演练
 
@@ -22,7 +22,7 @@ uv run stock-predict-mailer --config config/agent-example.toml db plan --store k
 
 六处数据库分别为应用目录下的 `agent-mail.sqlite3`、`control.sqlite3`、`control-development.sqlite3`、`private-knowledge/knowledge.sqlite3`、`state.sqlite3`，以及采集目录下的 `jobs/crawler-jobs.sqlite3`。
 
-现有数据库没有集中登记版本，所以 `user_version=0` 只表示尚未登记。报告使用 `version_source=structural_inference`，按功能组推断 revision，不将其当作应用版本。非零但未登记的 user_version 或 application_id 均阻断，不覆盖原标记。
+旧数据库的 `user_version=0` 只表示尚未登记，报告使用 `version_source=structural_inference` 按功能组推断 revision，不将其当作应用版本。目录 revision 3 识别 application_id=0x53504D31 与 user_version=1 的成对标记，返回 registered_and_structurally_verified，仍需完整结构匹配。其他非零/不完整标记均阻断，不覆盖未知版本。
 
 随安装包发布的静态结构目录来自项目已知 DDL。比较包含列顺序、类型、非空、默认值、主键、外键、索引、唯一约束和规范化 SQL 定义摘要；CHECK 或索引变化也会被发现。未知对象、缺失必需组、不完整的可选组、定义漂移均阻断。已知 FTS5 影子表包含在模型中，不按名称前缀忽略陌生表。
 
@@ -36,7 +36,7 @@ uv run stock-predict-mailer --config config/agent-example.toml db plan --store k
 - MailCore 的空 binding、alias、control 三表。
 - 知识库的空 workers 进度表（远程 bb8c104 更新）；兼容门面的 kb_owner_map 为可选功能组。
 
-授权回填会启用已有平台训练授权的历史回放权限，计划以 `requires_permission_review=true` 和明确的 `data_effect` 提示。副本演练返回影响行数，原授权保持原状。当前没有授权真实迁移的入口。
+授权回填会启用已有平台训练授权的历史回放权限，计划以 `requires_permission_review=true` 和明确的 `data_effect` 提示。副本演练返回影响行数，原授权保持原状。真实迁移须单独审阅并显式传入 --accept-authorization-change。
 
 ## 副本和隐私边界
 
@@ -56,4 +56,4 @@ uv run stock-predict-mailer --config config/agent-example.toml db plan --store k
 
 目录 revision 2 已兼容统一知识库、进度表和 owner 映射，并保留旧 state.sqlite3 知识表的历史识别。历史识别不会自动把明文正文和授权转入新知识库。此次远程适配和验证见[更新记录](remote-update-2026-11-15.md)。
 
-下一步 D2 才会设计已知版本的实际迁移：验证过的加密备份、可确认的停写边界、逐库事务、版本登记、权限变化显式审阅、失败恢复和跨版本测试。当前演练成功不代替这些条件。
+D2A 的[迁移就绪检查](migration-preflight.md)和 D2B 的[单库事务迁移](database-migration.md)已提供；副本演练成功仍不代替备份、停写和显式摘要条件。目录 revision 3 包含登记契约，未使用的可选组仍不强制初始化。

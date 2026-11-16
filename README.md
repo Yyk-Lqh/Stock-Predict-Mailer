@@ -68,9 +68,13 @@ uv run python -m unittest discover -s tests -p test_agent_service.py -v
 
 加密快照、WAL 合并、密钥配套及全新目录恢复见[备份恢复手册](docs/workspace-backup.md)。`backup plan` 默认只读，`create` 需要已审阅摘要；恢复会暂停未决任务，不自动启动或重发。
 
-`db status` / `db plan` 可识别六处数据库的已知结构与升级步骤，`--rehearse --expected-plan` 只在副本中演练并回滚。参数和边界见[数据库结构手册](docs/schema-planning.md)；当前不提供原库升级操作。
+`db status` / `db plan` 可识别六处数据库的已知结构与升级步骤，`--rehearse --expected-plan` 只在副本中演练并回滚。参数和边界见[数据库结构手册](docs/schema-planning.md)；db 工具中的原库升级入口为携带匹配备份和摘要的[单库事务迁移](docs/database-migration.md)。原有服务构造器的兼容初始化仍保留，迁移准备期间须保持停写。
 
 2026-11-15 已同步远程知识库构建更新，并适配现有运行管理、备份和结构识别。功能变化及验证见[远程更新记录](docs/remote-update-2026-11-15.md)。批量导入的 `--dry-run` 使用临时副本，不初始化来源数据库；新 owner 仅为预演身份。
+
+`db preflight --archive ... --expected-plan ...` 可只读核对结构计划、当前来源对应的加密备份及停写状态。操作和限制见[迁移就绪检查](docs/migration-preflight.md)；检查通过不会执行真实迁移。
+
+`forecast register/list/show/evaluate` 支持显式归档预测、固定事前评价定义、查询到期状态和离线观测评分。有效期与目标时点分开，交易日须声明日历，未到期或观测未可用不计分。用法见[预测归档与评估](docs/forecast-evaluation.md)。日常分析可显式使用 `run --evaluation-definition definition.json`，任务 API 可传 `evaluation_definition`，将本次预测固定并绑定到报告和邮件；默认不开启，也不从多轮会话继承。见[任务联动说明](docs/forecast-tasks.md)。网页可在分析资料中填写本轮评价定义，在任务记录中查看有权访问的预测状态和回执，见[控制台使用说明](docs/forecast-console.md)。预测详情支持[JSON/单行 CSV 观测导入与评分预览](docs/observation-preview.md)，严格核对口径和时点，预览不保存回执。
 
 ## 私有知识库与独立清洗 Agent
 

@@ -54,6 +54,23 @@ a { color: var(--brass); text-underline-offset: 2px; }
 button { font: inherit; }
 [hidden] { display: none !important; }
 .mono { font-family: var(--mono); font-size: 11.5px; }
+.forecast-records { margin-top: 36px; padding-top: 24px; border-top: 1px solid var(--rule); }
+.forecast-filter { max-width: 260px; margin: 14px 0; }
+.forecast-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--rule); }
+.forecast-row > div { min-width: 0; overflow-wrap: anywhere; }
+#forecast-detail { overflow-wrap: anywhere; }
+#forecast-detail .kv dd { min-width: 0; overflow-wrap: anywhere; }
+.forecast-editor input { min-width: 0; }
+.forecast-receipt { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--rule); }
+.observation-preview { margin-top: 24px; padding: 18px 0; border-block: 1px solid var(--rule); }
+.observation-preview > summary { cursor: pointer; color: var(--brass); }
+.observation-preview label, .observation-preview input, .observation-preview textarea { min-width: 0; max-width: 100%; }
+.observation-preview .stack { max-width: 760px; }
+.observation-preview .mono, #observation-result { overflow-wrap: anywhere; }
+#observation-result { margin-top: 12px; padding-top: 16px; border-top: 1px solid var(--rule); }
+#observation-result .kv dd { min-width: 0; overflow-wrap: anywhere; }
+.observation-error { color: var(--danger); }
+@media (max-width: 600px) { .forecast-row { align-items: flex-start; flex-direction: column; } .forecast-editor .grid-2 { grid-template-columns: minmax(0, 1fr); } }
 .num { font-variant-numeric: tabular-nums; }
 ::selection { background: rgba(195, 169, 122, 0.24); }
 

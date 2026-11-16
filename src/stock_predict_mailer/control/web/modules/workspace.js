@@ -31,6 +31,7 @@ window.Workbench = (() => {
     inspector(false);
   }
   function clearFollowup() {
+    window.ForecastUI?.reset();
     taskControlsDirty = false;
     $('task-notify').checked = false;
     for (const id of ['conversation-message', 'conversation-constraints', 'remember-text', 'remember-format', 'conversation-format']) $(id).value = '';
@@ -329,7 +330,7 @@ window.Workbench = (() => {
   const settingsNav = document.querySelector('[data-view-pane="settings"] .subnav');
   settingsNav.append(action('记忆与访问', () => showView('memory')), action('知识处理与索引', () => { showView('knowledge'); window.KnowledgeUI?.processing(); }));
   const form = $('task-form');
-  const cards = [...form.querySelectorAll(':scope > .card')];
+  const cards = [...form.querySelectorAll(':scope > .card')].filter(card => !card.classList.contains('forecast-editor'));
   for (const [index, card] of cards.entries()) {
     if (index > 1) continue;
     const details = document.createElement('details');

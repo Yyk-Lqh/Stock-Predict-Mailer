@@ -53,6 +53,7 @@ async function refreshMemory() {
 }
 
 async function useMemoryKey(key) {
+  window.ForecastUI?.identityChanged();
   const previous = memoryKey;
   memoryKey = key;
   try {

@@ -270,6 +270,7 @@ function showView(name) {
   window.scrollTo({top: 0});
   if (name === 'overview') renderSteps();
   if (name === 'records' && !recordLoaded) loadRecords();
+  if (name === 'records') window.ForecastUI?.load(true);
   window.Workbench?.view(name);
 }
 function showPanel(id) {
@@ -956,6 +957,7 @@ function applySample() {
   facts = data.context.facts.map(f => ({...f}));
   renderFacts();
   $('task-data').value = JSON.stringify(data, null, 2);
+  window.ForecastUI?.restore(data);
 }
 function readPrediction() {
   const subject = $('p-subject').value.trim();
@@ -1007,6 +1009,7 @@ function syncJSON() {
   } : null};
   if (chart) payload.chart_data = chart;
   $('task-data').value = JSON.stringify(payload, null, 2);
+  window.ForecastUI?.restore(payload);
 }
 function syncForm(quiet = false) {
   let data;
@@ -1024,6 +1027,7 @@ function syncForm(quiet = false) {
   facts = (data.context?.facts || []).map(f => ({...f}));
   renderFacts();
   setNumericPrediction(p);
+  window.ForecastUI?.restore(data);
   if (!quiet) notice('已按 JSON 回填表单。');
 }
 document.querySelectorAll('#task-form input, #task-form select').forEach(el => {
@@ -1284,6 +1288,13 @@ function renderReport(task) {
   text(meta, 'span', `分析 ${analysis.analysis_id || '—'}`);
   text(meta, 'span', `模式 ${analysis.mode || '—'}`);
   host.append(meta);
+
+  if (analysis.forecast_evidence) {
+    const archive = block('事前预测归档', '本轮已固定评价口径，未来观测不会改变这份报告。', 'forecast');
+    text(archive, 'p', `目标 ${analysis.forecast_evidence.definition.target_at} · ${analysis.forecast_evidence.definition.metric}`);
+    const tid = task.id;
+    archive.append(action('查看预测归档与到期状态', () => window.ForecastUI?.openTask(tid)));
+  }
 
   const pred = block('上游预测', '数值与方向由上游模型给出，本系统只做解读。', 'prediction');
   const kv = document.createElement('dl');
@@ -1663,6 +1674,7 @@ $('task-form').onsubmit = async event => {
   button.disabled = true;
   try {
     window.AnalysisInput?.validate();
+    window.ForecastUI?.validate();
     await window.Workbench?.prepare();
     const input = JSON.parse($('task-data').value);
     const conversationId = $('conversation-id').value;
@@ -1684,6 +1696,7 @@ $('task-form').onsubmit = async event => {
     const task = await api('tasks', 'POST', {...request, notify: $('task-notify').checked, recipient: recipients?.[0] || $('task-recipient').value || null, ...(recipients?.length>1?{recipients}:{})});
     if (conversationId !== $('conversation-id').value) { notice('任务已提交，可从对应会话查看。'); return; }
     currentTask = task.id;
+    window.ForecastUI?.reset();
     window.AnalysisInput?.open('progress');
     window.Workbench?.submitted(task);
     recordLoaded = false;

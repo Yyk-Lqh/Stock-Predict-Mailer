@@ -149,6 +149,34 @@
           </div>
         </div>
 
+        <section class="card forecast-editor" aria-labelledby="evaluation-title">
+          <div class="section-head"><h2 id="evaluation-title">事前评价定义</h2></div>
+          <label class="check"><input id="evaluation-enabled" type="checkbox"> 本轮先归档预测，再进行分析</label>
+          <p class="hint mt-10">固定目标、口径与基准，之后才能核对结果。每轮单独启用；修改预测后需重新填写。</p>
+          <fieldset id="evaluation-fields" class="plain-fieldset stack mt-14" hidden disabled>
+            <legend>本轮评价定义</legend>
+            <label class="field"><span>导入评价定义 JSON</span><input id="evaluation-import" type="file" accept=".json,application/json"></label>
+            <div class="grid-2">
+              <label class="field"><span>目标时点（含时区）</span><input id="evaluation-target" placeholder="2026-12-01T15:00:00+08:00"></label>
+              <label class="field"><span>IANA 时区</span><input id="evaluation-timezone" placeholder="Asia/Shanghai"></label>
+              <label class="field"><span>评价指标</span><input id="evaluation-metric" placeholder="close_unadjusted"></label>
+              <label class="field"><span>单位</span><input id="evaluation-unit" placeholder="CNY"></label>
+              <label class="field"><span>平盘阈值（含边界）</span><input id="evaluation-tolerance" type="number" min="0" step="any"></label>
+              <label class="field"><span>基准值</span><input id="evaluation-reference" type="number" step="any"></label>
+              <label class="field"><span>基准观测时点（含时区）</span><input id="evaluation-observed" placeholder="2026-11-16T15:00:00+08:00"></label>
+              <label class="field"><span>基准可用时点（含时区）</span><input id="evaluation-available" placeholder="2026-11-16T16:00:00+08:00"></label>
+            </div>
+            <label class="field"><span>基准来源</span><input id="evaluation-source" maxlength="1000"></label>
+            <p id="evaluation-synthetic" class="hint"></p>
+            <div id="evaluation-calendar" class="stack" hidden>
+              <label class="field"><span>交易日历来源</span><input id="evaluation-calendar-source" maxlength="1000"></label>
+              <label class="field"><span>后续交易日（每行一个 YYYY-MM-DD）</span><textarea id="evaluation-sessions" rows="4" spellcheck="false"></textarea></label>
+              <p class="hint">提供与周期长度一致的后续交易日，目标日期须为最后一天。请依据实际交易日历填写。</p>
+            </div>
+            <p id="evaluation-status" class="hint" role="status">目标时点与预测周期须一致；基准在预测生成时必须已经可用。</p>
+          </fieldset>
+        </section>
+
         <div class="card">
           <div class="section-head">
             <h2>客观事实 <span class="muted" id="fact-count">0 条</span></h2>
@@ -302,6 +330,15 @@
     <div class="actions mt-16" id="record-more-wrap" hidden>
       <button type="button" id="record-more" class="btn tiny">载入更早的记录</button>
     </div>
+    <section id="forecast-records" class="forecast-records" aria-labelledby="forecast-records-title">
+      <div class="section-head"><h2 id="forecast-records-title">预测归档</h2><button id="forecast-refresh" type="button" class="btn quiet">刷新预测</button></div>
+      <p class="hint">展示当前可访问任务的预测。到期后仍需提供匹配观测才能评估。</p>
+      <label class="field forecast-filter"><span>评价状态</span><select id="forecast-state"><option value="all">全部状态</option><option value="pending">待到期</option><option value="due">已到期，待观测</option><option value="evaluated">已评估</option></select></label>
+      <p id="forecast-list-status" class="hint" role="status">尚未读取</p>
+      <div id="forecast-list" class="task-list"></div>
+      <button id="forecast-more" type="button" class="btn tiny mt-16" hidden>载入更早任务的预测</button>
+      <section id="forecast-detail" class="card mt-16" aria-label="预测归档详情" tabindex="-1" hidden></section>
+    </section>
   </section>
 
   <section class="view" data-view-pane="settings" hidden>

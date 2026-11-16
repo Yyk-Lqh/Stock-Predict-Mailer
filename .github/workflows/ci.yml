@@ -27,6 +27,10 @@ jobs:
       - run: uv sync --python 3.11 --locked
       - run: uv run python -m unittest discover -s tests -p test_agent_service.py -v
       - run: uv run python -m unittest discover -s tests -p test_cli_encoding.py -v
+      - run: uv run python -m unittest discover -s tests -p test_forecast_evaluation.py -v
+      - run: uv run python -m unittest discover -s tests -p test_forecast_tasks.py -v
+      - run: uv run python -m unittest discover -s tests -p test_forecast_console.py -v
+      - run: uv run python -m unittest discover -s tests -p test_observation_preview.py -v
       - run: uv run python -m unittest discover -s tests -p test_control.py -v
       - run: uv run python -m unittest discover -s tests -p test_crawler_service.py -v
       - run: uv run python -m unittest discover -s tests -p test_crawler_quality.py -v
@@ -38,6 +42,8 @@ jobs:
       - run: uv run python -m unittest discover -s tests -p test_runtime_lifecycle.py -v
       - run: uv run python -m unittest discover -s tests -p test_workspace_backup.py -v
       - run: uv run python -m unittest discover -s tests -p test_schema_planning.py -v
+      - run: uv run python -m unittest discover -s tests -p test_migration_preflight.py -v
+      - run: uv run python -m unittest discover -s tests -p test_database_migration.py -v
       - run: uv run python scripts/build_schema_catalog.py --check
       - run: uv run python -m unittest discover -s tests -p test_private_knowledge.py -v
       - run: uv run python -m unittest discover -s tests -p test_cleaning_agent.py -v

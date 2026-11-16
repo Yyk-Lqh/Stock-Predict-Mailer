@@ -16,6 +16,18 @@
 
 `db status/plan` 返回独立的 schema_version=1 报告，包含 app_version/catalogue_id/sqlite_version、state/ready/changes、逐库 source_id/schema_id、结构推断 features 和已知固定 operations。未知结构/版本阻断；缺失库不创建。plan 增加 plan_id/requires_permission_review/ready_for_apply=false；`--rehearse --expected-plan` 只在一次性副本内事务执行、验证并回滚，返回 committed=false/source_writes=0。当前/缺失/演练成功退出 0，已知升级退出 1，阻断/错误退出 2。完整语义见[数据库结构手册](schema-planning.md)。
 
+数据库 `db preflight` 使用独立的 `read_only_migration_preflight` 报告：ready/blockers、schema_plan_id/backup_plan_id、backup_verified、认证包 archive_sha256、成功时 preflight_id、changes/requires_permission_review 和 source_writes=0。只支持全部库；ready_for_apply 始终 false。通过退出 0，阻断或错误退出 2；语义见[迁移就绪检查](migration-preflight.md)。
+
+显式 `db migrate` 必须单选 store，携带 archive、expected-plan、expected-preflight，授权回填另需 accept-authorization-change。成功返回 mode=single_store_migration、state=migrated/ already_current、committed/source_writes、摘要与操作行数；真实提交还返回 application_id/user_version、schema_before/after 和 receipt_id。成功退出 0，错误退出 2；提交不明和已提交后失败使用独立错误码，不能当作无修改。参见[迁移手册](database-migration.md)。
+
+`forecast register/list/show/evaluate` 为独立文件归档入口，沿用 v1 prediction；definition 和 observation 使用严格 schema_version=1。注册返回 created/record，record 包含 forecast_id/registered_at、固定 prediction/definition、content_id/integrity_id。list 支持 as-of/limit/offset，返回 total/returned/next_offset 及 pending/due/evaluated 视图。evaluate 输出 not_due/awaiting_observation/evaluated、synthetic/as_of/persisted，成功评分含完整观测、metrics 和回执时间/摘要。未到期或缺可用观测退出1；成功0，错误2。具体时间、日历、十进制阈值和不可覆盖约定见[预测归档与评估](forecast-evaluation.md)。
+
+`run --evaluation-definition PATH` 和 `POST /api/tasks` 的可选 `evaluation_definition` 对象显式启用分析任务归档。接收/执行时校验定义，执行时使用同一次经过 v1 校验的预测注册，随后才调用上下文工具、知识检索和分析模型。冲突或归档失败阻断后续操作；已注册记录在后续失败/取消时保留。分析可选 `forecast_evidence` 字段严格包含 schema_version/forecast_id/registered_at/definition/content_id/integrity_id，通过与 analysis.prediction 重建完整记录校验摘要，不需要磁盘读取。CLI 输出额外 forecast.created 及证据；任务进度 forecast 事件含 forecast_id/created。定义不从会话继承。见[任务联动](forecast-tasks.md)。
+
+控制台只读 `GET /api/forecasts` 按可访问任务分页，接受 limit/before/state，返回 items/as_of/scanned_tasks/next_before；状态筛选与任务游标分页独立，空页可继续。`GET /api/tasks/{id}/forecast` 沿用任务 owner 权限，返回完整记录与回执，不接受任意 forecast_id，也不暴露 CLI 独立档案。两者没有写方法，响应上限 2 MiB；详细权限、读取预算及表单行为见[控制台归档](forecast-console.md)。
+
+`POST /api/tasks/{id}/forecast/preview` 沿用同源本机会话、CSRF 与任务 owner 权限，只接受 observation 对象，或 format=json/csv 与 content 原文，可附 as_of；导入上限 256 KiB。不接受文件路径和保存选项。先严格校验匹配，再按同份归档快照计算 ready/not_due/awaiting_observation；persisted 恒 false，仅 ready 有 metrics，没有正式 evaluation 回执。返回标准观测/原文/预测内容摘要，来源声明未认证。见[观测导入与预览](observation-preview.md)。
+
 ## 采集模块 → 系统
 
 顶层必填 schema_version、context_id、subject、facts。facts 为数组，可为空。每项必填 id（本批唯一）、name、value（有限数字或非空字符串）、unit、source、observed_at、available_at；无可选字段。subject 必须与预测对象一致。每条事实独立做 max_context_age_seconds 检查，不允许未来可用信息或静默丢弃过期事实。

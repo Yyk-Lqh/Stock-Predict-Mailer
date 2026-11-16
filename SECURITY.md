@@ -1,41 +1,50 @@
-# 安全策略
+# Security policy
 
-## 支持的版本
+English · [简体中文](#chinese) · [README](README.md)
 
-| 版本 | 安全更新 |
-| --- | --- |
-| 0.4.x | 支持 |
-| < 0.4 | 不支持 |
+## Supported scope
 
-本项目处于早期阶段，仅为单用户本机研究工具，**不要部署到公网**。上传服务只应监听 `127.0.0.1`。
+Security fixes target the current `main` branch and the current 0.5.x code line. Older snapshots are not maintained in parallel; reproduce against current code when practical. This is a local, single-user research tool. Bind services to loopback and do not expose them directly to the internet.
 
-## 报告漏洞
+## Report a vulnerability
 
-请使用 GitHub 的**私密漏洞报告**（仓库页面 → Security → Report a vulnerability），或直接联系维护者。**不要**在公开 issue、讨论区或 PR 中披露：
+Do not post exploit details, credentials, private documents, or sensitive logs in public issues, discussions, or pull requests.
 
-- 可利用的漏洞细节与复现脚本；
-- 签名私钥、SMTP 口令、API 密钥等任何凭据；
-- 用户上传的真实数据或由此推导的信息。
+At the time of this policy refresh, GitHub private vulnerability reporting is **not enabled** for this repository, and no dedicated security email is published. Do not assume the advisory creation URL is a working private inbox. If a **Report a vulnerability** button becomes available in the [Security tab](https://github.com/Yyk-Lqh/Stock-Predict-Mailer/security), use that private channel. Otherwise, open a minimal [contact request](https://github.com/Yyk-Lqh/Stock-Predict-Mailer/issues/new/choose) asking the [maintainer](https://github.com/Yyk-Lqh) to provide a confidential channel. Include no vulnerability description, affected private identities, exploit, or secrets in that public request. Wait for a private channel before sending details.
 
-我们会在确认后与你商定披露时间。本项目不承诺 SLA，但会尽力在合理时间内回应。
+Once a private channel is established, provide the affected commit/version and OS, minimal synthetic reproduction, expected/observed behavior, impact, and any mitigation. Redact real data and credentials. Coordinate disclosure with maintainers; this volunteer project has no guaranteed response or remediation SLA.
 
-## 重点关注范围
+## Security boundaries
 
-- **签名与安装链路**：`model_packages.py`（Ed25519 验签、包成员白名单、路径穿越、哈希校验）。
-- **模型加载**：只允许原生格式，任何引入 pickle / 任意反序列化的路径都按漏洞处理。
-- **训练子进程**：`model_training.py` 的环境变量清洗、超时与取消、暂存目录与 owner 命名空间边界。
-- **上传与接入**：`upload_server.py`、`intake*.py` 的路径处理、文件类型识别、体积与行数上限。
-- **数据隔离**：跨 owner 可见性、撤回授权后仍能训练、个人产物写入平台目录，均属安全问题。
-- **报告输出**：`report.py` 的 HTML 转义与引用完整性。
+- Local session, Host/Origin and CSRF checks complement task/owner access controls; they do not turn the application into an internet multi-tenant service.
+- Configuration secrets and retained document originals use encryption, but snippets, indexes, and some workspace outputs are plaintext. Protect the disk, backups, and keys separately.
+- Models, MCP tools, A2A endpoints, and SMTP are configured trust boundaries. Remote transmission of private material requires the relevant explicit authorization.
+- HTML/source text is untrusted. Path traversal, unsafe deserialization, cross-owner access, permission bypass, key leakage, and unintended sends or writes are reportable issues.
+- Preserve immutable archive content, point-in-time checks, frozen mail and idempotency; never silently retry ambiguous delivery.
+- GitHub secret scanning and push protection are not claimed as enabled. Contributors and maintainers must still inspect changes for secrets.
 
-## 不属于漏洞的情况
+Poor forecast accuracy is not itself a vulnerability. A bypass of the documented security or data-integrity boundary can be, even if it involves a local research workflow. Do not test against other people's workspaces or publish private data to demonstrate impact.
 
-- 合成数据下的预测效果好坏、Rank IC 数值、比较结论是否"改善"；
-- 缺少真实行情、真实交易日历或 stable 发布（属未完成功能，见 README 状态表）；
-- 本机 principal 不是登录身份这一已知设计（已在使用边界中声明）。
+<a id="chinese"></a>
 
-## 维护者注意事项
+## 简体中文
 
-- 私钥只保存在本地 `workspace/secrets/model-signing/`，不进入仓库、日志或发布包；
-- 开启并保持仓库的 Secret Scanning 与 Push Protection；
-- 定期检查 Actions 权限，`GITHUB_TOKEN` 默认只读。
+### 支持范围
+
+安全修复面向当前 main 和 0.5.x 代码线，不并行维护旧快照。项目为本机单用户研究工具，服务只绑定回环地址，不直接暴露到公网。
+
+### 报告安全问题
+
+不要在公开 Issue、讨论或 PR 发布漏洞细节、凭据、私有文档和敏感日志。本次更新时，仓库**未启用 GitHub 私密漏洞报告**，也没有公布专用安全邮箱；不要把创建 advisory 的链接当作可用私密收件箱。
+
+如果 [Security 页面](https://github.com/Yyk-Lqh/Stock-Predict-Mailer/security) 后续出现“Report a vulnerability”，使用该私密入口。否则，通过[最小联系请求](https://github.com/Yyk-Lqh/Stock-Predict-Mailer/issues/new/choose)请[维护者](https://github.com/Yyk-Lqh)提供私密渠道；公开请求不附漏洞描述、受影响私人身份、利用代码或密钥，等私密渠道确认后再发送细节。
+
+私下提供版本/提交、系统、最小合成复现、预期与实际结果、影响和缓解方式，删除真实资料及凭据。与维护者协商披露；志愿项目不承诺响应或修复 SLA。
+
+### 使用边界
+
+本机会话、同源/CSRF 与 owner 权限不等于公网租户隔离；配置凭据和原件的加密不覆盖所有片段、索引及输出。分别保管磁盘、备份与密钥。模型、MCP/A2A 和 SMTP 是独立信任边界，远程传送私有资料需明确授权。
+
+路径穿越、不安全反序列化、跨 owner 访问、权限绕过、密钥泄露和意外发送/写入均属报告范围。保留事前时点、不可覆盖档案、邮件冻结与幂等，不静默重试结果不确定的投递。不宣称仓库已启用 secret scanning 或 push protection，仍须人工检查变更。
+
+预测不准确本身不是安全漏洞，但绕过已说明的数据完整性或权限门禁可能是。不要在他人的工作区验证，不公开真实数据作为证明。

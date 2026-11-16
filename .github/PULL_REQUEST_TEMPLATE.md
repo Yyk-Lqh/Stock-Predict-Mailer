@@ -14,7 +14,7 @@
 
 - [ ] `uv run ruff check src tests scripts` 通过
 - [ ] `uv run python -m compileall -q src tests` 通过
-- [ ] `uv run python -m unittest discover -s tests -q` 通过（当前基线 50 项）
+- [ ] `uv run python -m unittest discover -s tests -q` 通过；纯文档改动填写相应链接、示例和呈现检查
 - [ ] `python scripts/check_repo_hygiene.py` 通过
 - [ ] 新增或修改的行为有对应测试
 
@@ -33,3 +33,4 @@
 - [ ] `CHANGELOG.md` 已更新（行为变化时）
 - [ ] `docs/阶段验收记录.md` 已更新（新增验收口径或测试数量时）
 - [ ] 相关专题文档与 README 命令/状态已同步
+- [ ] 中英文 README 及流程图保持同步，适用时执行 `python scripts/build_runtime_diagram.py --check`

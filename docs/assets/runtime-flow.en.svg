@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1240" viewBox="0 0 1600 1240" role="img" aria-labelledby="title description" xml:lang="en">
+<title id="title">From forecasts to evidence</title><desc id="description">Detailed runtime: strict intake, optional archive and knowledge, bounded analysis, reports, durable delivery, observation gates, preview and explicit CLI receipts.</desc>
+<defs>
+<marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#60a5fa"/></marker>
+<marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399"/></marker>
+<marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#fbbf24"/></marker>
+<marker id="arrow-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#a78bfa"/></marker>
+</defs>
+<style>
+text {font-family:Inter,"Segoe UI",system-ui,"Microsoft YaHei",Arial,sans-serif}
+.title {fill:#f1f5f9;font-size:38px;font-weight:650} .sub {fill:#94a3b8;font-size:17.5px}
+.lane {fill:#c7d2fe;font-size:15px;font-weight:650;letter-spacing:0.8px}
+.name {fill:#f1f5f9;font-size:20px;font-weight:600} .body {fill:#cbd5e1;font-size:15.5px}
+.hint {fill:#94a3b8;font-size:13.5px} .state {fill:#34d399;font-size:13.5px;letter-spacing:0.3px}
+.edge {fill:none;stroke-width:1.9;stroke-linecap:round} .optional {stroke-dasharray:7 6}
+.flow {stroke-dasharray:8 6;animation:dash 4s linear infinite} .token {fill:#e2e8f0}
+@keyframes dash {to {stroke-dashoffset:-56}}
+@media(prefers-reduced-motion:reduce) {.flow {animation:none} .token {display:none}}
+</style>
+<rect width="1600" height="1240" rx="24" fill="#0b1220"/>
+<rect x="0.5" y="0.5" width="1599" height="1239" rx="24" fill="none" stroke="#1e293b"/>
+<text x="40" y="66" class="title">From forecasts to evidence</text>
+<text x="40" y="104" class="sub">Stock-Predict-Mailer / local-first runtime / explicit permissions at every boundary</text>
+<path d="M1156 54H1198" stroke="#94a3b8" class="edge"/>
+<text x="1208" y="59" class="hint">default path</text>
+<path d="M1332 54H1374" stroke="#94a3b8" class="edge optional"/>
+<text x="1384" y="59" class="hint">opt-in / separate command</text>
+<circle cx="1162" cy="88" r="4" fill="#e2e8f0"/>
+<text x="1176" y="93" class="hint">animated route, not telemetry</text>
+<rect x="40" y="186" width="9" height="9" rx="2" fill="#60a5fa"/>
+<text x="60" y="195" class="lane">01 / VALIDATE, EXPLAIN, PUBLISH</text>
+<path d="M40 510H1560" stroke="#1b2740" stroke-width="1"/>
+<rect x="40" y="528" width="9" height="9" rx="2" fill="#fbbf24"/>
+<text x="60" y="537" class="lane">02 / OPTIONAL CAPABILITIES + MAIL</text>
+<path d="M40 862H1560" stroke="#1b2740" stroke-width="1"/>
+<rect x="40" y="880" width="9" height="9" rx="2" fill="#a78bfa"/>
+<text x="60" y="889" class="lane">03 / OBSERVE AT THE RIGHT TIME</text>
+<rect x="40" y="226" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M41 239V269" stroke="#60a5fa" stroke-width="3" stroke-linecap="round"/>
+<text x="58" y="260" class="name">Prediction intake</text>
+<text x="58" y="292" class="body">Mock / file / HTTP or console task</text>
+<text x="58" y="316" class="body">Upstream model owns its prediction</text>
+<text x="58" y="340" class="body">Direction, value, horizon, timestamps</text>
+<rect x="430" y="226" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M431 239V269" stroke="#60a5fa" stroke-width="3" stroke-linecap="round"/>
+<text x="448" y="260" class="name">Strict contract gates</text>
+<text x="448" y="292" class="body">Version, subject, finite numbers</text>
+<text x="448" y="316" class="body">Fresh prediction + available context</text>
+<text x="448" y="340" class="body">Reject invalid or stale inputs</text>
+<rect x="820" y="226" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M821 239V269" stroke="#60a5fa" stroke-width="3" stroke-linecap="round"/>
+<text x="838" y="260" class="name">Bounded analysis</text>
+<text x="838" y="292" class="body">Deterministic or configured agents</text>
+<text x="838" y="316" class="body">MCP / A2A: authorized tools + roles</text>
+<text x="838" y="340" class="body">Time, calls, steps and cost limits</text>
+<rect x="1210" y="226" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M1211 239V269" stroke="#60a5fa" stroke-width="3" stroke-linecap="round"/>
+<text x="1228" y="260" class="name">Evidence-grounded report</text>
+<text x="1228" y="292" class="body">Facts, inferences, limits, risks</text>
+<text x="1228" y="316" class="body">JSON + escaped HTML + chart data</text>
+<text x="1228" y="340" class="body">Same evidence in the frozen email</text>
+<rect x="40" y="568" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M41 581V611" stroke="#fbbf24" stroke-width="3" stroke-linecap="round"/>
+<text x="58" y="602" class="name">Explicit forecast archive</text>
+<text x="58" y="634" class="body">Per-task target, metric, calendar</text>
+<text x="58" y="658" class="body">Freeze before any provider call</text>
+<text x="58" y="682" class="body">Immutable; never inherits opt-in</text>
+<rect x="430" y="568" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M431 581V611" stroke="#fbbf24" stroke-width="3" stroke-linecap="round"/>
+<text x="448" y="602" class="name">Private knowledge</text>
+<text x="448" y="634" class="body">Upload → clean → review → index</text>
+<text x="448" y="658" class="body">Worker uses the same workspace + key</text>
+<text x="448" y="682" class="body">Authorized citations at the cutoff</text>
+<rect x="820" y="568" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M821 581V611" stroke="#fbbf24" stroke-width="3" stroke-linecap="round"/>
+<text x="838" y="602" class="name">Conversation + progress</text>
+<text x="838" y="634" class="body">Memory, checkpoints and event stream</text>
+<text x="838" y="658" class="body">Visible delegation and degradation</text>
+<text x="838" y="682" class="body">Animation is not a model invocation</text>
+<rect x="1210" y="568" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M1211 581V611" stroke="#fbbf24" stroke-width="3" stroke-linecap="round"/>
+<text x="1228" y="602" class="name">MailCore outbox</text>
+<text x="1228" y="634" class="body">Frozen content, recipient, endpoint</text>
+<text x="1228" y="658" class="body">Deduplicate → deliver → audit state</text>
+<text x="1228" y="682" class="body">Bounded retry; review uncertainty</text>
+<rect x="40" y="920" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M41 933V963" stroke="#a78bfa" stroke-width="3" stroke-linecap="round"/>
+<text x="58" y="954" class="name">Explicit observation import</text>
+<text x="58" y="986" class="body">UTF-8 JSON or single-row CSV</text>
+<text x="58" y="1010" class="body">No inferred units or adjustment rules</text>
+<text x="58" y="1034" class="body">256 KiB; raw + normalized hashes</text>
+<rect x="430" y="920" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M431 933V963" stroke="#a78bfa" stroke-width="3" stroke-linecap="round"/>
+<text x="448" y="954" class="name">Match + time gates</text>
+<text x="448" y="986" class="body">Subject / metric / unit / synthetic</text>
+<text x="448" y="1010" class="body">Observed time = predeclared target</text>
+<text x="448" y="1034" class="body">Target + availability ≤ cutoff ≤ now</text>
+<rect x="820" y="920" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M821 933V963" stroke="#a78bfa" stroke-width="3" stroke-linecap="round"/>
+<text x="838" y="954" class="name">Web preview · no writes</text>
+<text x="838" y="986" class="body">Not due / unavailable → no score</text>
+<text x="838" y="1010" class="body">Ready → direction + numeric errors</text>
+<text x="838" y="1034" class="body">persisted=false; archive unchanged</text>
+<rect x="1210" y="920" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M1211 933V963" stroke="#a78bfa" stroke-width="3" stroke-linecap="round"/>
+<text x="1228" y="954" class="name">Separate CLI evaluation</text>
+<text x="1228" y="986" class="body">Explicit forecast evaluate command</text>
+<text x="1228" y="1010" class="body">Append immutable, versioned receipt</text>
+<text x="1228" y="1034" class="body">Never change the original report</text>
+<path d="M390 296H430" stroke="#60a5fa" class="edge flow" marker-end="url(#arrow-blue)"/>
+<path d="M780 296H820" stroke="#60a5fa" class="edge flow" marker-end="url(#arrow-blue)"/>
+<path d="M1170 296H1210" stroke="#34d399" class="edge flow" marker-end="url(#arrow-green)"/>
+<path d="M368 568V474H1000V366" stroke="#fbbf24" class="edge optional" marker-end="url(#arrow-amber)"/>
+<path d="M605 568V430H905V366" stroke="#fbbf24" class="edge optional" marker-end="url(#arrow-amber)"/>
+<path d="M1090 366V568" stroke="#60a5fa" class="edge flow" marker-end="url(#arrow-blue)"/>
+<path d="M1385 366V568" stroke="#34d399" class="edge flow" marker-end="url(#arrow-green)"/>
+<path d="M368 708V920" stroke="#a78bfa" class="edge optional" marker-end="url(#arrow-violet)"/>
+<path d="M390 990H430" stroke="#a78bfa" class="edge flow" marker-end="url(#arrow-violet)"/>
+<path d="M780 990H820" stroke="#a78bfa" class="edge flow" marker-end="url(#arrow-violet)"/>
+<path d="M1170 990H1210" stroke="#fbbf24" class="edge optional" marker-end="url(#arrow-amber)"/>
+<circle r="4" class="token"><animateMotion dur="4s" begin="0s" repeatCount="indefinite" path="M390 296H430"/></circle>
+<circle r="4" class="token"><animateMotion dur="5s" begin="1s" repeatCount="indefinite" path="M780 296H820"/></circle>
+<circle r="4" class="token"><animateMotion dur="6s" begin="2s" repeatCount="indefinite" path="M1170 296H1210"/></circle>
+<circle r="4" class="token"><animateMotion dur="7s" begin="0s" repeatCount="indefinite" path="M368 568V474H1000V366"/></circle>
+<circle r="4" class="token"><animateMotion dur="4s" begin="1s" repeatCount="indefinite" path="M605 568V430H905V366"/></circle>
+<circle r="4" class="token"><animateMotion dur="5s" begin="2s" repeatCount="indefinite" path="M1090 366V568"/></circle>
+<circle r="4" class="token"><animateMotion dur="6s" begin="0s" repeatCount="indefinite" path="M1385 366V568"/></circle>
+<circle r="4" class="token"><animateMotion dur="7s" begin="1s" repeatCount="indefinite" path="M368 708V920"/></circle>
+<circle r="4" class="token"><animateMotion dur="4s" begin="2s" repeatCount="indefinite" path="M390 990H430"/></circle>
+<circle r="4" class="token"><animateMotion dur="5s" begin="0s" repeatCount="indefinite" path="M780 990H820"/></circle>
+<circle r="4" class="token"><animateMotion dur="6s" begin="1s" repeatCount="indefinite" path="M1170 990H1210"/></circle>
+<text x="1214" y="742" class="state">pending · simulated / submitted · retry · uncertain</text>
+<rect x="40" y="1100" width="1520" height="52" rx="10" fill="#141f33" stroke="#22304a"/>
+<rect x="40" y="1100" width="3" height="52" rx="1.5" fill="#64748b"/>
+<text x="60" y="1134" class="body">OPERATIONS  /  doctor  ·  runtime lifecycle  ·  encrypted backup  ·  isolated restore  ·  preflight + transactional migration</text>
+<text x="40" y="1200" class="sub">Moving markers illustrate routes, not live telemetry. Dashed routes require an explicit opt-in or a separate command.</text></svg>

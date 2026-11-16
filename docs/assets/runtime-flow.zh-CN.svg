@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1240" viewBox="0 0 1600 1240" role="img" aria-labelledby="title description" xml:lang="zh-CN">
+<title id="title">从上游预测到可核对的证据</title><desc id="description">详细运行流程：严格接入、可选归档与知识库、有界分析、报告、持久投递、观测时点、预览及显式 CLI 回执。</desc>
+<defs>
+<marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#60a5fa"/></marker>
+<marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399"/></marker>
+<marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#fbbf24"/></marker>
+<marker id="arrow-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#a78bfa"/></marker>
+</defs>
+<style>
+text {font-family:Inter,"Segoe UI",system-ui,"Microsoft YaHei",Arial,sans-serif}
+.title {fill:#f1f5f9;font-size:38px;font-weight:650} .sub {fill:#94a3b8;font-size:17.5px}
+.lane {fill:#c7d2fe;font-size:15px;font-weight:650;letter-spacing:0.8px}
+.name {fill:#f1f5f9;font-size:20px;font-weight:600} .body {fill:#cbd5e1;font-size:15.5px}
+.hint {fill:#94a3b8;font-size:13.5px} .state {fill:#34d399;font-size:13.5px;letter-spacing:0.3px}
+.edge {fill:none;stroke-width:1.9;stroke-linecap:round} .optional {stroke-dasharray:7 6}
+.flow {stroke-dasharray:8 6;animation:dash 4s linear infinite} .token {fill:#e2e8f0}
+@keyframes dash {to {stroke-dashoffset:-56}}
+@media(prefers-reduced-motion:reduce) {.flow {animation:none} .token {display:none}}
+</style>
+<rect width="1600" height="1240" rx="24" fill="#0b1220"/>
+<rect x="0.5" y="0.5" width="1599" height="1239" rx="24" fill="none" stroke="#1e293b"/>
+<text x="40" y="66" class="title">从上游预测到可核对的证据</text>
+<text x="40" y="104" class="sub">Stock-Predict-Mailer / 本机运行 / 每个边界保留明确授权</text>
+<path d="M1156 54H1198" stroke="#94a3b8" class="edge"/>
+<text x="1208" y="59" class="hint">默认路径</text>
+<path d="M1332 54H1374" stroke="#94a3b8" class="edge optional"/>
+<text x="1384" y="59" class="hint">显式启用或单独命令</text>
+<circle cx="1162" cy="88" r="4" fill="#e2e8f0"/>
+<text x="1176" y="93" class="hint">移动标记仅示意路径</text>
+<rect x="40" y="186" width="9" height="9" rx="2" fill="#60a5fa"/>
+<text x="60" y="195" class="lane">01 / 校验、分析与报告</text>
+<path d="M40 510H1560" stroke="#1b2740" stroke-width="1"/>
+<rect x="40" y="528" width="9" height="9" rx="2" fill="#fbbf24"/>
+<text x="60" y="537" class="lane">02 / 按需能力与持久化交付</text>
+<path d="M40 862H1560" stroke="#1b2740" stroke-width="1"/>
+<rect x="40" y="880" width="9" height="9" rx="2" fill="#a78bfa"/>
+<text x="60" y="889" class="lane">03 / 在正确时点核对观测</text>
+<rect x="40" y="226" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M41 239V269" stroke="#60a5fa" stroke-width="3" stroke-linecap="round"/>
+<text x="58" y="260" class="name">接收上游预测</text>
+<text x="58" y="292" class="body">Mock / 文件 / HTTP 或控制台任务</text>
+<text x="58" y="316" class="body">预测结果由上游模型负责</text>
+<text x="58" y="340" class="body">方向、数值、周期与时间声明</text>
+<rect x="430" y="226" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M431 239V269" stroke="#60a5fa" stroke-width="3" stroke-linecap="round"/>
+<text x="448" y="260" class="name">严格输入门禁</text>
+<text x="448" y="292" class="body">版本、标的与有限数字</text>
+<text x="448" y="316" class="body">预测未过期，上下文在当时可用</text>
+<text x="448" y="340" class="body">非法或过期输入阻断任务</text>
+<rect x="820" y="226" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M821 239V269" stroke="#60a5fa" stroke-width="3" stroke-linecap="round"/>
+<text x="838" y="260" class="name">有界分析</text>
+<text x="838" y="292" class="body">确定性分析或已配置 Agent</text>
+<text x="838" y="316" class="body">MCP / A2A：获准工具与角色</text>
+<text x="838" y="340" class="body">时间、调用、步骤和费用上限</text>
+<rect x="1210" y="226" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M1211 239V269" stroke="#60a5fa" stroke-width="3" stroke-linecap="round"/>
+<text x="1228" y="260" class="name">带证据的分层报告</text>
+<text x="1228" y="292" class="body">事实 / 推断 / 限制 / 风险</text>
+<text x="1228" y="316" class="body">JSON、转义 HTML 与图表资料</text>
+<text x="1228" y="340" class="body">冻结邮件沿用同一份来源证据</text>
+<rect x="40" y="568" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M41 581V611" stroke="#fbbf24" stroke-width="3" stroke-linecap="round"/>
+<text x="58" y="602" class="name">显式事前归档</text>
+<text x="58" y="634" class="body">本轮声明目标、指标、单位与日历</text>
+<text x="58" y="658" class="body">在可选服务调用前固定口径</text>
+<text x="58" y="682" class="body">不可覆盖；下一轮不继承开关</text>
+<rect x="430" y="568" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M431 581V611" stroke="#fbbf24" stroke-width="3" stroke-linecap="round"/>
+<text x="448" y="602" class="name">私有知识库</text>
+<text x="448" y="634" class="body">上传 → 清洗 → 审批 → 索引</text>
+<text x="448" y="658" class="body">Worker 沿用同一工作区和密钥</text>
+<text x="448" y="682" class="body">仅引用有权限且符合截止的证据</text>
+<rect x="820" y="568" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M821 581V611" stroke="#fbbf24" stroke-width="3" stroke-linecap="round"/>
+<text x="838" y="602" class="name">会话与任务进度</text>
+<text x="838" y="634" class="body">记忆、检查点和事件流</text>
+<text x="838" y="658" class="body">委派、失败与降级明确展示</text>
+<text x="838" y="682" class="body">场景动画不等于模型正在调用</text>
+<rect x="1210" y="568" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M1211 581V611" stroke="#fbbf24" stroke-width="3" stroke-linecap="round"/>
+<text x="1228" y="602" class="name">MailCore 持久发件箱</text>
+<text x="1228" y="634" class="body">冻结正文、收件人与投递端点</text>
+<text x="1228" y="658" class="body">去重 → 交付 → 状态审计</text>
+<text x="1228" y="682" class="body">有界重试；不确定结果人工核对</text>
+<rect x="40" y="920" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M41 933V963" stroke="#a78bfa" stroke-width="3" stroke-linecap="round"/>
+<text x="58" y="954" class="name">显式导入观测</text>
+<text x="58" y="986" class="body">UTF-8 JSON 或固定字段单行 CSV</text>
+<text x="58" y="1010" class="body">不猜测单位、复权口径或交易日</text>
+<text x="58" y="1034" class="body">256 KiB；原文与标准观测摘要</text>
+<rect x="430" y="920" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M431 933V963" stroke="#a78bfa" stroke-width="3" stroke-linecap="round"/>
+<text x="448" y="954" class="name">匹配与时点门禁</text>
+<text x="448" y="986" class="body">标的 / 指标 / 单位 / 合成标记</text>
+<text x="448" y="1010" class="body">观测时点必须等于事前目标</text>
+<text x="448" y="1034" class="body">到期且可用时间 ≤ 截止 ≤ 现在</text>
+<rect x="820" y="920" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M821 933V963" stroke="#a78bfa" stroke-width="3" stroke-linecap="round"/>
+<text x="838" y="954" class="name">网页预览 · 不写入</text>
+<text x="838" y="986" class="body">未到期或不可用：不显示评分</text>
+<text x="838" y="1010" class="body">符合条件：方向与数值误差</text>
+<text x="838" y="1034" class="body">persisted=false；档案不变</text>
+<rect x="1210" y="920" width="350" height="140" rx="12" fill="#111c2e" stroke="#2a3a52"/>
+<path d="M1211 933V963" stroke="#a78bfa" stroke-width="3" stroke-linecap="round"/>
+<text x="1228" y="954" class="name">单独执行 CLI 评估</text>
+<text x="1228" y="986" class="body">显式 forecast evaluate 命令</text>
+<text x="1228" y="1010" class="body">追加不可覆盖的版本化回执</text>
+<text x="1228" y="1034" class="body">不改变原始分析报告</text>
+<path d="M390 296H430" stroke="#60a5fa" class="edge flow" marker-end="url(#arrow-blue)"/>
+<path d="M780 296H820" stroke="#60a5fa" class="edge flow" marker-end="url(#arrow-blue)"/>
+<path d="M1170 296H1210" stroke="#34d399" class="edge flow" marker-end="url(#arrow-green)"/>
+<path d="M368 568V474H1000V366" stroke="#fbbf24" class="edge optional" marker-end="url(#arrow-amber)"/>
+<path d="M605 568V430H905V366" stroke="#fbbf24" class="edge optional" marker-end="url(#arrow-amber)"/>
+<path d="M1090 366V568" stroke="#60a5fa" class="edge flow" marker-end="url(#arrow-blue)"/>
+<path d="M1385 366V568" stroke="#34d399" class="edge flow" marker-end="url(#arrow-green)"/>
+<path d="M368 708V920" stroke="#a78bfa" class="edge optional" marker-end="url(#arrow-violet)"/>
+<path d="M390 990H430" stroke="#a78bfa" class="edge flow" marker-end="url(#arrow-violet)"/>
+<path d="M780 990H820" stroke="#a78bfa" class="edge flow" marker-end="url(#arrow-violet)"/>
+<path d="M1170 990H1210" stroke="#fbbf24" class="edge optional" marker-end="url(#arrow-amber)"/>
+<circle r="4" class="token"><animateMotion dur="4s" begin="0s" repeatCount="indefinite" path="M390 296H430"/></circle>
+<circle r="4" class="token"><animateMotion dur="5s" begin="1s" repeatCount="indefinite" path="M780 296H820"/></circle>
+<circle r="4" class="token"><animateMotion dur="6s" begin="2s" repeatCount="indefinite" path="M1170 296H1210"/></circle>
+<circle r="4" class="token"><animateMotion dur="7s" begin="0s" repeatCount="indefinite" path="M368 568V474H1000V366"/></circle>
+<circle r="4" class="token"><animateMotion dur="4s" begin="1s" repeatCount="indefinite" path="M605 568V430H905V366"/></circle>
+<circle r="4" class="token"><animateMotion dur="5s" begin="2s" repeatCount="indefinite" path="M1090 366V568"/></circle>
+<circle r="4" class="token"><animateMotion dur="6s" begin="0s" repeatCount="indefinite" path="M1385 366V568"/></circle>
+<circle r="4" class="token"><animateMotion dur="7s" begin="1s" repeatCount="indefinite" path="M368 708V920"/></circle>
+<circle r="4" class="token"><animateMotion dur="4s" begin="2s" repeatCount="indefinite" path="M390 990H430"/></circle>
+<circle r="4" class="token"><animateMotion dur="5s" begin="0s" repeatCount="indefinite" path="M780 990H820"/></circle>
+<circle r="4" class="token"><animateMotion dur="6s" begin="1s" repeatCount="indefinite" path="M1170 990H1210"/></circle>
+<text x="1214" y="742" class="state">pending · simulated / submitted · retry · uncertain</text>
+<rect x="40" y="1100" width="1520" height="52" rx="10" fill="#141f33" stroke="#22304a"/>
+<rect x="40" y="1100" width="3" height="52" rx="1.5" fill="#64748b"/>
+<text x="60" y="1134" class="body">运行保障  /  doctor 诊断  ·  组件启停  ·  加密备份  ·  隔离恢复  ·  迁移预检与单库事务</text>
+<text x="40" y="1200" class="sub">移动标记仅说明路径，不是实时遥测。虚线路径需要本轮显式启用，或单独执行对应命令。</text></svg>

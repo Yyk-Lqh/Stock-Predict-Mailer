@@ -1,99 +1,88 @@
-# 参与贡献
+# Contributing to Stock-Predict-Mailer
 
-本项目采用 **公开仓库 + fork / Pull Request** 的协作方式。任何人都可以 fork、修改并提交 PR；合并由维护者执行。若你希望**不经过他人审核直接合并**，需要被授予 Write 权限（见文末"权限与合并"）。
+English · [简体中文](#chinese) · [README](README.md)
 
-提交前请先读 [README](README.md) 与 [阶段验收记录](docs/阶段验收记录.md)，本项目对"能不能宣称完成"有严格口径。
+Contributions are welcome through issues and pull requests. Start with a reproducible problem, the expected behavior, and a focused change. For sensitive reports follow [SECURITY.md](SECURITY.md); participation follows our [Code of Conduct](CODE_OF_CONDUCT.md).
 
-## 1 环境准备
+## Set up a development environment
 
-```powershell
+```shell
 git clone https://github.com/Yyk-Lqh/Stock-Predict-Mailer.git
 cd Stock-Predict-Mailer
-uv sync --extra research --extra trees --extra dev
+uv sync --all-extras --locked
+git switch -c codex/describe-your-change
 ```
 
-- Python 3.11+，依赖由 `uv.lock` 锁定，请勿手工改 `uv.lock` 以外的版本号。
-- `--extra trees` 用来跑 LightGBM 相关测试。不装也能跑，但那部分测试会 skip，等于降低覆盖，PR 前请装。
-- 不想装在主环境时，也可以用 `uvx ruff@0.17.2` 单独调 lint。
+External contributors can fork first. `codex/` is the default for agent-created branches; human feature/fix/docs branches are also welcome. Python 3.11+ is required. Node.js is needed for browser-script syntax and the existing `.cjs` checks. Modify dependency declarations with the corresponding lockfile update; do not edit the lockfile by hand.
 
-## 2 提交前必须通过的检查
+## Validate your change
 
-```powershell
-uv run ruff check src tests scripts
-uv run python -m compileall -q src tests
-uv run python -m unittest discover -s tests -q
-python scripts/check_repo_hygiene.py
-python scripts/check_naming.py
+```shell
+uv run ruff check src/stock_predict_mailer src/mcp_server tests scripts
+uv run python -m compileall -q src tests scripts
+uv run python -m unittest discover -s tests -v
+uv run python scripts/build_schema_catalog.py --check
+uv run python scripts/build_console.py --check
+uv run python scripts/check_repo_hygiene.py
+uv run python scripts/check_naming.py
+node --check src/stock_predict_mailer/control/web/app.js
+node --check src/stock_predict_mailer/control/web/memory.js
+git diff --check
 ```
 
-- 测试用标准库 **unittest**，项目没有 pytest 配置，请不要引入第二套测试框架。
-- 当前本机基线为 **160 项测试通过**，详见 docs/control-validation.md；基础链路可单独运行 test_agent_service.py，配置/MCP/A2A 扩展运行 test_control.py。新增行为必须配测试；修 bug 请先补一个能复现的用例。
-- CI 在 `ubuntu-latest` 与 `windows-latest`、Python 3.11 与 3.13 上跑同一套测试。只在本机通过的改动不算通过——Windows 的文件替换、时区与路径行为都与 Linux 不同。
+Run the relevant `tests/test_*.cjs` scripts when changing their browser modules. Edit `control/web/modules/*.js`, then run `uv run python scripts/build_console.py` to regenerate `memory.js`. Prefer a small regression that fails before a bug fix; documentation-only edits need links, examples, diagrams, and naming checked rather than invented behavior tests. Report optional-dependency or OS-privilege skips accurately. Current results belong to the exact CI run, not a permanent test-count promise.
 
-## 3 流程
+## Preserve the project contracts
 
-1. Fork，并从 `main` 切分支：`feature/<主题>`、`fix/<问题>`、`docs/<主题>`。
-2. 小步提交，提交信息沿用仓库风格：`feat:` / `fix:` / `docs:` / `chore:` + 中文正文（可用多行列表说明动机与影响）。
-3. 推送后开 PR，填写模板中的检查项。
-4. CI 变绿 + 至少 1 次 review 通过后再合并；合并方式用 **Squash** 或 **Rebase**，保持 `main` 线性历史。
+- Separate upstream facts from inferences, missing evidence, synthetic data, and investment uncertainty.
+- Keep schemas strict, numbers finite, and point-in-time rules explicit. Preview must not silently become a write.
+- Enforce task/owner permissions, tool allowlists, and budgets. A local principal is not an internet authentication system.
+- Preserve frozen mail content, idempotency, endpoint binding, and explicit review of uncertain delivery.
+- Do not bypass training authorization or load untrusted pickle artifacts. Keep optional research behavior separate from the default result-consumer flow.
+- Use temporary workspaces and synthetic fixtures. Never commit live data, private documents, model weights, keys, databases, logs, or local configuration.
+- Keep platform-native behavior covered on Linux and Windows; locks, paths, file replacement, and process cleanup differ.
 
-## 4 代码约定
+## Naming and documentation
 
-这些不是风格偏好，而是项目已验收的行为契约，改动前请先开 issue 讨论：
+Use **Stock-Predict-Mailer** in prose, `stock-predict-mailer` for distribution/CLI, and `stock_predict_mailer` for imports. Environment variables begin with `STOCK_PREDICT_MAILER_`. The source of truth is [naming.py](src/stock_predict_mailer/naming.py).
 
-- **不使用 pickle 推理路径**。正式模型只走原生 JSON（线性模型）与 LightGBM 原生文本；新增算法必须提供等价的原生序列化格式。
-- **任务契约是破坏性变更**。`contract_id` 由契约内容哈希得出，改特征顺序、股票池、标签周期或基准都会换 ID 并使旧模型不兼容。只能升 `schema_version`，不要原地改。
-- **不要把 `principal` 当认证**。它是本机受信配置；上传服务只监听 `127.0.0.1`。若要让多人共用，必须引入真正的身份与会话层，而不是"让用户填 owner"。
-- **平台训练授权不可绕过**。用户上传数据默认 `platform_training=false`；不要为了调试方便删掉 `dataset_auth` 的门禁，也不要让上传页面获得训练或模型执行入口。
-- **个人产物只写 owner 命名空间**（`registry/personal/<owner_key>/`），平台目录 `registry/versions/` 不接受个人写入。
-- **失败不得静默**：训练失败、取消、超时需要保留可解释的错误类别，且不得改写当前选择或覆盖旧版本。
-- **成本诊断不是可交易回测**，报告与文档中不要升级表述。
+Keep [README.md](README.md) and [README.zh-CN.md](README.zh-CN.md) aligned. Link detailed behavior to its manual. Update changelog/acceptance records when behavior changes; do not rewrite historical validation as if it described the present. For workflow assets, update both language diagrams and [their explanation](docs/runtime-flow.md).
 
-## 5 命名约定
+## Pull requests and merge
 
-项目正式名称是 **Stock-Predict-Mailer**，只有三种合法书写形式，各自被外部规则固定，不能凭喜好替换：
+1. Branch from current `main`; keep unrelated changes separate.
+2. Use meaningful commits. Chinese summaries match this repository's current history; concise English summaries are also accepted.
+3. Describe the trigger, resulting behavior, scope, and actual verification in the PR template.
+4. Wait for the applicable checks. Maintainers should review before merging; repository protection settings remain the authoritative enforcement.
+5. Do not bypass protected-branch requirements, force-push shared history, or claim local success proves every platform works.
 
-| 形式 | 值 | 用在哪 |
-| --- | --- | --- |
-| 专有名 | `Stock-Predict-Mailer` | 标题、文档正文、界面、日志抬头、A2A 卡片 |
-| 发行名 | `stock-predict-mailer` | 包索引、`uv` / `pip`、命令行入口 |
-| 导入名 | `stock_predict_mailer` | 目录名与 `import` 语句 |
+By contributing, you agree to make your contribution available under the project's [MIT license](LICENSE), subject to retained third-party notices. No separate CLA is required by this guide.
 
-派生的标识符沿用同一词根：环境变量是 `STOCK_PREDICT_MAILER_<KEY>`（例如 `STOCK_PREDICT_MAILER_MASTER_KEY`），
-会话 Cookie 是 `stock_predict_mailer_session`，浏览器本地键以 `stock_predict_mailer.` 开头。
-旧前缀 `SPM_` 只在读取时兼容，新代码与新文档不得再写。
+<a id="chinese"></a>
 
-唯一来源是 `src/stock_predict_mailer/naming.py`；`python scripts/check_naming.py` 会拦下缺连字符或改写下划线的名字、
-已退役的命令别名与旧界面品牌，以及散落在代码里的旧环境变量前缀。
-`docs/legacy-readme.md` 是历史归档，按原样保留。
+## 简体中文
 
-## 6 文档同步要求
+欢迎通过 Issue 和 PR 贡献。先说明可复现问题、预期行为与改动范围；敏感问题遵循[安全策略](SECURITY.md#chinese)，社区互动遵循[行为准则](CODE_OF_CONDUCT.md#chinese)。
 
-改动行为、命令、门禁或范围时，同一个 PR 内必须同步：
+### 环境与验证
 
-- `CHANGELOG.md`（按版本归组）；
-- `docs/阶段验收记录.md`（新增/变化的验收口径与测试数量）；
-- 相关专题文档（如 `docs/平台模型命令与验收.md`）；
-- `README.md` 中受影响的命令或状态表。
+按上方命令安装 `uv sync --all-extras --locked`，外部贡献者可先 Fork。Agent 分支默认使用 `codex/`；人工分支可用 feature/fix/docs。Python 需 3.11+，浏览器脚本检查需 Node.js。依赖声明变化时同步更新锁文件，不手工修改锁文件。
 
-只改代码不改文档的 PR 会被要求补充。
+执行上方 lint、编译、unittest、结构目录、生成脚本、命名、仓库卫生及 diff 检查；改动对应浏览器模块时运行相关 `.cjs` 检查。编辑 `control/web/modules/*.js` 后重新生成 `memory.js`。修复应有能先复现失败的回归；纯文档改动检查链接、示例和图表即可。准确说明系统权限或可选依赖导致的跳过，不把某次测试数量当成永久基线。
 
-## 7 数据、密钥与隐私
+### 行为边界
 
-- 真实行情、私有文档、模型包、签名私钥、运行数据库与日志**一律不进仓库**，`.gitignore` 已排除，但 PR 仍可能误带，CI 的 `check_repo_hygiene.py` 会拦截。
-- 测试只能用合成数据（`demo-data`）或临时目录生成的数据，不要在测试里引用本地真实文件路径。
-- 发现密钥泄露请按 [SECURITY.md](SECURITY.md) 走私密渠道，不要开公开 issue。
+- 区分事实、推断、证据缺失、合成资料与投资不确定性，不捏造置信度。
+- 保留严格 schema、有限数字及事前/可用时点校验，预览不得隐式写入。
+- 不绕过任务/owner 权限、工具白名单、预算、训练授权和邮件不确定状态确认。
+- 不加载不可信 pickle；默认预测消费入口与可选研究能力分开。
+- 测试使用临时工作区和合成资料，不提交真实数据、私有文档、权重、密钥、数据库、日志或本地配置。
+- 同时考虑 Linux/Windows 锁、路径、替换和进程回收差异。
 
-## 8 权限与合并
+### 命名、文档与合并
 
-| 角色 | 能做 | 怎么获得 |
-| --- | --- | --- |
-| 外部贡献者 | fork、提 PR、评论 | 无需申请 |
-| 协作者（Write） | 直接推分支、自行合并 PR（CI 必须绿） | 维护者邀请，通常先有 1–2 个被合并的 PR |
-| 维护者（Admin） | 合并、发布 tag、调整规则 | 仓库所有方 |
+正文使用 **Stock-Predict-Mailer**，发行/CLI 为 `stock-predict-mailer`，导入为 `stock_predict_mailer`，环境变量以 `STOCK_PREDICT_MAILER_` 开头；以 naming.py 为准。同步中英文 README、相关手册和适用的变更/验收记录；历史记录保留当时语义，流程图需同步两种语言。
 
-约定上 `main` 分支由 Ruleset 保护：禁止直推与强推、必须 PR、必须 CI 通过。**但该规则集截至 0.5.0 尚未在仓库设置中实际启用**，因此当前不能依赖平台强制，只能靠协作者自觉。维护者应在 Settings → Rules 中尽快建好规则集；在此之前，请把"不要直接推 `main`"当作硬性约定而非建议。
+从最新 main 建分支，按有效范围提交，在 PR 说明问题、结果和实际验证。中文提交摘要沿用仓库习惯，也接受简洁英文。适用检查通过后由维护者审查合并，不绕过平台保护、不强推共享历史，不把本地通过等同于跨平台通过。
 
-## 9 行为准则
-
-参与即表示同意 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。技术分歧请围绕可复现证据讨论，不要针对个人。
+贡献按项目 [MIT 许可](LICENSE) 提供，保留第三方声明；本指南不要求额外 CLA。

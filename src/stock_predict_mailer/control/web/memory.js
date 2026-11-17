@@ -54,7 +54,10 @@ async function refreshMemory() {
 }
 
 async function useMemoryKey(key) {
+  window.DesktopPoll?.stop();
+  window.DesktopSessions?.identityChanged();
   window.ForecastUI?.identityChanged();
+  window.DesktopRecords?.identityChanged();
   const previous = memoryKey;
   memoryKey = key;
   try {
@@ -66,7 +69,10 @@ async function useMemoryKey(key) {
     window.Workbench?.identityChanged();
   } catch (error) {
     memoryKey = previous;
+    window.DesktopSessions?.identityChanged();
+    window.DesktopRecords?.identityChanged();
     await refreshMemory();
+    window.DesktopPoll?.resume();
     throw error;
   }
 }

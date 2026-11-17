@@ -10,7 +10,7 @@ import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import httpx
 from cryptography.fernet import Fernet
@@ -293,6 +293,8 @@ class ModelHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cm.exception.code, "AUTH_FAILED")
         self.assertEqual(ModelHTTPHandler.attempts, 1)
         self.assertNotIn("mock-key", str(cm.exception))
+
+
 
     async def test_incompatible_parameters(self):
         ModelHTTPHandler.mode = "bad"
@@ -595,6 +597,25 @@ class ConsoleAPITests(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=2)
         self.f.close()
+
+    def test_disconnected_client_response_closes_without_second_response(self):
+        for error in (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            for phase in ("headers", "body"):
+                with self.subTest(error=error.__name__, phase=phase):
+                    handler = object.__new__(self.server.RequestHandlerClass)
+                    handler.send_response = Mock()
+                    handler.send_header = Mock()
+                    handler.end_headers = Mock(side_effect=error() if phase == "headers" else None)
+                    handler.wfile = Mock()
+                    handler.wfile.write.side_effect = error() if phase == "body" else None
+                    handler.close_connection = False
+                    handler.output({"ok": True})
+                    self.assertTrue(handler.close_connection)
+                    handler.send_response.assert_called_once_with(200)
+                    if phase == "headers":
+                        handler.wfile.write.assert_not_called()
+                    else:
+                        handler.wfile.write.assert_called_once()
 
     def test_progress_endpoint_returns_running_step_and_incremental_cursor(self):
         original = self.server.engine.models.generate

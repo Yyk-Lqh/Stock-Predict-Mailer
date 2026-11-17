@@ -51,8 +51,11 @@ def make_server(root, port=8767, master_key=None, market=None):
             self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
             if cookie:
                 self.send_header("Set-Cookie", f"{SESSION_COOKIE}={session}; HttpOnly; SameSite=Strict; Path=/")
-            self.end_headers()
-            self.wfile.write(raw)
+            try:
+                self.end_headers()
+                self.wfile.write(raw)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                self.close_connection = True  # A canceled read has no client left to receive an error response.
 
         def guard(self, mutation=False, a2a=False):
             authority = self.headers.get("Host", "")

@@ -1,4 +1,5 @@
 """Local delivery must inspect new files without including ignored private workspaces."""
+import importlib.util
 import shutil
 import subprocess
 import sys
@@ -39,3 +40,17 @@ class LocalHygieneTests(unittest.TestCase):
             result = self.check_repo(folder, "--include-untracked")
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("git is required", result.stderr)
+
+    def test_delivery_whitespace_step_rejects_staged_errors(self):
+        spec = importlib.util.spec_from_file_location("desktop_delivery_check", SCRIPT.with_name("check_desktop_delivery.py"))
+        delivery = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(delivery)
+        commands = next(commands for name, commands in delivery.checks(False) if name == "whitespace")
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            (root / "staged.txt").write_text("staged whitespace error  \n", encoding="utf-8")
+            subprocess.run(["git", "add", "staged.txt"], cwd=root, check=True)
+            self.assertEqual(subprocess.run(["git", "diff", "--check"], cwd=root, capture_output=True, check=False).returncode, 0)
+            results = [subprocess.run(command, cwd=root, capture_output=True, check=False).returncode for command in commands]
+            self.assertTrue(any(results), "The delivery gate accepted whitespace errors already staged for commit")

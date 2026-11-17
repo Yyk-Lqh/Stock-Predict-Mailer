@@ -1,19 +1,22 @@
 /* Conversation workbench. Uses the existing task, memory and report contracts. */
 window.Workbench = (() => {
   let selected = '', displayed = null, sessionCursor = null, turnCursor = null;
-  let turns = [], selectionEpoch = 0, sessionEpoch = 0, ready = false;
+  let turns = [], selectionEpoch = 0, sessionEpoch = 0, ready = false, openingSelection = false;
   const POSITION = 'stock_predict_mailer.workbench.position';
   const safe = fn => async (...args) => { try { return await fn(...args); } catch (error) { notice(error.message, true); } };
   const rememberPosition = () => {
     try { sessionStorage.setItem(POSITION, JSON.stringify({conversation: selected, task: displayed?.id})); } catch (_) { /* optional */ }
   };
   function inspector(open) {
+    if (open && matchMedia('(min-width: 761px)').matches && document.body.dataset.view && document.body.dataset.view !== 'analysis') open = false;
     $('report-inspector').hidden = !open;
     document.body.classList.toggle('inspector-visible', open);
     $('report-open').setAttribute('aria-expanded', String(open));
     window.AnalysisInput?.layout();
+    window.DesktopReport?.visibility(open);
   }
   function clearTask() {
+    window.DesktopPoll?.stop();
     window.AnalysisInput?.reset();
     window.PonyOffice?.reset();
     currentTask = null;
@@ -29,6 +32,7 @@ window.Workbench = (() => {
     $('task-output').textContent = '尚无任务';
     $('result-summary').textContent = '提交后可查看执行进度与报告';
     inspector(false);
+    window.DesktopReport?.clear();
   }
   function clearFollowup() {
     window.ForecastUI?.reset();
@@ -37,12 +41,13 @@ window.Workbench = (() => {
     for (const id of ['conversation-message', 'conversation-constraints', 'remember-text', 'remember-format', 'conversation-format']) $(id).value = '';
     window.KnowledgeUI?.reset();
   }
-  function saveDraft() { clearTimeout(draftTimer); draftWrite(draftSnapshot()); }
+  function saveDraft() { clearTimeout(draftTimer); if(!window.DesktopInteractions?.draftBlocked())draftWrite(draftSnapshot()); }
   function heading(title) {
     $('analysis-title').textContent = title;
     $('workspace-title').textContent = title;
   }
   async function sessions(append = false) {
+    if (window.DesktopSessions?.active()) return window.DesktopSessions.load(append,id=>select(id));
     const epoch = ++sessionEpoch;
     const host = $('sidebar-sessions');
     if (!memoryKey) {
@@ -103,6 +108,7 @@ window.Workbench = (() => {
     if (save) saveDraft();
     const epoch = ++selectionEpoch;
     $('task-form').inert = true;
+    window.DesktopInteractions?.begin();
     try {
       selected = id;
       clearTask();
@@ -130,11 +136,20 @@ window.Workbench = (() => {
       if (latest) {
         const task = await api('tasks/' + latest);
         if (epoch !== selectionEpoch) return;
-        openRecord(task);
+        openingSelection=true;
+        try { openRecord(task); } finally { openingSelection=false; }
       }
       await sessions();
       rememberPosition();
-    } finally { if (epoch === selectionEpoch) $('task-form').inert = false; }
+    } catch(error) {
+      if(epoch===selectionEpoch&&window.DesktopInteractions?.active()){
+        const denied=/FORBIDDEN|NOT_FOUND/.test(error.message);
+        if(!denied)draftRestore();
+        $('task-notify').checked=false;
+        window.DesktopInteractions.failed(id,error.message,()=>select(id,{save:!denied,taskId}),denied);
+      }
+      throw error;
+    } finally { if (epoch === selectionEpoch) { $('task-form').inert = false;window.DesktopInteractions?.finish(id); } }
   }
   function blankPrediction() {
     setNumericPrediction(null);
@@ -176,6 +191,7 @@ window.Workbench = (() => {
     } else selected = $('conversation-id').value;
   }
   async function submitted() {
+    window.DesktopInteractions?.reset();
     document.body.classList.remove('report-dismissed');
     $('task-notify').checked = false;
     taskControlsDirty = false;
@@ -233,10 +249,11 @@ window.Workbench = (() => {
   function record(value) {
     document.body.classList.remove('report-dismissed');
     const cid = taskBrief(value).conversation_id || (turns.some(turn => turn.task === value.id) ? selected : '');
-    if (cid && cid !== selected) { select(cid, {taskId: value.id}).catch(error => notice(error.message, true)); return; }
+    if (cid && (cid !== selected || (!openingSelection&&window.DesktopInteractions?.blocked()))) { select(cid, {taskId: value.id}).catch(error => notice(error.message, true)); return; }
     if (!cid && selected) {
       saveDraft(); ++selectionEpoch; selected = ''; turns = [];
       $('conversation-id').value = ''; clearFollowup(); renderTurns(); heading('独立任务');
+      if(window.DesktopInteractions?.active()){$('task-form').inert=false;window.DesktopInteractions.reset();}
     }
     if (value.artifacts?.length || value.status.state === 'failed') inspector(true);
     rememberPosition();
@@ -247,6 +264,7 @@ window.Workbench = (() => {
     $('session-menu').open = false;
     window.PonyOffice?.view(name);
     document.body.dataset.view = name;
+    window.DesktopPoll?.view(name);
     document.body.classList.remove('sidebar-open');
     $('sidebar-toggle').setAttribute('aria-expanded', 'false');
     if (name !== 'analysis') inspector(false);
@@ -269,7 +287,7 @@ window.Workbench = (() => {
     try { position = JSON.parse(sessionStorage.getItem(POSITION) || 'null'); } catch (_) { /* optional */ }
     if (position?.conversation && memoryKey) {
       try { await select(position.conversation, {save: false, taskId: position.task}); }
-      catch (error) { selected = ''; $('conversation-id').value = ''; clearTask(); notice('未能恢复上次位置：' + error.message, true); }
+      catch (error) { selected = ''; $('conversation-id').value = ''; clearTask(); window.DesktopInteractions?.reset(); notice('未能恢复上次位置：' + error.message, true); }
     } else if (position?.task) {
       try { openRecord(await api('tasks/' + position.task)); } catch (_) { clearTask(); }
     }
@@ -277,9 +295,12 @@ window.Workbench = (() => {
   }
   function identityChanged() {
     if (!ready) return;
+    window.DesktopSessions?.identityChanged();
+    window.DesktopRecords?.identityChanged();
     ++selectionEpoch; selected = ''; turns = []; clearTask(); clearFollowup(); renderTurns();
     blankPrediction();
     $('task-form').inert = false;
+    window.DesktopInteractions?.reset();
     window.KnowledgeUI?.identityReset();
     $('conversation-id').value = '';
     $('knowledge-detail').hidden = true;
@@ -297,12 +318,16 @@ window.Workbench = (() => {
   const tools = document.createElement('div'); tools.id = 'conversation-tools'; tools.className = 'actions conversation-tools'; tools.hidden = true;
   tools.append(action('导出会话', async () => { saveFile(await api(`conversations/${selected}/export`), `conversation-${selected}.json`); }), action('删除会话', async () => {
     if (!confirm('删除会话消息和摘要？长期记忆及历史任务报告会保留。运行中的会话需先取消任务。')) return;
-    const id = selected;
+    const id = selected, key = memoryKey;
     await api('conversations/' + id, 'DELETE');
+    if(window.DesktopSessions?.active()){if(key!==memoryKey)return;window.DesktopSessions.removed(id);}
     try { localStorage.removeItem(DRAFT_KEY + '.' + id); } catch (_) { /* optional */ }
+    if(window.DesktopSessions?.active()&&selected!==id){await refreshMemory();return;}
     clearTimeout(draftTimer); ++selectionEpoch; selected = ''; turns = []; $('conversation-id').value = '';
     clearTask(); clearFollowup(); blankPrediction(); renderTurns(); heading('新建分析');
+    window.DesktopInteractions?.reset();
     await refreshMemory(); rememberPosition();
+    window.DesktopInteractions?.afterDelete();
   }));
   $('analysis-title').closest('.page-head').after(tools);
   $('memory-access-actions').append(action('复制当前访问密钥', async () => {

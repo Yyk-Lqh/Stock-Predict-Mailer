@@ -29,6 +29,8 @@ input_usd_per_million/output_usd_per_million 仅真实服务必需（每百万 t
 
 请求 POST `<base_url>/chat/completions`，Bearer API Key；system 指令固定，预测/事实/工具文本/同伴产物只出现在 user 数据中。模型必须输出 `{"conclusion_codes":["MODEL_UP"],"evidence_ids":["prediction:pred-001"],"uncertainty_codes":["MODEL_UNVERIFIED"],"delegate_roles":["prediction","risk","advice"]}`。允许的结论为 MODEL_UP/DOWN/FLAT、INSUFFICIENT、DATA_LIMITED、MARKET_RISK、VERIFY、WAIT、DIVERSIFY；不确定性为 NO_CONFIDENCE/NO_CONTEXT/MODEL_UNVERIFIED。未知内容和证据拒绝，自由文本不进入最终结论；方向冲突记录并排除。无效凭据不重试，429/5xx/网络超时仅在次数/时间/预算范围内重试。
 
+请求的 `data.allowed_evidence_ids` 由适配器根据本轮预测、事实和主角色实际提供的知识片段生成。调用方传入的同名列表会被覆盖，历史记忆不加入当前证据；子角色不增加主角色知识引用。模型返回的 `evidence_ids` 必须为该清单的非空子集，即使结论是 `INSUFFICIENT` 也应标识正在评估的预测。引用预测只标识输入，不代表其准确性已验证。清单在记忆预算估算前生成，仍受同一16KiB输入上限约束。
+
 ## MCP 配置结构及授权
 
 name 必填；transport=streamable_http（默认）或 stdio；前者 url 必填且是 HTTPS/本机 HTTP，可写 auth_token；后者 command 必填，args 字符串数组，env 字符串映射（写入专用、加密），不执行 shell，stdio 子进程在会话退出/超时后由 SDK 回收。命令行参数不是凭据字段，不应放密钥。timeout_seconds 默认 15，范围 1..120。

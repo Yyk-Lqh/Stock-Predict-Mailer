@@ -177,9 +177,10 @@ function notice(message, error = false) {
   clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => { el.hidden = true; }, error ? 12000 : 6000);
 }
-async function api(path, method = 'GET', body) {
+async function api(path, method = 'GET', body, signal) {
   const response = await fetch('/api/' + path, {
     method,
+    signal,
     headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf, 'X-Memory-Key': memoryKey},
     body: body === undefined ? undefined : JSON.stringify(body)
   });
@@ -297,6 +298,7 @@ async function refresh() {
   renderSteps();
   loadOverviewTask();
   if ($('workspace-health')) $('workspace-health').textContent = settings.default_model_id ? '分析模型已配置' : '尚未选择分析模型';
+  window.DesktopSettings?.refresh();
 }
 
 /* ---------- models ---------- */
@@ -331,7 +333,10 @@ function renderModels() {
     }
     a.append(
       action('编辑', () => editModel(p)),
-      action('测试连接', async () => notice((await api(`models/${p.id}/test`, 'POST', {})).message)),
+      action(matchMedia('(min-width: 761px)').matches && p.provider !== 'mock' ? '测试连接（可能计费）' : '测试连接', async () => {
+        try { const result = await api(`models/${p.id}/test`, 'POST', {}); window.DesktopSettings?.modelTest(p, result); notice(result.message); }
+        catch (error) { window.DesktopSettings?.modelTest(p, null, error.message); throw error; }
+      }),
       action('设为默认', async () => {
         await api('settings', 'PUT', {...settings, default_model_id: p.id});
         await refresh();
@@ -354,7 +359,8 @@ function renderModels() {
     );
   }
 }
-function editModel(p) {
+function editModel(p, saved = false) {
+  if (!saved && window.DesktopSettings?.saving('model')) return;
   $('model-heading').textContent = '编辑模型';
   $('model-id').value = p.id;
   for (const [id, key] of Object.entries({
@@ -368,14 +374,17 @@ function editModel(p) {
   $('model-supported').value = p.supported_parameters.filter(k => k !== 'temperature').join(',');
   $('model-params').value = JSON.stringify(p.parameters, null, 2);
   $('model-effort-map').value = JSON.stringify(p.reasoning_effort_map || {}, null, 2);
+  window.DesktopSettings?.modelFields();
 }
 $('model-new').onclick = () => {
   $('model-form').reset();
   $('model-id').value = '';
   $('model-heading').textContent = '添加模型';
+  window.DesktopSettings?.modelFields();
 };
 $('model-form').onsubmit = async event => {
   event.preventDefault();
+  if (window.DesktopSettings && !window.DesktopSettings.beginSave('model')) return;
   try {
     const id = $('model-id').value;
     const old = profiles.find(p => p.id === id);
@@ -390,11 +399,17 @@ $('model-form').onsubmit = async event => {
       output_usd_per_million: $('model-price-out').value === '' ? null : num('model-price-out'),
       api_key: $('model-key').value, enabled: old?.enabled ?? true
     };
-    await api('models' + (id ? '/' + id : ''), id ? 'PUT' : 'POST', body);
+    if (window.DesktopSettings?.mockMode()) {
+      for (const field of ['base_url', 'api_key', 'input_usd_per_million', 'output_usd_per_million']) delete body[field];
+      if (old) for (const field of ['base_url', 'input_usd_per_million', 'output_usd_per_million']) body[field] = old[field];
+    }
+    const saved = await api('models' + (id ? '/' + id : ''), id ? 'PUT' : 'POST', body);
     $('model-key').value = '';
+    window.DesktopSettings?.modelSaved(saved);
     await refresh();
     notice('模型已保存。密钥不会回显。');
-  } catch (error) { notice(error.message, true); }
+  } catch (error) { window.DesktopSettings?.modelError(error.message); notice(error.message, true); }
+  finally { window.DesktopSettings?.endSave('model'); }
 };
 
 /* ---------- mcp ---------- */
@@ -423,7 +438,8 @@ function renderServers() {
     );
   }
 }
-function editServer(s) {
+function editServer(s, saved = false) {
+  if (!saved && window.DesktopSettings?.saving('mcp')) return;
   $('mcp-id').value = s.id;
   for (const [id, key] of Object.entries({'mcp-name': 'name', 'mcp-transport': 'transport', 'mcp-url': 'url', 'mcp-command': 'command', 'mcp-timeout': 'timeout_seconds'})) $(id).value = s[key];
   $('mcp-token').value = '';
@@ -433,6 +449,7 @@ function editServer(s) {
   $('mcp-effects').value = JSON.stringify(s.effects, null, 2);
   $('mcp-resources').value = s.allowed_resources.join('\n');
   connectionFields();
+  window.DesktopSettings?.mcpFields();
 }
 function connectionFields() {
   $('mcp-http').hidden = $('mcp-transport').value !== 'streamable_http';
@@ -443,9 +460,11 @@ $('mcp-new').onclick = () => {
   $('mcp-form').reset();
   $('mcp-id').value = '';
   connectionFields();
+  window.DesktopSettings?.mcpFields();
 };
 $('mcp-form').onsubmit = async event => {
   event.preventDefault();
+  if (window.DesktopSettings && !window.DesktopSettings.beginSave('mcp')) return;
   try {
     const id = $('mcp-id').value;
     const old = servers.find(s => s.id === id);
@@ -457,12 +476,14 @@ $('mcp-form').onsubmit = async event => {
       enabled: old?.enabled ?? true
     };
     if ($('mcp-env').value.trim()) body.env = JSON.parse($('mcp-env').value);
-    await api('mcp' + (id ? '/' + id : ''), id ? 'PUT' : 'POST', body);
+    const saved = await api('mcp' + (id ? '/' + id : ''), id ? 'PUT' : 'POST', body);
     $('mcp-token').value = '';
     $('mcp-env').value = '';
+    window.DesktopSettings?.mcpSaved(saved);
     await refresh();
     notice('MCP 服务已保存，可以测试连接并发现工具。');
-  } catch (error) { notice(error.message, true); }
+  } catch (error) { window.DesktopSettings?.mcpError(error.message); notice(error.message, true); }
+  finally { window.DesktopSettings?.endSave('mcp'); }
 };
 function renderDiscovery(data, s) {
   const parent = $('discovery');
@@ -486,6 +507,7 @@ function renderDiscovery(data, s) {
     }
   }
   notice(`发现 ${data.tools.length} 个工具、${data.resources.length} 个资源。发现不等于授权。`);
+  window.DesktopSettings?.discovery(data, s);
 }
 
 /* ---------- settings ---------- */
@@ -1105,7 +1127,8 @@ function draftSnapshot() {
 }
 function draftSchedule() {
   clearTimeout(draftTimer);
-  draftTimer = setTimeout(() => draftWrite(draftSnapshot()), 400);
+  if(window.DesktopInteractions?.draftBlocked())return;
+  draftTimer = setTimeout(() => {if(!window.DesktopInteractions?.draftBlocked())draftWrite(draftSnapshot());}, 400);
 }
 function draftBanner(message) {
   if (!message) { $('draft-note').hidden = true; return; }
@@ -1464,6 +1487,7 @@ function showTask(task) {
   renderRunviz(task.status.state);
   window.Workbench?.task(task);
   window.PonyOffice?.sync(task, null);
+  window.DesktopReport?.render(task);
   return finished;
 }
 
@@ -1641,6 +1665,7 @@ function showEvent(event) {
   }
 }
 async function poll(id) {
+  if (window.DesktopPoll?.active()) return window.DesktopPoll.request(id);
   if (currentTask !== id) return;
   try {
     const task = await api('tasks/' + id);
@@ -1724,7 +1749,11 @@ $('task-form').onsubmit = async event => {
   }
 };
 $('task-cancel').onclick = async () => {
-  try { showTask(await api(`tasks/${currentTask}/cancel`, 'POST', {})); } catch (error) { notice(error.message, true); }
+  const desktop=window.DesktopPoll?.active(),token=desktop?window.DesktopPoll.beginCancel():null;
+  if(desktop&&!token)return;
+  try { const task=await api(`tasks/${token?.id||currentTask}/cancel`, 'POST', {});if(token)await window.DesktopPoll.cancelled(task,token);else showTask(task); }
+  catch (error) { if(!token||window.DesktopPoll.valid(token))notice(error.message, true); }
+  finally { if(desktop)window.DesktopPoll.endCancel(token); }
 };
 
 /* ---------- records ---------- */
@@ -1772,6 +1801,7 @@ function recordMatches(task) {
   return hay.includes(recordQuery);
 }
 function renderRecords() {
+  if (window.DesktopRecords?.render({items: records, filter: recordFilter, query: recordQuery, cursor: recordCursor})) return;
   const host = $('record-list');
   host.replaceChildren();
   const counts = {all: records.length, active: 0, completed: 0, failed: 0};
@@ -1803,20 +1833,31 @@ function renderRecords() {
       : `筛出 ${shown.length} 条 · 已载入 ${records.length} 条`;
   }
   $('record-more-wrap').hidden = !recordCursor;
+  window.DesktopLibrary?.records();
 }
 async function loadRecords(reset = false) {
   if (recordBusy) return;
   recordBusy = true;
   clearTimeout(recordTimer);
-  if (reset) recordCursor = null;
+  const desktop = window.DesktopRecords?.active();
+  if (desktop && !recordLoaded) reset = true;
+  const recordEpoch = desktop ? window.DesktopRecords.revision() : null;
+  const before = reset ? null : recordCursor;
+  if (reset && !desktop) recordCursor = null;
   const host = $('record-list');
-  if (reset || !records.length) recordsPlaceholder('正在读取任务记录…');
+  if (desktop) window.DesktopRecords.loading();
+  else if (reset || !records.length) recordsPlaceholder('正在读取任务记录…');
   try {
-    const page = await api(`tasks?order=desc&limit=30${recordCursor ? '&before=' + recordCursor : ''}`);
+    const page = await api(`tasks?order=desc&limit=30${before ? '&before=' + before : ''}`);
+    if (desktop && recordEpoch !== window.DesktopRecords.revision()) return;
     // 子 Agent 的中间任务与主任务同表，contextId 指向父任务；它们不是用户提交的记录。
     const fresh = page.items.filter(topLevel);
-    records = reset ? [...fresh] : [...records, ...fresh];
-    recordCursor = page.next_before;
+    if (desktop) {
+      const updated = await window.DesktopRecords.page({existing: records, fresh, cursor: recordCursor, pageCursor: page.next_before, reset});
+      if (recordEpoch !== window.DesktopRecords.revision()) return;
+      records = updated.items; recordCursor = updated.cursor;
+      window.DesktopRecords.loaded(updated.warning);
+    } else { records = reset ? [...fresh] : [...records, ...fresh]; recordCursor = page.next_before; }
     recordLoaded = true;
     renderRecords();
     if (records.some(task => recordGroup(task.status.state) === 'active')) {
@@ -1826,10 +1867,15 @@ async function loadRecords(reset = false) {
       }, 3000);
     }
   } catch (error) {
-    if (!host.childElementCount) recordsPlaceholder('记录读取失败：' + error.message);
+    if (desktop && recordEpoch !== window.DesktopRecords.revision()) return;
+    if (desktop) window.DesktopRecords.failed(error.message);
+    else if (!host.childElementCount) recordsPlaceholder('记录读取失败：' + error.message);
     notice(error.message, true);
   } finally {
-    recordBusy = false;
+    if (!desktop || recordEpoch === window.DesktopRecords.revision()) {
+      recordBusy = false;
+      if (desktop) window.DesktopRecords.finished();
+    }
   }
 }
 function recordRow(task) {
@@ -1839,6 +1885,8 @@ function recordRow(task) {
   row.type = 'button';
   row.className = 'task-row';
   row.dataset.state = state;
+  row.dataset.taskId = task.id;
+  row.dataset.recordedAt = task.status.timestamp || '';
 
   text(row, 'span', shortTime(task.status.timestamp), 'when');
 
@@ -1876,6 +1924,7 @@ function recordRow(task) {
   return row;
 }
 function openRecord(task) {
+  window.DesktopPoll?.stop();
   if (recordTimer) clearTimeout(recordTimer);
   currentTask = task.id;
   eventCursor = 0;
@@ -1941,7 +1990,12 @@ $('try-sample').onclick = async () => {
   try {
     // The following bundle installs the workbench and composer. A fast local
     // API must not finish boot before those scripts have executed.
-    if (document.readyState === 'loading') await new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, {once:true}));
+    // Deferred scripts run while readyState is interactive, before the next
+    // deferred bundle has necessarily loaded. Desktop must await that bundle.
+    const desktopBoot = matchMedia('(min-width: 761px)').matches;
+    if (document.readyState === 'loading' || (desktopBoot && document.readyState === 'interactive')) {
+      await new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, {once:true}));
+    }
     const initial = location.hash.replace('#', '');
     csrf = (await api('session')).csrf_token;
     await refresh();

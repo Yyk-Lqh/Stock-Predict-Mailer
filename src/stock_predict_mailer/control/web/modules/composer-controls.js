@@ -110,6 +110,7 @@ window.ComposerControls = (() => {
     model.querySelector('span').textContent=selected?.name||'选择模型';model.title=selected?`默认模型：${selected.name}`:'选择或配置分析模型';
     effort.querySelector('span').textContent=labels[levels.indexOf(effective())]||'默认';
     effort.title=`推理强度：${effort.textContent.trim()}`;
+    window.DesktopWorkbench?.update();
   }
   new MutationObserver(()=>{if(!document.body.classList.contains('analysis-composer-visible'))close();}).observe(document.body,{attributes:true,attributeFilter:['class']});
   update();return {update,close};

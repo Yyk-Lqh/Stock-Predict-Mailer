@@ -2577,6 +2577,8 @@ window.AnalysisInput = (() => {
     }
     $('inspector-actions').hidden = id !== 'report';
     window.Workbench.inspector(true); update();
+    window.DesktopWorkbench?.panel(id);
+    window.DesktopReport?.panel(id);
   }
   function layout() {
     const root=document.documentElement, stage=document.querySelector('.office-stage');
@@ -2590,10 +2592,11 @@ window.AnalysisInput = (() => {
   function observe(task) {
     const prediction = task.artifacts?.[0]?.parts?.[0]?.data?.analysis?.prediction;
     if (prediction) lastPrediction = prediction;
+    window.DesktopWorkbench?.observe(task);
     if (['working', 'submitted'].includes(task.status.state) && mode !== 'input') open('progress');
     update();
   }
-  function reset() { lastPrediction = null; update(); }
+  function reset() { lastPrediction = null; window.DesktopWorkbench?.reset(); update(); }
   form.addEventListener('input', update); form.addEventListener('change', update);
   form.addEventListener('input', event => { if (event.target.hasAttribute('aria-invalid')) { event.target.removeAttribute('aria-invalid'); event.target.setCustomValidity?.(''); } });
   tabs.addEventListener('keydown', event => {
@@ -2612,7 +2615,10 @@ window.AnalysisInput = (() => {
   window.addEventListener('resize', layout);
   document.body.classList.toggle('analysis-composer-visible', document.body.dataset.view === 'analysis');
   update();
-  return {open, validate, observe, reset, update, layout};
+  const currentPrediction = () => {
+    try { return JSON.parse($('task-data').value).prediction || lastPrediction; } catch (_) { return null; }
+  };
+  return {open, validate, observe, reset, update, layout, currentPrediction,resize:autoSize};
 })();
 
 /* Desktop mail-seat editor. Saving preferences never sends a message. */
@@ -2773,6 +2779,7 @@ window.ComposerControls = (() => {
     model.querySelector('span').textContent=selected?.name||'选择模型';model.title=selected?`默认模型：${selected.name}`:'选择或配置分析模型';
     effort.querySelector('span').textContent=labels[levels.indexOf(effective())]||'默认';
     effort.title=`推理强度：${effort.textContent.trim()}`;
+    window.DesktopWorkbench?.update();
   }
   new MutationObserver(()=>{if(!document.body.classList.contains('analysis-composer-visible'))close();}).observe(document.body,{attributes:true,attributeFilter:['class']});
   update();return {update,close};

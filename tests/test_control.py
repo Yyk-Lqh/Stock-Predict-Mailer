@@ -245,6 +245,8 @@ class ModelHTTPHandler(BaseHTTPRequestHandler):
         data = json.loads(self.payload["messages"][-1]["content"])["data"]
         result = {"conclusion_codes": ["MODEL_UP"], "evidence_ids": ["prediction:" + data["prediction"]["prediction_id"]],
                   "uncertainty_codes": ["MODEL_UNVERIFIED"], "delegate_roles": []}
+        if mode == "needs_evidence_list":
+            result.update(conclusion_codes=["INSUFFICIENT"], evidence_ids=data.get("allowed_evidence_ids", [])[:1])
         try:
             self.wfile.write(json.dumps({"choices": [{"message": {"content": json.dumps(result)}}]}).encode())
         except OSError:
@@ -294,7 +296,24 @@ class ModelHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ModelHTTPHandler.attempts, 1)
         self.assertNotIn("mock-key", str(cm.exception))
 
+    async def test_evidence_contract_supports_insufficient_without_context(self):
+        ModelHTTPHandler.mode = "needs_evidence_list"
+        result = await ModelAdapter(self.f.store).test(self.model["id"], self.f.settings)
+        self.assertEqual(result["status"], "ok")
+        data = json.loads(ModelHTTPHandler.payload["messages"][-1]["content"])["data"]
+        self.assertEqual(data["allowed_evidence_ids"], ["prediction:" + data["prediction"]["prediction_id"]])
 
+    async def test_evidence_whitelist_excludes_caller_and_historical_ids(self):
+        p = MockPredictionAdapter().fetch()
+        data = {"prediction": p, "facts": [{"id": "fact-current", "text": "synthetic current fact"}],
+                "source_material": {"results": [{"citation_id": "kb-current"}, {"citation_id": "kb-current"}]},
+                "allowed_evidence_ids": ["forged"], "conversation_memory": {"recalled": [{"id": "historical"}]}}
+        await ModelAdapter(self.f.store).generate(self.model["id"], "main", data, self.f.settings, Budget(self.f.settings["limits"]))
+        sent = json.loads(ModelHTTPHandler.payload["messages"][-1]["content"])["data"]
+        self.assertEqual(sent["allowed_evidence_ids"], ["prediction:" + p["prediction_id"], "fact-current", "kb-current"])
+        await ModelAdapter(self.f.store).generate(self.model["id"], "risk", data, self.f.settings, Budget(self.f.settings["limits"]))
+        sent = json.loads(ModelHTTPHandler.payload["messages"][-1]["content"])["data"]
+        self.assertEqual(sent["allowed_evidence_ids"], ["prediction:" + p["prediction_id"], "fact-current"])
 
     async def test_incompatible_parameters(self):
         ModelHTTPHandler.mode = "bad"

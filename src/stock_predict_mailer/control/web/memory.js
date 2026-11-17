@@ -540,6 +540,7 @@ window.Workbench = (() => {
 window.KnowledgeUI = (() => {
   let timer = null, epoch = 0, documents = [], catalog = {total: 0, review: 0}, queueTimer = null, waiting = null;
   const PAGE = 50;
+  let desktopStatus = '', detailRequest = 0, searchRequest = 0;
   const STATE = {pending: '已排队', processing: '处理中', ready: '已发布', review: '待审阅', failed: '处理失败', rejected: '已拒绝', deleting: '等待删除'};
   const STEP = {received: '已接收', parsed: '已解析', chunked: '已切分', extracted: '已提取', reviewed: '已审阅', published: '已发布'};
   // 与后端 metadata() 白名单一致：四类标签键与对应的表单字段。
@@ -588,6 +589,7 @@ window.KnowledgeUI = (() => {
   section.querySelectorAll('[data-kb-tab]').forEach(el => { el.onclick = safe(async () => { tab(el.dataset.kbTab); if (el.dataset.kbTab === 'processing') await configs(); }); });
   function reset() { $('task-knowledge-query').value = ''; $('task-knowledge-consent').checked = false; }
   function identityReset() {
+    ++detailRequest; ++searchRequest; desktopStatus = ''; window.DesktopLibrary?.resetKnowledge();
     ++epoch; clearTimeout(timer); clearTimeout(queueTimer); waiting = null; documents = [];
     for (const id of ['knowledge-list', 'knowledge-results', 'knowledge-answer-result', 'knowledge-configs', 'knowledge-indexes', 'knowledge-detail', 'knowledge-queue']) $(id).replaceChildren();
     $('knowledge-detail').hidden = true; reset();
@@ -596,6 +598,7 @@ window.KnowledgeUI = (() => {
   function restore(value) { $('task-knowledge-query').value = value.knowledge_query || ''; $('task-knowledge-consent').checked = Boolean(value.knowledge_to_model); }
   function documentRow(item) {
     const row = document.createElement('article'); row.className = 'document-row';
+    row.dataset.documentId = item.id; row.dataset.documentState = item.status;
     const name = document.createElement('div');
     text(name, 'h3', item.logical);
     text(name, 'p', `${item.filename} · ${fmt(item.uploaded)} · ${item.id.slice(0, 8)}`, 'hint');
@@ -615,7 +618,8 @@ window.KnowledgeUI = (() => {
       const button = action(`加载更多 · 已显示 ${documents.length} / ${catalog.total}`, () => load(true));
       button.id = 'knowledge-more'; host.append(button);
     }
-    if (!documents.length) text(host, 'p', '上传第一份资料，建立可追溯的证据库。', 'empty');
+    if (!documents.length) text(host, 'p', desktopStatus && matchMedia('(min-width: 761px)').matches ? '这个状态暂无资料，可切换状态或上传资料。' : '上传第一份资料，建立可追溯的证据库。', 'empty');
+    window.DesktopLibrary?.knowledge({items:documents, catalog, status:desktopStatus});
   }
   function shortAge(seconds) {
     if (seconds === null || seconds === undefined) return '未知';
@@ -652,6 +656,7 @@ window.KnowledgeUI = (() => {
       row.append(action('查看', () => detail(item.id)));
       host.append(row);
     }
+    window.DesktopLibrary?.queue(data);
   }
   async function queueStatus(reload = true) {
     clearTimeout(queueTimer);
@@ -667,7 +672,7 @@ window.KnowledgeUI = (() => {
       // 调用本函数，避免两边互相触发。
       if (reload && waiting !== null && waiting > 0 && busy === 0) await load();
       waiting = busy;
-    } catch (error) { /* 轮询失败保持上一次显示，网络抖动不该刷提示 */ }
+    } catch (error) { window.DesktopLibrary?.queueError(); /* Keep the previous queue display. */ }
     queueTimer = setTimeout(() => queueStatus(), busy ? 4000 : 8000);
   }
   async function load(append = false) {
@@ -676,18 +681,25 @@ window.KnowledgeUI = (() => {
     const requestEpoch = ++epoch;
     const key = memoryKey;
     $('knowledge-access').hidden = Boolean(key); $('knowledge-body').hidden = !key;
-    if (!key) { documents = []; $('knowledge-list').replaceChildren(); $('knowledge-detail').hidden = true; $('knowledge-queue').replaceChildren(); clearTimeout(queueTimer); waiting = null; return; }
+    if (!key) { documents = []; $('knowledge-list').replaceChildren(); $('knowledge-detail').hidden = true; $('knowledge-queue').replaceChildren(); clearTimeout(queueTimer); waiting = null; window.DesktopLibrary?.resetKnowledge(); return; }
+    window.DesktopLibrary?.knowledgeLoading(desktopStatus);
     queueStatus(false);
     try {
       const offset = extend ? documents.length : 0;
       const limit = extend ? PAGE : Math.min(500, Math.max(PAGE, documents.length));
-      const data = await api(`knowledge/documents?limit=${limit}&offset=${offset}`);
+      const status = matchMedia('(min-width: 761px)').matches ? desktopStatus : '';
+      const data = await api(`knowledge/documents?limit=${limit}&offset=${offset}${status ? '&status=' + status : ''}`);
       if (requestEpoch !== epoch || key !== memoryKey) return;
       if (!extend) { documents = []; $('knowledge-list').replaceChildren(); }
       documents = documents.concat(data.items); catalog = data;
       renderDocuments(data.items);
       if (!section.hidden && data.items.some(item => ['pending', 'processing'].includes(item.status))) timer = setTimeout(() => load(), 4000);
-    } catch (error) { if (requestEpoch === epoch) notice(error.message, true); }
+    } catch (error) { if (requestEpoch === epoch) { notice(error.message, true); window.DesktopLibrary?.knowledgeError(error.message); } }
+  }
+  async function filterStatus(status = '') {
+    desktopStatus = Object.hasOwn(STATE, status) ? status : '';
+    documents = []; $('knowledge-list').replaceChildren();
+    return load();
   }
   function chunkText(host, chunks) {
     for (const chunk of chunks || []) {
@@ -704,8 +716,10 @@ window.KnowledgeUI = (() => {
   }
   async function detail(id) {
     const key = memoryKey;
+    const desktop = matchMedia('(min-width: 761px)').matches, request = ++detailRequest;
+    const current = () => key === memoryKey && (!desktop || request === detailRequest);
     const [item, versions] = await Promise.all([api('knowledge/documents/' + id), api(`knowledge/documents/${id}/versions`)]);
-    if (key !== memoryKey) return;
+    if (!current()) return;
     const host = $('knowledge-detail'); host.replaceChildren(); host.hidden = false;
     text(host, 'h2', item.logical);
     text(host, 'p', `${STATE[item.status] || item.status} · ${item.active ? '活动版本' : '非活动版本'} · ${item.id}`, 'hint');
@@ -713,7 +727,7 @@ window.KnowledgeUI = (() => {
     const tags = TAGS.filter(([key]) => (item.metadata[key] || []).length);
     if (tags.length) text(host, 'p', tags.map(([key]) => `${TAG_LABEL[key]}：${item.metadata[key].join('、')}`).join(' · '), 'hint');
     if (versions.length > 1) {
-      const history = document.createElement('details'); text(history, 'summary', `版本历史 · ${versions.length} 个版本`);
+      const history = document.createElement('details'); history.className = 'knowledge-version-history'; text(history, 'summary', `版本历史 · ${versions.length} 个版本`);
       for (const version of versions) text(history, 'p', `${version.id.slice(0, 8)}${version.id === id ? '（当前查看）' : ''} · ${STATE[version.status] || version.status}${version.active ? ' · 活动版本' : ''} · ${fmt(version.uploaded)}`, 'hint');
       text(history, 'p', '检索按截止日期选用当时有效的最新版本；下架不退回到旧版本。', 'hint');
       host.append(history);
@@ -745,13 +759,15 @@ window.KnowledgeUI = (() => {
     const excerpts = document.createElement('details'); excerpts.open = true; text(excerpts, 'summary', '清洗后的来源片段与定位');
     chunkText(excerpts, item.chunks); host.append(excerpts);
     if (!item.chunks?.length) text(excerpts, 'p', '尚未生成可查看的清洗片段。', 'hint');
-    if (item.status === 'review') await review(id, host, item);
+    if (item.status === 'review') await review(id, host, item, current);
+    if (!current()) return;
+    window.DesktopLibrary?.document(item, versions);
     host.scrollIntoView({block: 'start', behavior: 'smooth'});
   }
-  async function review(id, host, sourceDocument) {
+  async function review(id, host, sourceDocument, current = () => true) {
     const key = memoryKey;
     const batch = await api(`knowledge/documents/${id}/review`);
-    if (key !== memoryKey) return;
+    if (key !== memoryKey || !current()) return;
     if (!batch.extraction?.complete) { text(host, 'p', '当前资料需要人工处理原件或补充字段，尚无完整的模型候选可批准。请核对警告，修正后上传新版本。', 'note warn'); return; }
     const group = document.createElement('section'); group.className = 'review-group';
     text(group, 'h3', '逐项核对模型候选');
@@ -844,6 +860,7 @@ window.KnowledgeUI = (() => {
     renderGroups(host, data);
     for (const warning of data.warnings || []) text(host, 'p', typeof warning === 'string' ? warning : JSON.stringify(warning), 'note warn');
     if (data.conflicts?.length) { const d = document.createElement('details'); text(d, 'summary', `冲突候选 ${data.conflicts.length} 项`); text(d, 'pre', JSON.stringify(data.conflicts, null, 2), 'mono'); host.append(d); }
+    window.DesktopLibrary?.searchRendered(host, data);
   }
   /* 汇总回答：把 search 的结构化结果排成「摘录 → 关系 → 推断」，
      推断永远带 citation_id，且明确标注它是规则推断而不是模型结论。 */
@@ -861,7 +878,7 @@ window.KnowledgeUI = (() => {
     anchorHint(wrap, data);
     if (!found.length) {
       text(wrap, 'p', '证据不足：未找到当前权限与截止时间范围内的资料。可放宽截止日期、去掉股票代码或主体限制后重试；没有证据时不生成结论。', 'note warn');
-      host.append(wrap); return;
+      host.append(wrap); window.DesktopLibrary?.searchRendered(host, data); return;
     }
     text(wrap, 'p', '下面按固定顺序拼接：关系证据 → 条件性推断 → 冲突。推断都标明了依据片段，但不等于事实；影响规模、因果关系和收益都无法由此得出。', 'note');
 
@@ -925,7 +942,7 @@ window.KnowledgeUI = (() => {
       text(raw, 'pre', data.answer, 'mono');
       wrap.append(raw);
     }
-    host.append(wrap); host.scrollIntoView({block: 'start'});
+    host.append(wrap); window.DesktopLibrary?.searchRendered(host, data); host.scrollIntoView({block: 'start'});
   }
   function evidence(data) {
     let host = $('knowledge-report-evidence');
@@ -1004,18 +1021,30 @@ window.KnowledgeUI = (() => {
   }
   $('knowledge-search').onsubmit = safe(async event => {
     event.preventDefault(); const button = event.currentTarget.querySelector('[type=submit]'); button.disabled = true;
+    const key = memoryKey, request = ++searchRequest, filters = searchFilters(), signature = JSON.stringify(filters);
+    window.DesktopLibrary?.searchLoading('检索');
     try {
-      const key = memoryKey, data = await api('knowledge/search', 'POST', searchFilters());
-      if (key === memoryKey) renderEvidence($('knowledge-results'), data);
+      const data = await api('knowledge/search', 'POST', filters);
+      if (key === memoryKey && (!matchMedia('(min-width: 761px)').matches || request === searchRequest && signature === JSON.stringify(searchFilters()))) renderEvidence($('knowledge-results'), data);
+      else if (key === memoryKey && request === searchRequest) window.DesktopLibrary?.searchDiscarded();
+    } catch (error) {
+      if (key === memoryKey && request === searchRequest) window.DesktopLibrary?.searchError(error.message);
+      throw error;
     } finally { button.disabled = false; }
   });
   $('knowledge-answer').onclick = safe(async () => {
     const button = $('knowledge-answer'), host = $('knowledge-answer-result');
     if (!$('knowledge-query').value.trim()) { notice('先填写要查的问题。', true); $('knowledge-query').focus(); return; }
     button.disabled = true;
+    const key = memoryKey, request = ++searchRequest, filters = searchFilters(), signature = JSON.stringify(filters);
+    window.DesktopLibrary?.searchLoading('规则汇总');
     try {
-      const key = memoryKey, data = await api('knowledge/answer', 'POST', searchFilters());
-      if (key === memoryKey) renderAnswer(host, data);
+      const data = await api('knowledge/answer', 'POST', filters);
+      if (key === memoryKey && (!matchMedia('(min-width: 761px)').matches || request === searchRequest && signature === JSON.stringify(searchFilters()))) renderAnswer(host, data);
+      else if (key === memoryKey && request === searchRequest) window.DesktopLibrary?.searchDiscarded();
+    } catch (error) {
+      if (key === memoryKey && request === searchRequest) window.DesktopLibrary?.searchError(error.message);
+      throw error;
     } finally { button.disabled = false; }
   });
   $('knowledge-rebuild').onclick = safe(async () => {
@@ -1023,7 +1052,7 @@ window.KnowledgeUI = (() => {
     const button = $('knowledge-rebuild'); button.disabled = true;
     try { await api('knowledge/rebuild', 'POST', {}); notice('索引重建完成。'); await configs(); } finally { button.disabled = false; }
   });
-  return {init, load, reset, identityReset, restore, selection, evidence, processing: () => { tab('processing'); configs().catch(error => notice(error.message, true)); }};
+  return {init, load, reset, identityReset, restore, selection, evidence, open:detail, close:() => { ++detailRequest; $('knowledge-detail').hidden = true; }, filter:filterStatus, filterStatus:() => desktopStatus, processing: () => { tab('processing'); configs().catch(error => notice(error.message, true)); }};
 })();
 
 /* Shared projected door geometry and contact timing, independent of the DOM. */

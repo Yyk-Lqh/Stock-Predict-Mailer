@@ -2217,6 +2217,9 @@ window.PonyOffice = (() => {
   let taskId = null, replay = true, seen = new Set(), active = true, connected = true, taskState = 'idle', selected = 'main';
   let lastFrame = 0, raf = 0, lastUI = 0, roleSignature = '', terminalFeedback = '';
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+  const desktop = matchMedia('(min-width: 761px)');
+  let rendering = null, suspended = false;
+  const sceneVisible = () => active && !suspended && !document.hidden && !document.body.classList.contains('desktop-focus-view') && !document.body.classList.contains('desktop-report-reading');
   const el = (name, attrs = {}, markup = '') => {
     const node = document.createElementNS(NS, name);
     for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
@@ -2403,6 +2406,7 @@ window.PonyOffice = (() => {
     renderUI(); draw(true);
   }
   function draw(force = false) {
+    if (desktop.matches && !sceneVisible()) return;
     const refreshScreen = force || floor.time - lastScreen > .16 || lastScreen > floor.time;
     if (refreshScreen) lastScreen = floor.time;
     const nodes = [],screenNow=new Date();
@@ -2477,7 +2481,7 @@ window.PonyOffice = (() => {
   }
   function frame(now) {
     raf = 0;
-    if (!active || document.hidden) { lastFrame = 0; return; }
+    if (!active || document.hidden || (desktop.matches && !sceneVisible())) { lastFrame = 0; return; }
     const dt = lastFrame ? Math.min((now - lastFrame) / 1000, .05) : 0; lastFrame = now;
     if (connected) floor.tick(dt, reduced.matches, true);
     for (const actor of floor.actors) if (actor.present && actor.pose === 'seated' && actor.state !== 'running' && PonyRig.expression(actor,floor.time,'idle',reduced.matches).sleep<.05) {
@@ -2506,12 +2510,20 @@ window.PonyOffice = (() => {
   }
   let layoutFrame=0;
   office.querySelector('.office-stage').addEventListener('scroll',()=>{if(!layoutFrame)layoutFrame=requestAnimationFrame(()=>{layoutFrame=0;layout();});},{passive:true});
-  function view(name) { active = name === 'analysis'; if(active){queueMicrotask(layout);lastFrame=0;draw(true);} if (active && !raf) raf = requestAnimationFrame(frame); }
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && active) { lastFrame = 0; draw(true);if (taskId) poll(taskId); if (!raf) raf = requestAnimationFrame(frame); } });
+  function visibility() {
+    if (!desktop.matches) return;
+    const visible=sceneVisible();if(rendering===visible)return;rendering=visible;lastFrame=0;
+    if(!visible){if(raf)cancelAnimationFrame(raf);raf=0;return;}
+    queueMicrotask(layout);draw(true);hall?.tick(performance.now(),true);
+    if(!raf)raf=requestAnimationFrame(frame);
+  }
+  if(desktop.matches)new MutationObserver(visibility).observe(document.body,{attributes:true,attributeFilter:['class','data-view']});
+  function view(name) { active = name === 'analysis'; if(desktop.matches){visibility();return;} if(active){queueMicrotask(layout);lastFrame=0;draw(true);} if (active && !raf) raf = requestAnimationFrame(frame); }
+  document.addEventListener('visibilitychange', () => { if(desktop.matches)visibility(); if (!document.hidden && active) { lastFrame = 0; draw(true);if (taskId) poll(taskId); if ((!desktop.matches||sceneVisible())&&!raf) raf = requestAnimationFrame(frame); } });
   $('office-show-output').onclick = () => window.Workbench.inspector(true);
   $('office-show-room').onclick = () => window.Workbench.inspector(false);
-  window.addEventListener('pagehide', () => { if (raf) cancelAnimationFrame(raf); raf = 0; });
-  window.addEventListener('pageshow', () => { lastFrame = 0;if(active)draw(true); if (active && !raf) raf = requestAnimationFrame(frame); });
+  window.addEventListener('pagehide', () => { if (raf) cancelAnimationFrame(raf); raf = 0;rendering=false;suspended=true; });
+  window.addEventListener('pageshow', () => { suspended=false;if(desktop.matches){visibility();return;} lastFrame = 0;if(active)draw(true); if (active && !raf) raf = requestAnimationFrame(frame); });
   window.addEventListener('focus',()=>{if(active&&!document.hidden)draw(true);});
   reset(); view(document.body.dataset.view || 'analysis');
   return {reset, sync, view, layout, hall, disconnected: () => { connected = false;hall?.disconnected(); renderUI(); draw(true); }, snapshot: () => ({taskId, taskState, door: floor.door, actors: floor.actors.map(a => ({id: a.id, present: a.present, pose: a.pose, state: a.state, x: a.x, y: a.y, screen: PonyScreen.state(a, floor.time, connected), taskId: a.taskId, childId:a.childId, activity:a.activity}))})};

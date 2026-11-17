@@ -2906,6 +2906,7 @@ window.ObservationPreview = (() => {
         for (const [name, value] of [['导入文本',result.input.content_sha256],['标准观测',result.observation_id],['预测与定义',result.forecast_content_id]]) text(hashes, 'p', `${name}：${value}`, 'mono');
         for (const note of result.limitations) text(output, 'p', note, 'hint mt-14');
         message('预览完成，未保存回执。原归档状态保持不变。');
+        window.DesktopLibrary?.preview(result, view, output);
       } catch (error) { if (live() && version === state.version) message(`预览失败：${error.message}`, true); }
       finally { state.busy = false; if (live()) button.disabled = state.loading; }
     };
@@ -3002,6 +3003,7 @@ window.ForecastUI = (() => {
     $('forecast-list').replaceChildren(); $('forecast-detail').replaceChildren(); $('forecast-detail').hidden = true;
     $('forecast-more').hidden = true; $('forecast-refresh').disabled = false;
     $('forecast-list-status').textContent = '尚未读取，请刷新预测。';
+    window.DesktopLibrary?.forecasts(null); window.DesktopLibrary?.forecastClosed();
   }
   function renderRows() {
     const host = $('forecast-list'); host.replaceChildren();
@@ -3012,6 +3014,7 @@ window.ForecastUI = (() => {
       text(main, 'p', `目标 ${fmt(r.target_at)} · ${r.metric} (${r.unit})`, 'hint');
       row.append(main, action('查看预测详情', () => openTask(r.task_id, false))); host.append(row);
     }
+    window.DesktopLibrary?.forecasts({items:[...rows.values()], state:$('forecast-state').value, cursor});
   }
   async function load(resetPage = false) {
     if (resetPage) clearList(); else if (busy || cursor == null) return;
@@ -3030,6 +3033,7 @@ window.ForecastUI = (() => {
   async function openTask(tid, navigate = true) {
     if (navigate) showView('records');
     window.ObservationPreview?.clear();
+    window.DesktopLibrary?.forecastClosed();
     const current = ++detailEpoch, key = memoryKey, host = $('forecast-detail');
     host.hidden = false; host.replaceChildren(); text(host, 'p', '正在读取预测详情…', 'hint');
     try {
@@ -3054,11 +3058,13 @@ window.ForecastUI = (() => {
       }
       text(host, 'p', '已保存的档案与回执只读。来源与日历未独立认证，摘要仅用于核对一致性。', 'hint mt-14');
       window.ObservationPreview?.mount(host, tid, view, () => current === detailEpoch && key === memoryKey && !host.hidden);
-      host.append(action('收起详情', () => { ++detailEpoch; window.ObservationPreview?.clear(); host.hidden = true; }));
+      host.append(action('收起详情', close));
+      window.DesktopLibrary?.forecastDetail(tid, view);
       host.focus(); host.scrollIntoView({block:'nearest'});
     } catch (error) { if (current === detailEpoch && key === memoryKey) { host.replaceChildren(); text(host, 'p', `读取失败：${error.message}`, 'hint'); host.append(action('重试详情', () => openTask(tid, false))); } }
   }
+  function close() { ++detailEpoch; window.ObservationPreview?.clear(); $('forecast-detail').hidden = true; window.DesktopLibrary?.forecastClosed(); }
   $('forecast-refresh').onclick = () => load(true); $('forecast-more').onclick = () => load(); $('forecast-state').onchange = () => load(true);
   restore(input());
-  return {restore, reset, validate, load, openTask, identityChanged:clearList};
+  return {restore, reset, validate, load, openTask, close, identityChanged:clearList};
 })();

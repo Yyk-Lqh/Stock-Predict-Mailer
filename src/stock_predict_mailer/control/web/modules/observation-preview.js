@@ -84,6 +84,7 @@ window.ObservationPreview = (() => {
         for (const [name, value] of [['导入文本',result.input.content_sha256],['标准观测',result.observation_id],['预测与定义',result.forecast_content_id]]) text(hashes, 'p', `${name}：${value}`, 'mono');
         for (const note of result.limitations) text(output, 'p', note, 'hint mt-14');
         message('预览完成，未保存回执。原归档状态保持不变。');
+        window.DesktopLibrary?.preview(result, view, output);
       } catch (error) { if (live() && version === state.version) message(`预览失败：${error.message}`, true); }
       finally { state.busy = false; if (live()) button.disabled = state.loading; }
     };

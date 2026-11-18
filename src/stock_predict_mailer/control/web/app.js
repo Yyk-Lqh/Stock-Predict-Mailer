@@ -1,52 +1,125 @@
 /* Stock-Predict-Mailer · 预测分析控制台 */
 /* ---------- theme ---------- */
-/* One preference drives both switches: 浅色 / 深色 / 跟随系统. The choice is stored
-   locally per browser; the rendered attribute is always a concrete light|dark so the
-   stylesheet keeps a single contract. */
+/* One preference drives both the topbar orb and the settings radios: 浅色 / 深色 /
+   跟随系统. The choice is stored locally per browser; the rendered attribute is
+   always a concrete light|dark so the stylesheet keeps a single contract, and the
+   system preference is re-read only while the stored choice is 跟随系统. */
 const THEME_KEY = 'stock_predict_mailer.console.theme';
 const THEME_MODES = ['light', 'dark', 'system'];
 const THEME_LABELS = {light: '浅色', dark: '深色'};
 const SYSTEM_THEME = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+const THEME_MOTION = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
 let themeMode = 'dark';
 
 function systemTheme() { return SYSTEM_THEME && SYSTEM_THEME.matches ? 'dark' : 'light'; }
 function resolvedTheme() { return themeMode === 'system' ? systemTheme() : themeMode; }
+function themeName(mode) { return mode === 'system' ? '跟随系统' : `固定${THEME_LABELS[mode]}`; }
 
-function applyTheme(mode, persist) {
+/* The orb is the only quick switch, so it carries two facts at once: its material
+   shows the theme in effect (a pale orb on the graphite page, a deep one on the
+   light page) and its label names the stored choice plus what a press would give. */
+function syncThemeButton(theme) {
+  const button = document.getElementById('theme-toggle');
+  if (!button) return;
+  const next = THEME_MODES[(THEME_MODES.indexOf(themeMode) + 1) % THEME_MODES.length];
+  const current = themeMode === 'system' ? `跟随系统（当前${THEME_LABELS[theme]}）` : `${THEME_LABELS[theme]}主题`;
+  button.setAttribute('aria-label', `界面主题：${current}。按下切换为${themeName(next)}。`);
+  button.title = `界面主题：${current}｜点击切换为${themeName(next)}`;
+}
+
+function applyTheme(mode, options) {
+  const {persist = false, announce = false} = options || {};
   themeMode = THEME_MODES.includes(mode) ? mode : 'dark';
   const theme = resolvedTheme();
-  document.documentElement.dataset.theme = theme;
-  document.documentElement.dataset.themeMode = themeMode;
+  const root = document.documentElement;
+  root.dataset.theme = theme;
+  root.dataset.themeMode = themeMode;
   document.querySelectorAll('[data-theme-choice]').forEach(choice => {
     const selected = choice.dataset.themeChoice === themeMode;
     if (choice.tagName === 'INPUT') choice.checked = selected;
     else choice.setAttribute('aria-pressed', String(selected));
     choice.closest('.theme-option')?.classList.toggle('is-selected', selected);
   });
+  syncThemeButton(theme);
   const note = document.getElementById('theme-effective');
   if (note) {
     note.textContent = themeMode === 'system'
       ? `正在跟随系统，当前显示${THEME_LABELS[theme]}；系统切换时会自动调整。`
       : `已固定${THEME_LABELS[theme]}，不随系统变化。`;
   }
+  const status = document.getElementById('theme-status');
+  if (status && announce) {
+    status.textContent = themeMode === 'system'
+      ? `已跟随系统，当前${THEME_LABELS[theme]}`
+      : `已切换到${THEME_LABELS[theme]}主题`;
+  }
   if (persist) {
     try { localStorage.setItem(THEME_KEY, themeMode); } catch (_) { /* Theme still works without storage. */ }
   }
 }
 
+const themeToggle = document.getElementById('theme-toggle');
+if (themeToggle) {
+  themeToggle.addEventListener('click', () => {
+    const next = THEME_MODES[(THEME_MODES.indexOf(themeMode) + 1) % THEME_MODES.length];
+    applyTheme(next, {persist: true, announce: true});
+  });
+  /* The eyes lean toward the pointer while it is over the orb; under reduced
+     motion they stay centred. Offsets stay under two pixels, so it reads as calm. */
+  const orb = themeToggle.querySelector('.theme-orb');
+  const gaze = (x, y) => {
+    if (!orb) return;
+    orb.style.setProperty('--gaze-x', `${x.toFixed(2)}px`);
+    orb.style.setProperty('--gaze-y', `${y.toFixed(2)}px`);
+  };
+  themeToggle.addEventListener('pointermove', event => {
+    if (!orb || (THEME_MOTION && THEME_MOTION.matches)) return;
+    const rect = orb.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const clamp = value => Math.max(-1, Math.min(1, value));
+    gaze(clamp((event.clientX - (rect.left + rect.width / 2)) / (rect.width / 2)) * 1.4,
+      clamp((event.clientY - (rect.top + rect.height / 2)) / (rect.height / 2)) * 1.2);
+  });
+  themeToggle.addEventListener('pointerleave', () => gaze(0, 0));
+  themeToggle.addEventListener('blur', () => gaze(0, 0));
+}
+
 document.querySelectorAll('[data-theme-choice]').forEach(choice => {
-  const pick = () => applyTheme(choice.dataset.themeChoice, true);
+  const pick = () => applyTheme(choice.dataset.themeChoice, {persist: true, announce: true});
   if (choice.tagName === 'INPUT') choice.addEventListener('change', pick);
   else choice.addEventListener('click', pick);
 });
 try { applyTheme(localStorage.getItem(THEME_KEY)); } catch (_) { applyTheme('dark'); }
 /* Follow the OS only while the user asked us to; an explicit choice wins. */
-const followSystem = () => { if (themeMode === 'system') applyTheme('system'); };
+const followSystem = () => { if (themeMode === 'system') applyTheme('system', {announce: true}); };
 if (SYSTEM_THEME) {
   if (SYSTEM_THEME.addEventListener) SYSTEM_THEME.addEventListener('change', followSystem);
   else if (SYSTEM_THEME.addListener) SYSTEM_THEME.addListener(followSystem);
 }
 window.addEventListener('storage', event => { if (event.key === THEME_KEY) applyTheme(event.newValue); });
+
+/* Occasional blink, so the orb reads as alive without drawing attention. Paused
+   for reduced motion and for hidden tabs; the eyes stay put when it is skipped. */
+(function startOrbBlink() {
+  const orb = document.querySelector('.theme-orb');
+  if (!orb) return;
+  let timer = 0;
+  const schedule = () => {
+    clearTimeout(timer);
+    orb.classList.remove('is-blinking');
+    if ((THEME_MOTION && THEME_MOTION.matches) || document.visibilityState === 'hidden') return;
+    timer = setTimeout(() => {
+      orb.classList.add('is-blinking');
+      timer = setTimeout(() => { orb.classList.remove('is-blinking'); schedule(); }, 140);
+    }, 4800 + Math.random() * 5200);
+  };
+  schedule();
+  if (THEME_MOTION) {
+    if (THEME_MOTION.addEventListener) THEME_MOTION.addEventListener('change', schedule);
+    else if (THEME_MOTION.addListener) THEME_MOTION.addListener(schedule);
+  }
+  document.addEventListener('visibilitychange', schedule);
+})();
 const $ = id => document.getElementById(id);
 let csrf = '', profiles = [], servers = [], endpoints = [], settings = null, currentTask = null;
 let taskControlsDirty = false;

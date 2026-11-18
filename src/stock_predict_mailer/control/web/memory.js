@@ -54,7 +54,10 @@ async function refreshMemory() {
 }
 
 async function useMemoryKey(key) {
+  window.DesktopPoll?.stop();
+  window.DesktopSessions?.identityChanged();
   window.ForecastUI?.identityChanged();
+  window.DesktopRecords?.identityChanged();
   const previous = memoryKey;
   memoryKey = key;
   try {
@@ -66,7 +69,10 @@ async function useMemoryKey(key) {
     window.Workbench?.identityChanged();
   } catch (error) {
     memoryKey = previous;
+    window.DesktopSessions?.identityChanged();
+    window.DesktopRecords?.identityChanged();
     await refreshMemory();
+    window.DesktopPoll?.resume();
     throw error;
   }
 }
@@ -123,19 +129,22 @@ refreshMemory().catch(error => notice(error.message, true));
 /* Conversation workbench. Uses the existing task, memory and report contracts. */
 window.Workbench = (() => {
   let selected = '', displayed = null, sessionCursor = null, turnCursor = null;
-  let turns = [], selectionEpoch = 0, sessionEpoch = 0, ready = false;
+  let turns = [], selectionEpoch = 0, sessionEpoch = 0, ready = false, openingSelection = false;
   const POSITION = 'stock_predict_mailer.workbench.position';
   const safe = fn => async (...args) => { try { return await fn(...args); } catch (error) { notice(error.message, true); } };
   const rememberPosition = () => {
     try { sessionStorage.setItem(POSITION, JSON.stringify({conversation: selected, task: displayed?.id})); } catch (_) { /* optional */ }
   };
   function inspector(open) {
+    if (open && matchMedia('(min-width: 761px)').matches && document.body.dataset.view && document.body.dataset.view !== 'analysis') open = false;
     $('report-inspector').hidden = !open;
     document.body.classList.toggle('inspector-visible', open);
     $('report-open').setAttribute('aria-expanded', String(open));
     window.AnalysisInput?.layout();
+    window.DesktopReport?.visibility(open);
   }
   function clearTask() {
+    window.DesktopPoll?.stop();
     window.AnalysisInput?.reset();
     window.PonyOffice?.reset();
     currentTask = null;
@@ -151,6 +160,7 @@ window.Workbench = (() => {
     $('task-output').textContent = '尚无任务';
     $('result-summary').textContent = '提交后可查看执行进度与报告';
     inspector(false);
+    window.DesktopReport?.clear();
   }
   function clearFollowup() {
     window.ForecastUI?.reset();
@@ -159,12 +169,13 @@ window.Workbench = (() => {
     for (const id of ['conversation-message', 'conversation-constraints', 'remember-text', 'remember-format', 'conversation-format']) $(id).value = '';
     window.KnowledgeUI?.reset();
   }
-  function saveDraft() { clearTimeout(draftTimer); draftWrite(draftSnapshot()); }
+  function saveDraft() { clearTimeout(draftTimer); if(!window.DesktopInteractions?.draftBlocked())draftWrite(draftSnapshot()); }
   function heading(title) {
     $('analysis-title').textContent = title;
     $('workspace-title').textContent = title;
   }
   async function sessions(append = false) {
+    if (window.DesktopSessions?.active()) return window.DesktopSessions.load(append,id=>select(id));
     const epoch = ++sessionEpoch;
     const host = $('sidebar-sessions');
     if (!memoryKey) {
@@ -225,6 +236,7 @@ window.Workbench = (() => {
     if (save) saveDraft();
     const epoch = ++selectionEpoch;
     $('task-form').inert = true;
+    window.DesktopInteractions?.begin();
     try {
       selected = id;
       clearTask();
@@ -252,11 +264,20 @@ window.Workbench = (() => {
       if (latest) {
         const task = await api('tasks/' + latest);
         if (epoch !== selectionEpoch) return;
-        openRecord(task);
+        openingSelection=true;
+        try { openRecord(task); } finally { openingSelection=false; }
       }
       await sessions();
       rememberPosition();
-    } finally { if (epoch === selectionEpoch) $('task-form').inert = false; }
+    } catch(error) {
+      if(epoch===selectionEpoch&&window.DesktopInteractions?.active()){
+        const denied=/FORBIDDEN|NOT_FOUND/.test(error.message);
+        if(!denied)draftRestore();
+        $('task-notify').checked=false;
+        window.DesktopInteractions.failed(id,error.message,()=>select(id,{save:!denied,taskId}),denied);
+      }
+      throw error;
+    } finally { if (epoch === selectionEpoch) { $('task-form').inert = false;window.DesktopInteractions?.finish(id); } }
   }
   function blankPrediction() {
     setNumericPrediction(null);
@@ -298,6 +319,7 @@ window.Workbench = (() => {
     } else selected = $('conversation-id').value;
   }
   async function submitted() {
+    window.DesktopInteractions?.reset();
     document.body.classList.remove('report-dismissed');
     $('task-notify').checked = false;
     taskControlsDirty = false;
@@ -355,10 +377,11 @@ window.Workbench = (() => {
   function record(value) {
     document.body.classList.remove('report-dismissed');
     const cid = taskBrief(value).conversation_id || (turns.some(turn => turn.task === value.id) ? selected : '');
-    if (cid && cid !== selected) { select(cid, {taskId: value.id}).catch(error => notice(error.message, true)); return; }
+    if (cid && (cid !== selected || (!openingSelection&&window.DesktopInteractions?.blocked()))) { select(cid, {taskId: value.id}).catch(error => notice(error.message, true)); return; }
     if (!cid && selected) {
       saveDraft(); ++selectionEpoch; selected = ''; turns = [];
       $('conversation-id').value = ''; clearFollowup(); renderTurns(); heading('独立任务');
+      if(window.DesktopInteractions?.active()){$('task-form').inert=false;window.DesktopInteractions.reset();}
     }
     if (value.artifacts?.length || value.status.state === 'failed') inspector(true);
     rememberPosition();
@@ -369,6 +392,7 @@ window.Workbench = (() => {
     $('session-menu').open = false;
     window.PonyOffice?.view(name);
     document.body.dataset.view = name;
+    window.DesktopPoll?.view(name);
     document.body.classList.remove('sidebar-open');
     $('sidebar-toggle').setAttribute('aria-expanded', 'false');
     if (name !== 'analysis') inspector(false);
@@ -391,7 +415,7 @@ window.Workbench = (() => {
     try { position = JSON.parse(sessionStorage.getItem(POSITION) || 'null'); } catch (_) { /* optional */ }
     if (position?.conversation && memoryKey) {
       try { await select(position.conversation, {save: false, taskId: position.task}); }
-      catch (error) { selected = ''; $('conversation-id').value = ''; clearTask(); notice('未能恢复上次位置：' + error.message, true); }
+      catch (error) { selected = ''; $('conversation-id').value = ''; clearTask(); window.DesktopInteractions?.reset(); notice('未能恢复上次位置：' + error.message, true); }
     } else if (position?.task) {
       try { openRecord(await api('tasks/' + position.task)); } catch (_) { clearTask(); }
     }
@@ -399,9 +423,12 @@ window.Workbench = (() => {
   }
   function identityChanged() {
     if (!ready) return;
+    window.DesktopSessions?.identityChanged();
+    window.DesktopRecords?.identityChanged();
     ++selectionEpoch; selected = ''; turns = []; clearTask(); clearFollowup(); renderTurns();
     blankPrediction();
     $('task-form').inert = false;
+    window.DesktopInteractions?.reset();
     window.KnowledgeUI?.identityReset();
     $('conversation-id').value = '';
     $('knowledge-detail').hidden = true;
@@ -419,12 +446,16 @@ window.Workbench = (() => {
   const tools = document.createElement('div'); tools.id = 'conversation-tools'; tools.className = 'actions conversation-tools'; tools.hidden = true;
   tools.append(action('导出会话', async () => { saveFile(await api(`conversations/${selected}/export`), `conversation-${selected}.json`); }), action('删除会话', async () => {
     if (!confirm('删除会话消息和摘要？长期记忆及历史任务报告会保留。运行中的会话需先取消任务。')) return;
-    const id = selected;
+    const id = selected, key = memoryKey;
     await api('conversations/' + id, 'DELETE');
+    if(window.DesktopSessions?.active()){if(key!==memoryKey)return;window.DesktopSessions.removed(id);}
     try { localStorage.removeItem(DRAFT_KEY + '.' + id); } catch (_) { /* optional */ }
+    if(window.DesktopSessions?.active()&&selected!==id){await refreshMemory();return;}
     clearTimeout(draftTimer); ++selectionEpoch; selected = ''; turns = []; $('conversation-id').value = '';
     clearTask(); clearFollowup(); blankPrediction(); renderTurns(); heading('新建分析');
+    window.DesktopInteractions?.reset();
     await refreshMemory(); rememberPosition();
+    window.DesktopInteractions?.afterDelete();
   }));
   $('analysis-title').closest('.page-head').after(tools);
   $('memory-access-actions').append(action('复制当前访问密钥', async () => {
@@ -509,6 +540,7 @@ window.Workbench = (() => {
 window.KnowledgeUI = (() => {
   let timer = null, epoch = 0, documents = [], catalog = {total: 0, review: 0}, queueTimer = null, waiting = null;
   const PAGE = 50;
+  let desktopStatus = '', detailRequest = 0, searchRequest = 0;
   const STATE = {pending: '已排队', processing: '处理中', ready: '已发布', review: '待审阅', failed: '处理失败', rejected: '已拒绝', deleting: '等待删除'};
   const STEP = {received: '已接收', parsed: '已解析', chunked: '已切分', extracted: '已提取', reviewed: '已审阅', published: '已发布'};
   // 与后端 metadata() 白名单一致：四类标签键与对应的表单字段。
@@ -557,6 +589,7 @@ window.KnowledgeUI = (() => {
   section.querySelectorAll('[data-kb-tab]').forEach(el => { el.onclick = safe(async () => { tab(el.dataset.kbTab); if (el.dataset.kbTab === 'processing') await configs(); }); });
   function reset() { $('task-knowledge-query').value = ''; $('task-knowledge-consent').checked = false; }
   function identityReset() {
+    ++detailRequest; ++searchRequest; desktopStatus = ''; window.DesktopLibrary?.resetKnowledge();
     ++epoch; clearTimeout(timer); clearTimeout(queueTimer); waiting = null; documents = [];
     for (const id of ['knowledge-list', 'knowledge-results', 'knowledge-answer-result', 'knowledge-configs', 'knowledge-indexes', 'knowledge-detail', 'knowledge-queue']) $(id).replaceChildren();
     $('knowledge-detail').hidden = true; reset();
@@ -565,6 +598,7 @@ window.KnowledgeUI = (() => {
   function restore(value) { $('task-knowledge-query').value = value.knowledge_query || ''; $('task-knowledge-consent').checked = Boolean(value.knowledge_to_model); }
   function documentRow(item) {
     const row = document.createElement('article'); row.className = 'document-row';
+    row.dataset.documentId = item.id; row.dataset.documentState = item.status;
     const name = document.createElement('div');
     text(name, 'h3', item.logical);
     text(name, 'p', `${item.filename} · ${fmt(item.uploaded)} · ${item.id.slice(0, 8)}`, 'hint');
@@ -584,7 +618,8 @@ window.KnowledgeUI = (() => {
       const button = action(`加载更多 · 已显示 ${documents.length} / ${catalog.total}`, () => load(true));
       button.id = 'knowledge-more'; host.append(button);
     }
-    if (!documents.length) text(host, 'p', '上传第一份资料，建立可追溯的证据库。', 'empty');
+    if (!documents.length) text(host, 'p', desktopStatus && matchMedia('(min-width: 761px)').matches ? '这个状态暂无资料，可切换状态或上传资料。' : '上传第一份资料，建立可追溯的证据库。', 'empty');
+    window.DesktopLibrary?.knowledge({items:documents, catalog, status:desktopStatus});
   }
   function shortAge(seconds) {
     if (seconds === null || seconds === undefined) return '未知';
@@ -621,6 +656,7 @@ window.KnowledgeUI = (() => {
       row.append(action('查看', () => detail(item.id)));
       host.append(row);
     }
+    window.DesktopLibrary?.queue(data);
   }
   async function queueStatus(reload = true) {
     clearTimeout(queueTimer);
@@ -636,7 +672,7 @@ window.KnowledgeUI = (() => {
       // 调用本函数，避免两边互相触发。
       if (reload && waiting !== null && waiting > 0 && busy === 0) await load();
       waiting = busy;
-    } catch (error) { /* 轮询失败保持上一次显示，网络抖动不该刷提示 */ }
+    } catch (error) { window.DesktopLibrary?.queueError(); /* Keep the previous queue display. */ }
     queueTimer = setTimeout(() => queueStatus(), busy ? 4000 : 8000);
   }
   async function load(append = false) {
@@ -645,18 +681,25 @@ window.KnowledgeUI = (() => {
     const requestEpoch = ++epoch;
     const key = memoryKey;
     $('knowledge-access').hidden = Boolean(key); $('knowledge-body').hidden = !key;
-    if (!key) { documents = []; $('knowledge-list').replaceChildren(); $('knowledge-detail').hidden = true; $('knowledge-queue').replaceChildren(); clearTimeout(queueTimer); waiting = null; return; }
+    if (!key) { documents = []; $('knowledge-list').replaceChildren(); $('knowledge-detail').hidden = true; $('knowledge-queue').replaceChildren(); clearTimeout(queueTimer); waiting = null; window.DesktopLibrary?.resetKnowledge(); return; }
+    window.DesktopLibrary?.knowledgeLoading(desktopStatus);
     queueStatus(false);
     try {
       const offset = extend ? documents.length : 0;
       const limit = extend ? PAGE : Math.min(500, Math.max(PAGE, documents.length));
-      const data = await api(`knowledge/documents?limit=${limit}&offset=${offset}`);
+      const status = matchMedia('(min-width: 761px)').matches ? desktopStatus : '';
+      const data = await api(`knowledge/documents?limit=${limit}&offset=${offset}${status ? '&status=' + status : ''}`);
       if (requestEpoch !== epoch || key !== memoryKey) return;
       if (!extend) { documents = []; $('knowledge-list').replaceChildren(); }
       documents = documents.concat(data.items); catalog = data;
       renderDocuments(data.items);
       if (!section.hidden && data.items.some(item => ['pending', 'processing'].includes(item.status))) timer = setTimeout(() => load(), 4000);
-    } catch (error) { if (requestEpoch === epoch) notice(error.message, true); }
+    } catch (error) { if (requestEpoch === epoch) { notice(error.message, true); window.DesktopLibrary?.knowledgeError(error.message); } }
+  }
+  async function filterStatus(status = '') {
+    desktopStatus = Object.hasOwn(STATE, status) ? status : '';
+    documents = []; $('knowledge-list').replaceChildren();
+    return load();
   }
   function chunkText(host, chunks) {
     for (const chunk of chunks || []) {
@@ -673,8 +716,10 @@ window.KnowledgeUI = (() => {
   }
   async function detail(id) {
     const key = memoryKey;
+    const desktop = matchMedia('(min-width: 761px)').matches, request = ++detailRequest;
+    const current = () => key === memoryKey && (!desktop || request === detailRequest);
     const [item, versions] = await Promise.all([api('knowledge/documents/' + id), api(`knowledge/documents/${id}/versions`)]);
-    if (key !== memoryKey) return;
+    if (!current()) return;
     const host = $('knowledge-detail'); host.replaceChildren(); host.hidden = false;
     text(host, 'h2', item.logical);
     text(host, 'p', `${STATE[item.status] || item.status} · ${item.active ? '活动版本' : '非活动版本'} · ${item.id}`, 'hint');
@@ -682,7 +727,7 @@ window.KnowledgeUI = (() => {
     const tags = TAGS.filter(([key]) => (item.metadata[key] || []).length);
     if (tags.length) text(host, 'p', tags.map(([key]) => `${TAG_LABEL[key]}：${item.metadata[key].join('、')}`).join(' · '), 'hint');
     if (versions.length > 1) {
-      const history = document.createElement('details'); text(history, 'summary', `版本历史 · ${versions.length} 个版本`);
+      const history = document.createElement('details'); history.className = 'knowledge-version-history'; text(history, 'summary', `版本历史 · ${versions.length} 个版本`);
       for (const version of versions) text(history, 'p', `${version.id.slice(0, 8)}${version.id === id ? '（当前查看）' : ''} · ${STATE[version.status] || version.status}${version.active ? ' · 活动版本' : ''} · ${fmt(version.uploaded)}`, 'hint');
       text(history, 'p', '检索按截止日期选用当时有效的最新版本；下架不退回到旧版本。', 'hint');
       host.append(history);
@@ -714,13 +759,15 @@ window.KnowledgeUI = (() => {
     const excerpts = document.createElement('details'); excerpts.open = true; text(excerpts, 'summary', '清洗后的来源片段与定位');
     chunkText(excerpts, item.chunks); host.append(excerpts);
     if (!item.chunks?.length) text(excerpts, 'p', '尚未生成可查看的清洗片段。', 'hint');
-    if (item.status === 'review') await review(id, host, item);
+    if (item.status === 'review') await review(id, host, item, current);
+    if (!current()) return;
+    window.DesktopLibrary?.document(item, versions);
     host.scrollIntoView({block: 'start', behavior: 'smooth'});
   }
-  async function review(id, host, sourceDocument) {
+  async function review(id, host, sourceDocument, current = () => true) {
     const key = memoryKey;
     const batch = await api(`knowledge/documents/${id}/review`);
-    if (key !== memoryKey) return;
+    if (key !== memoryKey || !current()) return;
     if (!batch.extraction?.complete) { text(host, 'p', '当前资料需要人工处理原件或补充字段，尚无完整的模型候选可批准。请核对警告，修正后上传新版本。', 'note warn'); return; }
     const group = document.createElement('section'); group.className = 'review-group';
     text(group, 'h3', '逐项核对模型候选');
@@ -813,6 +860,7 @@ window.KnowledgeUI = (() => {
     renderGroups(host, data);
     for (const warning of data.warnings || []) text(host, 'p', typeof warning === 'string' ? warning : JSON.stringify(warning), 'note warn');
     if (data.conflicts?.length) { const d = document.createElement('details'); text(d, 'summary', `冲突候选 ${data.conflicts.length} 项`); text(d, 'pre', JSON.stringify(data.conflicts, null, 2), 'mono'); host.append(d); }
+    window.DesktopLibrary?.searchRendered(host, data);
   }
   /* 汇总回答：把 search 的结构化结果排成「摘录 → 关系 → 推断」，
      推断永远带 citation_id，且明确标注它是规则推断而不是模型结论。 */
@@ -830,7 +878,7 @@ window.KnowledgeUI = (() => {
     anchorHint(wrap, data);
     if (!found.length) {
       text(wrap, 'p', '证据不足：未找到当前权限与截止时间范围内的资料。可放宽截止日期、去掉股票代码或主体限制后重试；没有证据时不生成结论。', 'note warn');
-      host.append(wrap); return;
+      host.append(wrap); window.DesktopLibrary?.searchRendered(host, data); return;
     }
     text(wrap, 'p', '下面按固定顺序拼接：关系证据 → 条件性推断 → 冲突。推断都标明了依据片段，但不等于事实；影响规模、因果关系和收益都无法由此得出。', 'note');
 
@@ -894,7 +942,7 @@ window.KnowledgeUI = (() => {
       text(raw, 'pre', data.answer, 'mono');
       wrap.append(raw);
     }
-    host.append(wrap); host.scrollIntoView({block: 'start'});
+    host.append(wrap); window.DesktopLibrary?.searchRendered(host, data); host.scrollIntoView({block: 'start'});
   }
   function evidence(data) {
     let host = $('knowledge-report-evidence');
@@ -973,18 +1021,30 @@ window.KnowledgeUI = (() => {
   }
   $('knowledge-search').onsubmit = safe(async event => {
     event.preventDefault(); const button = event.currentTarget.querySelector('[type=submit]'); button.disabled = true;
+    const key = memoryKey, request = ++searchRequest, filters = searchFilters(), signature = JSON.stringify(filters);
+    window.DesktopLibrary?.searchLoading('检索');
     try {
-      const key = memoryKey, data = await api('knowledge/search', 'POST', searchFilters());
-      if (key === memoryKey) renderEvidence($('knowledge-results'), data);
+      const data = await api('knowledge/search', 'POST', filters);
+      if (key === memoryKey && (!matchMedia('(min-width: 761px)').matches || request === searchRequest && signature === JSON.stringify(searchFilters()))) renderEvidence($('knowledge-results'), data);
+      else if (key === memoryKey && request === searchRequest) window.DesktopLibrary?.searchDiscarded();
+    } catch (error) {
+      if (key === memoryKey && request === searchRequest) window.DesktopLibrary?.searchError(error.message);
+      throw error;
     } finally { button.disabled = false; }
   });
   $('knowledge-answer').onclick = safe(async () => {
     const button = $('knowledge-answer'), host = $('knowledge-answer-result');
     if (!$('knowledge-query').value.trim()) { notice('先填写要查的问题。', true); $('knowledge-query').focus(); return; }
     button.disabled = true;
+    const key = memoryKey, request = ++searchRequest, filters = searchFilters(), signature = JSON.stringify(filters);
+    window.DesktopLibrary?.searchLoading('规则汇总');
     try {
-      const key = memoryKey, data = await api('knowledge/answer', 'POST', searchFilters());
-      if (key === memoryKey) renderAnswer(host, data);
+      const data = await api('knowledge/answer', 'POST', filters);
+      if (key === memoryKey && (!matchMedia('(min-width: 761px)').matches || request === searchRequest && signature === JSON.stringify(searchFilters()))) renderAnswer(host, data);
+      else if (key === memoryKey && request === searchRequest) window.DesktopLibrary?.searchDiscarded();
+    } catch (error) {
+      if (key === memoryKey && request === searchRequest) window.DesktopLibrary?.searchError(error.message);
+      throw error;
     } finally { button.disabled = false; }
   });
   $('knowledge-rebuild').onclick = safe(async () => {
@@ -992,7 +1052,7 @@ window.KnowledgeUI = (() => {
     const button = $('knowledge-rebuild'); button.disabled = true;
     try { await api('knowledge/rebuild', 'POST', {}); notice('索引重建完成。'); await configs(); } finally { button.disabled = false; }
   });
-  return {init, load, reset, identityReset, restore, selection, evidence, processing: () => { tab('processing'); configs().catch(error => notice(error.message, true)); }};
+  return {init, load, reset, identityReset, restore, selection, evidence, open:detail, close:() => { ++detailRequest; $('knowledge-detail').hidden = true; }, filter:filterStatus, filterStatus:() => desktopStatus, processing: () => { tab('processing'); configs().catch(error => notice(error.message, true)); }};
 })();
 
 /* Shared projected door geometry and contact timing, independent of the DOM. */
@@ -2157,6 +2217,9 @@ window.PonyOffice = (() => {
   let taskId = null, replay = true, seen = new Set(), active = true, connected = true, taskState = 'idle', selected = 'main';
   let lastFrame = 0, raf = 0, lastUI = 0, roleSignature = '', terminalFeedback = '';
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+  const desktop = matchMedia('(min-width: 761px)');
+  let rendering = null, suspended = false;
+  const sceneVisible = () => active && !suspended && !document.hidden && !document.body.classList.contains('desktop-focus-view') && !document.body.classList.contains('desktop-report-reading');
   const el = (name, attrs = {}, markup = '') => {
     const node = document.createElementNS(NS, name);
     for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
@@ -2343,6 +2406,7 @@ window.PonyOffice = (() => {
     renderUI(); draw(true);
   }
   function draw(force = false) {
+    if (desktop.matches && !sceneVisible()) return;
     const refreshScreen = force || floor.time - lastScreen > .16 || lastScreen > floor.time;
     if (refreshScreen) lastScreen = floor.time;
     const nodes = [],screenNow=new Date();
@@ -2417,7 +2481,7 @@ window.PonyOffice = (() => {
   }
   function frame(now) {
     raf = 0;
-    if (!active || document.hidden) { lastFrame = 0; return; }
+    if (!active || document.hidden || (desktop.matches && !sceneVisible())) { lastFrame = 0; return; }
     const dt = lastFrame ? Math.min((now - lastFrame) / 1000, .05) : 0; lastFrame = now;
     if (connected) floor.tick(dt, reduced.matches, true);
     for (const actor of floor.actors) if (actor.present && actor.pose === 'seated' && actor.state !== 'running' && PonyRig.expression(actor,floor.time,'idle',reduced.matches).sleep<.05) {
@@ -2446,12 +2510,20 @@ window.PonyOffice = (() => {
   }
   let layoutFrame=0;
   office.querySelector('.office-stage').addEventListener('scroll',()=>{if(!layoutFrame)layoutFrame=requestAnimationFrame(()=>{layoutFrame=0;layout();});},{passive:true});
-  function view(name) { active = name === 'analysis'; if(active){queueMicrotask(layout);lastFrame=0;draw(true);} if (active && !raf) raf = requestAnimationFrame(frame); }
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && active) { lastFrame = 0; draw(true);if (taskId) poll(taskId); if (!raf) raf = requestAnimationFrame(frame); } });
+  function visibility() {
+    if (!desktop.matches) return;
+    const visible=sceneVisible();if(rendering===visible)return;rendering=visible;lastFrame=0;
+    if(!visible){if(raf)cancelAnimationFrame(raf);raf=0;return;}
+    queueMicrotask(layout);draw(true);hall?.tick(performance.now(),true);
+    if(!raf)raf=requestAnimationFrame(frame);
+  }
+  if(desktop.matches)new MutationObserver(visibility).observe(document.body,{attributes:true,attributeFilter:['class','data-view']});
+  function view(name) { active = name === 'analysis'; if(desktop.matches){visibility();return;} if(active){queueMicrotask(layout);lastFrame=0;draw(true);} if (active && !raf) raf = requestAnimationFrame(frame); }
+  document.addEventListener('visibilitychange', () => { if(desktop.matches)visibility(); if (!document.hidden && active) { lastFrame = 0; draw(true);if (taskId) poll(taskId); if ((!desktop.matches||sceneVisible())&&!raf) raf = requestAnimationFrame(frame); } });
   $('office-show-output').onclick = () => window.Workbench.inspector(true);
   $('office-show-room').onclick = () => window.Workbench.inspector(false);
-  window.addEventListener('pagehide', () => { if (raf) cancelAnimationFrame(raf); raf = 0; });
-  window.addEventListener('pageshow', () => { lastFrame = 0;if(active)draw(true); if (active && !raf) raf = requestAnimationFrame(frame); });
+  window.addEventListener('pagehide', () => { if (raf) cancelAnimationFrame(raf); raf = 0;rendering=false;suspended=true; });
+  window.addEventListener('pageshow', () => { suspended=false;if(desktop.matches){visibility();return;} lastFrame = 0;if(active)draw(true); if (active && !raf) raf = requestAnimationFrame(frame); });
   window.addEventListener('focus',()=>{if(active&&!document.hidden)draw(true);});
   reset(); view(document.body.dataset.view || 'analysis');
   return {reset, sync, view, layout, hall, disconnected: () => { connected = false;hall?.disconnected(); renderUI(); draw(true); }, snapshot: () => ({taskId, taskState, door: floor.door, actors: floor.actors.map(a => ({id: a.id, present: a.present, pose: a.pose, state: a.state, x: a.x, y: a.y, screen: PonyScreen.state(a, floor.time, connected), taskId: a.taskId, childId:a.childId, activity:a.activity}))})};
@@ -2552,6 +2624,8 @@ window.AnalysisInput = (() => {
     }
     $('inspector-actions').hidden = id !== 'report';
     window.Workbench.inspector(true); update();
+    window.DesktopWorkbench?.panel(id);
+    window.DesktopReport?.panel(id);
   }
   function layout() {
     const root=document.documentElement, stage=document.querySelector('.office-stage');
@@ -2565,10 +2639,11 @@ window.AnalysisInput = (() => {
   function observe(task) {
     const prediction = task.artifacts?.[0]?.parts?.[0]?.data?.analysis?.prediction;
     if (prediction) lastPrediction = prediction;
+    window.DesktopWorkbench?.observe(task);
     if (['working', 'submitted'].includes(task.status.state) && mode !== 'input') open('progress');
     update();
   }
-  function reset() { lastPrediction = null; update(); }
+  function reset() { lastPrediction = null; window.DesktopWorkbench?.reset(); update(); }
   form.addEventListener('input', update); form.addEventListener('change', update);
   form.addEventListener('input', event => { if (event.target.hasAttribute('aria-invalid')) { event.target.removeAttribute('aria-invalid'); event.target.setCustomValidity?.(''); } });
   tabs.addEventListener('keydown', event => {
@@ -2587,7 +2662,10 @@ window.AnalysisInput = (() => {
   window.addEventListener('resize', layout);
   document.body.classList.toggle('analysis-composer-visible', document.body.dataset.view === 'analysis');
   update();
-  return {open, validate, observe, reset, update, layout};
+  const currentPrediction = () => {
+    try { return JSON.parse($('task-data').value).prediction || lastPrediction; } catch (_) { return null; }
+  };
+  return {open, validate, observe, reset, update, layout, currentPrediction,resize:autoSize};
 })();
 
 /* Desktop mail-seat editor. Saving preferences never sends a message. */
@@ -2748,6 +2826,7 @@ window.ComposerControls = (() => {
     model.querySelector('span').textContent=selected?.name||'选择模型';model.title=selected?`默认模型：${selected.name}`:'选择或配置分析模型';
     effort.querySelector('span').textContent=labels[levels.indexOf(effective())]||'默认';
     effort.title=`推理强度：${effort.textContent.trim()}`;
+    window.DesktopWorkbench?.update();
   }
   new MutationObserver(()=>{if(!document.body.classList.contains('analysis-composer-visible'))close();}).observe(document.body,{attributes:true,attributeFilter:['class']});
   update();return {update,close};
@@ -2839,6 +2918,7 @@ window.ObservationPreview = (() => {
         for (const [name, value] of [['导入文本',result.input.content_sha256],['标准观测',result.observation_id],['预测与定义',result.forecast_content_id]]) text(hashes, 'p', `${name}：${value}`, 'mono');
         for (const note of result.limitations) text(output, 'p', note, 'hint mt-14');
         message('预览完成，未保存回执。原归档状态保持不变。');
+        window.DesktopLibrary?.preview(result, view, output);
       } catch (error) { if (live() && version === state.version) message(`预览失败：${error.message}`, true); }
       finally { state.busy = false; if (live()) button.disabled = state.loading; }
     };
@@ -2935,6 +3015,7 @@ window.ForecastUI = (() => {
     $('forecast-list').replaceChildren(); $('forecast-detail').replaceChildren(); $('forecast-detail').hidden = true;
     $('forecast-more').hidden = true; $('forecast-refresh').disabled = false;
     $('forecast-list-status').textContent = '尚未读取，请刷新预测。';
+    window.DesktopLibrary?.forecasts(null); window.DesktopLibrary?.forecastClosed();
   }
   function renderRows() {
     const host = $('forecast-list'); host.replaceChildren();
@@ -2945,6 +3026,7 @@ window.ForecastUI = (() => {
       text(main, 'p', `目标 ${fmt(r.target_at)} · ${r.metric} (${r.unit})`, 'hint');
       row.append(main, action('查看预测详情', () => openTask(r.task_id, false))); host.append(row);
     }
+    window.DesktopLibrary?.forecasts({items:[...rows.values()], state:$('forecast-state').value, cursor});
   }
   async function load(resetPage = false) {
     if (resetPage) clearList(); else if (busy || cursor == null) return;
@@ -2963,6 +3045,7 @@ window.ForecastUI = (() => {
   async function openTask(tid, navigate = true) {
     if (navigate) showView('records');
     window.ObservationPreview?.clear();
+    window.DesktopLibrary?.forecastClosed();
     const current = ++detailEpoch, key = memoryKey, host = $('forecast-detail');
     host.hidden = false; host.replaceChildren(); text(host, 'p', '正在读取预测详情…', 'hint');
     try {
@@ -2987,11 +3070,1046 @@ window.ForecastUI = (() => {
       }
       text(host, 'p', '已保存的档案与回执只读。来源与日历未独立认证，摘要仅用于核对一致性。', 'hint mt-14');
       window.ObservationPreview?.mount(host, tid, view, () => current === detailEpoch && key === memoryKey && !host.hidden);
-      host.append(action('收起详情', () => { ++detailEpoch; window.ObservationPreview?.clear(); host.hidden = true; }));
+      host.append(action('收起详情', close));
+      window.DesktopLibrary?.forecastDetail(tid, view);
       host.focus(); host.scrollIntoView({block:'nearest'});
     } catch (error) { if (current === detailEpoch && key === memoryKey) { host.replaceChildren(); text(host, 'p', `读取失败：${error.message}`, 'hint'); host.append(action('重试详情', () => openTask(tid, false))); } }
   }
+  function close() { ++detailEpoch; window.ObservationPreview?.clear(); $('forecast-detail').hidden = true; window.DesktopLibrary?.forecastClosed(); }
   $('forecast-refresh').onclick = () => load(true); $('forecast-more').onclick = () => load(); $('forecast-state').onchange = () => load(true);
   restore(input());
-  return {restore, reset, validate, load, openTask, identityChanged:clearList};
+  return {restore, reset, validate, load, openTask, close, identityChanged:clearList};
+})();
+
+/* Desktop workflow enhancement. Mobile keeps the original shell and controls. */
+window.DesktopWorkbench = (() => {
+  const desktop = matchMedia('(min-width: 761px)');
+  const preference = 'stock_predict_mailer.desktop.view.v1';
+  const office = document.querySelector('.pony-office');
+  const inspectorTitle = document.querySelector('.inspector-head h2');
+  const originalTitle = inspectorTitle.textContent;
+  const statusParent = $('task-status').parentElement, statusNext = $('task-status').nextSibling;
+  let root = null, focus = null, feedback = null, task = null, pane = 'progress';
+  let origin = null, mode = 'focus', expiry = null, expiresAt = 0, disconnected = false, sampling = false, selection = {state:'idle'};
+  try { if (localStorage.getItem(preference) === 'hall') mode = 'hall'; } catch (_) { /* Optional preference. */ }
+
+  const put = (id, value) => {
+    const node = $(id);
+    if (node.textContent !== value) node.textContent = value;
+  };
+  function inputState() {
+    let raw;
+    try {
+      raw = JSON.parse($('task-data').value);
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw Error();
+    } catch (_) { return {state: 'invalid', field: 'task-data', label: '请修正原始 JSON', detail: '原始输入无法解析，请打开资料检查格式。'}; }
+    const prediction = window.AnalysisInput.currentPrediction();
+    if (typeof prediction?.subject !== 'string' || !prediction.subject.trim()) return {state: 'empty', label: '填写分析资料', detail: '先填写标的、预测周期和上游模型版本。'};
+    const result = {prediction, facts: Array.isArray(raw.context?.facts) ? raw.context.facts.length : 0};
+    if (typeof prediction.model_version !== 'string' || !prediction.model_version.trim()) return {...result, state: 'invalid', field: 'p-model-version', label: '补充模型版本', detail: '请填写这份预测的上游模型版本。'};
+    if (!(Number.isFinite(prediction.horizon?.value) && prediction.horizon.value > 0)) return {...result, state: 'invalid', field: 'p-horizon-value', label: '核对预测周期', detail: '预测周期需要大于零。'};
+    if (!(Date.parse(prediction.valid_until) > Date.now())) return {...result, state: 'expired', field: 'p-valid-until', label: '更新过期预测', detail: '预测已过期或缺少有效期，请核对原始资料后更新。'};
+    if (prediction.confidence != null && !(Number.isFinite(prediction.confidence) && prediction.confidence >= 0 && prediction.confidence <= 1)) return {...result, state: 'invalid', field: 'p-confidence', label: '核对置信度', detail: '置信度须在 0 到 1 之间；上游未提供时可留空。'};
+    if (raw.context?.facts && (!Array.isArray(raw.context.facts) || raw.context.facts.some(fact => typeof fact?.source !== 'string' || !fact.source.trim() || !Number.isFinite(Date.parse(fact.observed_at))))) {
+      return {...result, state: 'invalid', label: '补充事实来源', detail: '每条客观事实都需要来源和有效的观测时间。'};
+    }
+    return {...result, state: 'ready', label: prediction.subject, detail: '主要资料已填写；发送时会再次校验资料、归档和授权。'};
+  }
+  function openData() {
+    origin = document.activeElement;
+    $('prediction-editor').open = true;
+    window.AnalysisInput.open('input');
+    const target = $('task-form').querySelector('[aria-invalid="true"]') || $(inputState().field || 'p-subject');
+    for (let parent = target.parentElement; parent && parent !== $('task-form'); parent = parent.parentElement) if (parent.tagName === 'DETAILS') parent.open = true;
+    target.focus(); target.scrollIntoView({block: 'nearest'});
+  }
+  function openResult() {
+    if (!task) return;
+    origin = document.activeElement;
+    window.AnalysisInput.open(['submitted', 'working'].includes(task.status.state) ? 'progress' : 'report');
+    $('analysis-tab-' + pane).focus();
+  }
+  function chooseModel() {
+    origin = document.activeElement;
+    if (profiles.some(item => item.enabled && item.id === settings?.default_model_id)) $('composer-model').click();
+    else { showView('settings'); showPanel('models'); $('model-name').focus(); }
+  }
+  async function sample(event) {
+    if(selection.state==='loading'||sampling)return;
+    const button = event.currentTarget;
+    const current = profiles.find(item => item.id === settings?.default_model_id);
+    if (current?.provider !== 'mock' && current && !confirm('准备示例会将工作台默认模型切换为 Mock，并替换当前预测与事实。不会自动提交分析。继续？')) return;
+    if (window.AnalysisInput.currentPrediction()?.subject && (!current || current.provider === 'mock') && !confirm('用合成示例替换当前预测与事实？当前问题会保留，不会自动提交。')) return;
+    sampling=true;button.disabled = true;
+    try {
+      await $('try-sample').onclick();
+      if (settings?.default_model_id && $('task-data').value.includes('console-mock')) {
+        update();
+        $('conversation-message').focus();
+        notice('离线示例已准备：默认模型为 Mock，资料为合成示例。输入问题后点击发送。');
+      }
+    } finally { sampling=false;button.disabled = selection.state==='loading'; }
+  }
+  function setMode(value) {
+    mode = value;
+    if (!root || !desktop.matches) return;
+    document.body.classList.toggle('desktop-focus-view', mode === 'focus');
+    office.querySelector('.office-stage').inert = mode === 'focus';
+    if (office.querySelector('.market-wall')) office.querySelector('.market-wall').inert = mode === 'focus';
+    for (const button of root.querySelectorAll('[data-desktop-mode]')) button.setAttribute('aria-pressed', String(button.dataset.desktopMode === mode));
+    try { localStorage.setItem(preference, mode); } catch (_) { /* Optional preference. */ }
+    window.AnalysisInput.layout();
+  }
+  function panel(value) {
+    pane = value;
+    if (!desktop.matches || !root) return;
+    if (document.activeElement instanceof HTMLElement && !document.activeElement.closest('#report-inspector') && document.activeElement !== document.body) origin = document.activeElement;
+    inspectorTitle.textContent = {input: '分析资料', progress: '工作进度', report: '报告与证据'}[pane];
+  }
+  function returnFocus() {
+    if (!desktop.matches || !root) return;
+    const target = origin?.isConnected && origin.getClientRects().length ? origin : $('desktop-data');
+    target.focus();
+  }
+  function history(open = $('analysis-composer').classList.contains('desktop-history-open')) {
+    if (!root || !desktop.matches) return;
+    const count = $('conversation-turns').childElementCount;
+    const expanded = Boolean(open && count);
+    $('desktop-history').hidden = !count;
+    put('desktop-history', `会话记录 · ${count} 轮`);
+    $('desktop-history').setAttribute('aria-expanded', String(expanded));
+    $('analysis-composer').classList.toggle('desktop-history-open', expanded);
+  }
+  function update() {
+    if (!root || !desktop.matches) return;
+    const input = inputState();
+    const model = profiles.find(item => item.enabled && item.id === settings?.default_model_id);
+    const prediction = input.prediction;
+    const until = Date.parse(prediction?.valid_until) || 0;
+    if (until !== expiresAt) {
+      clearTimeout(expiry); expiresAt = until;
+      if (until > Date.now()) expiry = setTimeout(() => { expiresAt = 0; update(); }, Math.min(until - Date.now() + 50, 2147483647));
+    }
+    const active = task && ['submitted', 'working'].includes(task.status.state);
+    const result = task?.artifacts?.[0]?.parts?.[0]?.data;
+    const failed = task?.status.state === 'failed';
+    const canceled = task?.status.state === 'canceled';
+    const switching=selection.state==='loading',selectionFailed=selection.state==='failed';
+    put('desktop-title', prediction?.subject ? `${prediction.subject} · 分析工作台` : '从一份预测开始');
+    put('desktop-subtitle', switching?'正在切换会话，读取完成后恢复输入。':selectionFailed?'会话尚未读取完成，可重试或选择其他会话。':active && disconnected ? '进度暂未更新，可打开工作进度重试读取。' : active ? '任务正在执行，可随时查看真实工作进度。' : '准备资料，核对依据，再继续追问。');
+    for(const id of ['desktop-model','desktop-data','desktop-focus-data'])$(id).disabled=switching;
+    $('desktop-sample').disabled=switching||sampling;
+    put('desktop-model-value', model?.name || '选择模型');
+    $('desktop-model').dataset.state = model ? 'ready' : 'empty';
+    $('desktop-model').title = model ? `工作台默认模型：${model.name}；切换将影响后续分析。` : '先添加或选择一个默认模型，也可使用离线示例。';
+    put('desktop-data-value', input.label);
+    $('desktop-data').dataset.state = input.state;
+    $('desktop-data').title = input.detail;
+    $('desktop-result').disabled = switching||!task;
+    put('desktop-result-value', active ? '查看工作进度' : failed ? '查看失败原因' : canceled ? '查看已取消任务' : result ? '查看报告与证据' : '等待分析报告');
+    $('desktop-result').dataset.state = failed ? 'invalid' : result ? 'ready' : active ? 'working' : 'empty';
+    put('desktop-focus-title', prediction?.subject || '准备你的第一份分析');
+    put('desktop-focus-copy', prediction ? input.detail : '导入上游预测，或填写标的与周期。准备好资料后，在下方输入想重点分析的问题。');
+    put('desktop-summary-model', model ? `${model.name}${model.provider === 'mock' ? ' · 离线模拟' : ''}` : '尚未选择默认模型');
+    put('desktop-summary-prediction', prediction ? `${horizonText(prediction.horizon)} · ${prediction.synthetic ? '合成数据' : '上游声明数据'}` : '尚未提供预测');
+    put('desktop-summary-facts', input.facts ? `${input.facts} 条来源声明` : '本轮未附新增事实');
+    put('desktop-summary-mail', $('task-notify').checked ? '本轮启用邮件 · 仍需核对授权收件人' : '仅分析 · 本轮不发送邮件');
+    $('desktop-sample').hidden = Boolean(task);
+    focus.querySelector('.desktop-sample-note').hidden = Boolean(task);
+    history();
+    let message = active ? '分析进行中，工作进度来自实际任务事件。'
+      : !model ? '先选择分析模型，或准备一个离线示例。'
+      : input.state !== 'ready' ? input.detail
+      : failed ? '上一轮分析失败；请查看原因，修改后再提交。'
+      : canceled ? '上一轮任务已取消。确认资料后可重新发送。'
+      : result ? `上一轮报告已生成${result.analysis?.status === 'degraded' ? '，分析存在降级' : ''}；可继续提问。`
+      : input.detail;
+    if (!active && input.state === 'ready' && $('task-notify').checked && !$('task-recipient').value.trim()) message = '本轮启用了邮件，请先填写授权收件地址。';
+    if (active && disconnected) message = '进度读取中断；任务可能仍在服务端运行，可打开工作进度重试。';
+    if(switching)message='正在切换会话，请稍候；已保存的草稿会在读取后恢复。';
+    else if(selectionFailed)message=selection.message;
+    put('desktop-feedback-text', message);
+    feedback.dataset.state = selectionFailed||failed || (active && disconnected) || ['invalid', 'expired'].includes(input.state) ? 'invalid' : switching||active ? 'working' : 'normal';
+    put('desktop-feedback-action', switching?'正在读取':selectionFailed?'重新读取会话':active ? '查看进度' : failed ? '查看原因' : result ? '查看报告' : !model ? '选择模型' : '检查资料');
+    $('desktop-feedback-action').disabled=switching;
+    $('desktop-feedback-action').onclick = selectionFailed?selection.retry:active || failed || result ? openResult : !model ? chooseModel : openData;
+    for (const button of document.querySelectorAll('.nav [data-view]')) {
+      if (button.dataset.view === document.body.dataset.view) button.setAttribute('aria-current', 'page');
+      else button.removeAttribute('aria-current');
+    }
+  }
+  function install() {
+    if (!desktop.matches) {
+      if (root) {
+        root.hidden = focus.hidden = feedback.hidden = true;
+        document.body.classList.remove('desktop-workbench', 'desktop-focus-view');
+        office.querySelector('.office-stage').inert = false;
+        if (office.querySelector('.market-wall')) office.querySelector('.market-wall').inert = false;
+        clearTimeout(expiry); expiresAt = 0;
+        statusParent.insertBefore($('task-status'), statusNext);
+        $('analysis-composer').classList.remove('desktop-history-open');
+        inspectorTitle.textContent = originalTitle;
+        document.querySelectorAll('.nav [aria-current]').forEach(button => button.removeAttribute('aria-current'));
+        window.AnalysisInput.layout();
+      }
+      return;
+    }
+    if (!root) {
+      root = document.createElement('section'); root.id = 'desktop-workflow'; root.setAttribute('aria-label', '分析流程');
+      root.innerHTML = `<div class="desktop-workflow-heading"><div><h1 id="desktop-title"></h1><p id="desktop-subtitle"></p></div><div class="desktop-view-switch" role="group" aria-label="工作台视图"><button type="button" data-desktop-mode="focus">专注分析</button><button type="button" data-desktop-mode="hall">小马大厅</button></div></div>
+        <div class="desktop-workflow-actions"><button type="button" id="desktop-model"><span class="desktop-step">1 · 模型</span><strong id="desktop-model-value"></strong></button><button type="button" id="desktop-data"><span class="desktop-step">2 · 资料</span><strong id="desktop-data-value"></strong></button><button type="button" id="desktop-result"><span class="desktop-step">3 · 结果</span><strong id="desktop-result-value"></strong></button></div>`;
+      focus = document.createElement('section'); focus.id = 'desktop-focus'; focus.setAttribute('aria-label', '本轮分析摘要');
+      focus.innerHTML = `<div class="desktop-focus-intro"><p class="eyebrow">本轮分析</p><h2 id="desktop-focus-title"></h2><p id="desktop-focus-copy"></p><div class="desktop-focus-actions"><button type="button" id="desktop-focus-data" class="btn primary">填写 / 修改资料</button><button type="button" id="desktop-sample" class="btn">准备离线示例</button></div><p class="hint desktop-sample-note">离线示例会将默认模型设为 Mock 并填入合成资料，准备后仍需手动发送。</p></div><dl class="desktop-summary"><div><dt>分析模型</dt><dd id="desktop-summary-model"></dd></div><div><dt>预测周期</dt><dd id="desktop-summary-prediction"></dd></div><div><dt>客观事实</dt><dd id="desktop-summary-facts"></dd></div><div><dt>本轮通知</dt><dd id="desktop-summary-mail"></dd></div></dl>`;
+      feedback = document.createElement('div'); feedback.id = 'desktop-feedback';
+      feedback.innerHTML = '<span id="desktop-feedback-text" role="status" aria-live="polite"></span><button type="button" id="desktop-feedback-action"></button><button type="button" id="desktop-history" aria-controls="conversation-thread" aria-expanded="false" hidden></button><span class="desktop-send-hint">Enter 发送 · Shift+Enter 换行</span>';
+      office.prepend(root, focus);
+      $('analysis-composer').prepend(feedback);
+      $('desktop-data').onclick = $('desktop-focus-data').onclick = openData;
+      $('desktop-model').onclick = chooseModel;
+      $('desktop-result').onclick = openResult;
+      $('desktop-sample').onclick = sample;
+      $('desktop-history').onclick = () => history(!$('analysis-composer').classList.contains('desktop-history-open'));
+      new MutationObserver(() => history()).observe($('conversation-turns'), {childList: true});
+      document.addEventListener('pointerdown', event => { if (desktop.matches && !$('analysis-composer').contains(event.target)) history(false); });
+      document.addEventListener('keydown', event => {
+        if(window.DesktopInteractions?.active())return;
+        if (desktop.matches && event.key === 'Escape' && $('analysis-composer').classList.contains('desktop-history-open')) {
+          event.preventDefault(); event.stopImmediatePropagation(); history(false); $('desktop-history').focus();
+        }
+      }, true);
+      $('task-form').addEventListener('submit', () => history(false));
+      root.querySelectorAll('[data-desktop-mode]').forEach(button => { button.onclick = () => setMode(button.dataset.desktopMode); });
+      $('report-close').addEventListener('click', returnFocus);
+      const resize = new ResizeObserver(() => {
+        if (!desktop.matches) return;
+        const height = root.offsetHeight + 'px';
+        if (office.style.getPropertyValue('--desktop-workflow-height') !== height) {
+          office.style.setProperty('--desktop-workflow-height', height);
+          document.documentElement.style.setProperty('--desktop-workflow-height', height);
+          window.AnalysisInput.layout();
+        }
+      });
+      resize.observe(root);
+    }
+    root.hidden = focus.hidden = feedback.hidden = false;
+    $('analysis-pane-progress').prepend($('task-status'));
+    document.body.classList.add('desktop-workbench');
+    setMode(mode); panel(pane); update();
+  }
+  desktop.addEventListener('change', install);
+  new MutationObserver(update).observe(document.body, {attributes: true, attributeFilter: ['data-view']});
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) update(); });
+  window.addEventListener('focus', update);
+  install();
+  return {update, panel, observe(value) { task = value; update(); }, connectionLost(value){disconnected=value;update();},selectionState(value){selection=value;update();}, reset() { task = null; disconnected=false;update(); }};
+})();
+
+/* Desktop reading layer over the original report. No new report generation. */
+window.DesktopReport = (() => {
+  const desktop = matchMedia('(min-width: 761px)'), report = $('report');
+  const inspector = $('report-inspector'), heading = inspector.querySelector('.inspector-head'), tabs = inspector.querySelector('.analysis-tabs');
+  const focusAttributes = new Map();
+  let task = null, tools = null, scope = null, header = null, pane = 'progress', overview = false;
+  let source = null, selected = [], originRecord = null, overridesExpand = false, officeInert = null;
+  const analysis = () => ['failed', 'canceled'].includes(task?.status.state) ? null : task?.artifacts?.[0]?.parts?.[0]?.data?.analysis;
+  const result = () => task?.artifacts?.[0]?.parts?.[0]?.data;
+  const factId = ref => String(ref).replace(/^fact:/, '');
+  const visible = () => desktop.matches && pane === 'report' && !$('report-inspector').hidden && Boolean(analysis());
+  const make = (tag, value, className) => {
+    const node = document.createElement(tag);
+    if (value != null) node.textContent = value;
+    if (className) node.className = className;
+    return node;
+  };
+  const button = (label, callback, className = '') => {
+    const node = make('button', label, className); node.type = 'button'; node.onclick = callback; return node;
+  };
+  function markFocus(node) {
+    if (!focusAttributes.has(node)) focusAttributes.set(node, node.getAttribute('tabindex'));
+    node.tabIndex = -1;
+    node.focus({preventScroll: true});
+    node.scrollIntoView({block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
+  }
+  function clearSelection() {
+    for (const node of selected) node.classList.remove('desktop-evidence-selected');
+    selected = []; source = null;
+    if (tools) tools.querySelector('.desktop-evidence-trail').hidden = true;
+  }
+  function restoreOriginal() {
+    clearSelection();
+    report.querySelectorAll('.desktop-report-added').forEach(node => node.remove());
+    for (const [node, value] of focusAttributes) {
+      if (value === null) node.removeAttribute('tabindex'); else node.setAttribute('tabindex', value);
+    }
+    focusAttributes.clear();
+  }
+  function setReading(open) {
+    const next = Boolean(open && visible());
+    const changed = document.body.classList.contains('desktop-report-reading') !== next;
+    document.body.classList.toggle('desktop-report-reading', next);
+    const office = document.querySelector('.pony-office');
+    if (next && officeInert === null) { officeInert = office.inert; office.inert = true; }
+    else if (!next && officeInert !== null) { office.inert = officeInert; officeInert = null; }
+    syncExpand();
+    if (changed) window.AnalysisInput.layout();
+  }
+  function syncExpand() {
+    const expand = $('report-expand');
+    if (visible()) {
+      expand.textContent = document.body.classList.contains('desktop-report-reading') ? '退出阅读' : '专注阅读';
+      expand.setAttribute('aria-pressed', String(document.body.classList.contains('desktop-report-reading')));
+      overridesExpand = true;
+    } else if (overridesExpand) {
+      const expanded = document.body.classList.contains('inspector-expanded');
+      expand.textContent = expanded ? '收起' : '展开'; expand.setAttribute('aria-pressed', String(expanded)); overridesExpand = false;
+    }
+  }
+  function setOverview(value) {
+    overview = Boolean(value && analysis());
+    document.body.classList.toggle('desktop-report-overview', desktop.matches && overview);
+    if (tools) for (const node of tools.querySelectorAll('[data-report-mode]')) node.setAttribute('aria-pressed', String((node.dataset.reportMode === 'overview') === overview));
+  }
+  function reveal(node) {
+    if (!node?.isConnected) return;
+    setOverview(false); markFocus(node);
+  }
+  function target(ref) {
+    if (String(ref).startsWith('prediction:')) return $('sec-prediction');
+    return [...report.querySelectorAll('.fact-list li')].find(node => node.dataset.id === factId(ref));
+  }
+  function claimsFor(id) {
+    const nodes = [...report.querySelectorAll('#sec-inferences .claim')];
+    return (analysis()?.inferences || []).flatMap((item, index) => (item.evidence_ids || []).some(ref => factId(ref) === id) && nodes[index] ? [nodes[index]] : []);
+  }
+  function selectEvidence(destination, from, related, label) {
+    clearSelection(); source = from;
+    selected = [...new Set([destination, ...related])].filter(Boolean);
+    selected.forEach(node => node.classList.add('desktop-evidence-selected'));
+    tools.querySelector('.desktop-evidence-trail').hidden = false;
+    tools.querySelector('.desktop-evidence-label').textContent = label;
+    reveal(destination);
+  }
+  function follow(ref, from) {
+    const destination = target(ref);
+    if (!destination) return;
+    const related = String(ref).startsWith('prediction:') ? [] : claimsFor(factId(ref));
+    selectEvidence(destination, from, related, String(ref).startsWith('prediction:') ? '已定位本报告的上游预测' : `已定位 ${factId(ref)} · ${related.length} 条推断引用`);
+  }
+  function reference(ref) {
+    const node = button(String(ref).replace(/^fact:/, ''), () => follow(ref, node), 'desktop-summary-ref');
+    if (!target(ref)) { node.disabled = true; node.title = '此引用未在当前事实列表中展开，请对照完整报告核查。'; }
+    return node;
+  }
+  function overviewText() {
+    const data = analysis();
+    if (!data) return '';
+    const lines = [`${data.prediction?.subject || '预测'} · 报告阅读重点`, '摘自当前报告，未生成新结论。',
+      `任务：${TASK_STATE[task.status.state] || task.status.state}；分析：${data.status === 'degraded' ? '降级' : data.status === 'ok' ? '正常' : data.status}`,
+      data.prediction?.synthetic ? '合成数据，不代表真实验证。' : '数据来源为上游声明，未独立核实。'];
+    for (const [title, items] of [['Agent 推断', data.inferences], ['风险', data.risks], ['限制与未知', data.limitations]]) {
+      if (!items?.length) continue;
+      lines.push(title);
+      for (const item of items.slice(0, 2)) lines.push(typeof item === 'string' ? item : `${item.text}${item.evidence_ids?.length ? ' [依据 ' + item.evidence_ids.join('、') + ']' : ''}`);
+      if (items.length > 2) lines.push(`其余 ${items.length - 2} 条请查看完整报告。`);
+    }
+    const mail = result()?.mail;
+    lines.push(`邮件：${mail ? MAIL_STATE[mail.status] || mail.status : '未请求通知'}`, mail ? MAIL_NOTE[mail.status] || '未知状态，请按原始回执核对，不假定成功。' : '本轮未请求投递。');
+    return lines.join('\n');
+  }
+  async function copyOverview() {
+    const content = overviewText();
+    const copiedTask = task?.id;
+    if (!content) return;
+    try { await navigator.clipboard.writeText(content); notice('报告重点已复制。'); }
+    catch (_) {
+      if (!visible() || task?.id !== copiedTask || !$('desktop-report-overview')) return;
+      let field = report.querySelector('.desktop-copy-fallback');
+      if (!field) { field = make('textarea', null, 'desktop-report-added desktop-copy-fallback'); field.readOnly = true; field.rows = 7; field.setAttribute('aria-label', '报告重点纯文本，可手动复制'); $('desktop-report-overview').append(field); }
+      field.value = content; field.focus(); field.select(); notice('请复制已选中的报告重点。');
+    }
+  }
+  function renderOverview() {
+    const data = analysis();
+    const brief = make('section', null, 'desktop-report-added desktop-report-brief'); brief.id = 'desktop-report-overview';
+    brief.append(make('h3', '阅读重点'), make('p', '摘自本报告，未生成新结论。事实来源与 Agent 推断需分别核对。', 'hint'));
+    const states = make('div', null, 'desktop-report-states');
+    for (const value of [`任务 · ${TASK_STATE[task.status.state] || task.status.state}`, `分析 · ${data.status === 'degraded' ? '降级' : data.status === 'ok' ? '正常' : data.status}`, data.prediction?.synthetic ? '合成数据' : '上游声明数据']) states.append(make('span', value));
+    brief.append(states);
+    if (data.status === 'degraded') brief.append(make('p', '分析已降级，请核对限制与执行过程。', 'note warn'));
+    for (const [title, items] of [['Agent 推断', data.inferences], ['风险', data.risks], ['限制与未知', data.limitations]]) {
+      if (!items?.length) continue;
+      const section = make('div', null, 'desktop-brief-section');
+      section.append(make('h4', `${title} · ${items.length > 2 ? '前 2 条，共 ' + items.length + ' 条' : items.length + ' 条'}`));
+      const list = make('ul');
+      for (const item of items.slice(0, 2)) {
+        const row = make('li'); row.append(make('span', typeof item === 'string' ? item : item.text));
+        for (const ref of item.evidence_ids || []) row.append(document.createTextNode(' '), reference(ref));
+        list.append(row);
+      }
+      section.append(list); brief.append(section);
+    }
+    const mail = result()?.mail;
+    brief.append(make('p', `邮件 · ${mail ? MAIL_STATE[mail.status] || mail.status : '未请求通知'}。${mail ? MAIL_NOTE[mail.status] || '未知状态，请按原始回执核对，不假定成功。' : '本轮未请求投递。'}`, 'desktop-report-mail hint'));
+    const destinations = make('div', null, 'desktop-report-jumps');
+    for (const [id, label] of [['inferences', '完整推断'], ['risks', '全部风险'], ['limits', '限制与未知'], ['facts', '来源事实']]) if ($('sec-' + id)) destinations.append(button(label, () => reveal($('sec-' + id))));
+    brief.append(destinations);
+    (report.querySelector('.report-head') || report.firstElementChild).after(brief);
+    for (const fact of report.querySelectorAll('.fact-list li')) {
+      const related = claimsFor(fact.dataset.id);
+      if (!related.length) continue;
+      const back = button(`查看引用推断 · ${related.length} 条`, () => selectEvidence(related[0], back, [fact, ...related], `${fact.dataset.id} 被 ${related.length} 条推断引用`), 'desktop-report-added desktop-fact-return');
+      fact.append(back);
+    }
+  }
+  function backToRecords() {
+    if (!originRecord || originRecord.task !== task?.id) return;
+    const saved = originRecord;
+    setReading(false); showView('records');
+    requestAnimationFrame(() => {
+      const row = [...$('record-list').querySelectorAll('.task-row')].find(node => node.dataset.taskId === saved.task);
+      row?.focus({preventScroll: true}); window.scrollTo({top: saved.scroll, behavior: 'auto'});
+    });
+  }
+  function ensureTools() {
+    if (tools) return;
+    tools = make('section', null, 'desktop-report-tools'); tools.setAttribute('aria-label', '报告阅读工具');
+    const modes = make('div', null, 'desktop-report-modes'); modes.setAttribute('role', 'group'); modes.setAttribute('aria-label', '报告内容范围');
+    for (const [key, label] of [['full', '完整报告'], ['overview', '只看重点']]) {
+      const node = button(label, () => setOverview(key === 'overview')); node.dataset.reportMode = key; modes.append(node);
+    }
+    tools.append(modes, button('复制重点', copyOverview, 'desktop-report-copy'), button('返回任务记录', backToRecords, 'desktop-report-back'));
+    const trail = make('div', null, 'desktop-evidence-trail'); trail.hidden = true;
+    const label = make('span', null, 'desktop-evidence-label'); label.setAttribute('role', 'status');
+    trail.append(label, button('返回引用处', () => { const from = source; clearSelection(); reveal(from); }), button('清除定位', clearSelection)); tools.append(trail);
+    $('analysis-pane-report').prepend(tools);
+  }
+  function render(value) {
+    const changed = task?.id !== value.id;
+    if (changed) { setReading(false); overview = false; }
+    restoreOriginal(); task = value;
+    if (!desktop.matches) return;
+    ensureTools();
+    tools.hidden = !analysis() && !(task.status.state === 'failed' && originRecord?.task === task.id);
+    tools.querySelector('.desktop-report-modes').hidden = !analysis();
+    tools.querySelector('.desktop-report-copy').hidden = !analysis();
+    tools.querySelector('.desktop-report-back').hidden = originRecord?.task !== task.id;
+    if (analysis()) renderOverview();
+    setOverview(overview); syncExpand();
+  }
+  function recordsScope() {
+    if (!scope) return;
+    scope.textContent = `筛选仅作用于已载入的任务记录${$('record-query').value.trim() ? '，不会搜索尚未载入的历史' : ''}；有更多记录时可继续载入。`;
+  }
+  function install() {
+    if (!desktop.matches) {
+      setReading(false); restoreOriginal(); overview = false;
+      document.body.classList.remove('desktop-report-overview');
+      if (tools) tools.hidden = true;
+      if (scope) scope.hidden = true;
+      if (header?.isConnected) { header.before(heading, tabs); header.remove(); }
+      syncExpand(); return;
+    }
+    if (!header) {
+      header = make('div', null, 'desktop-inspector-header');
+      const resize = new ResizeObserver(() => {
+        if (!desktop.matches || !header.isConnected) return;
+        const height = Math.max(0, header.offsetHeight - 24) + 'px';
+        if (inspector.style.getPropertyValue('--desktop-report-header') !== height) inspector.style.setProperty('--desktop-report-header', height);
+      });
+      resize.observe(header);
+    }
+    if (!header.isConnected) { inspector.prepend(header); header.append(heading, tabs); }
+    if (!scope) {
+      scope = make('p', null, 'hint desktop-record-scope'); scope.id = 'desktop-record-scope';
+      $('record-list').before(scope); $('record-query').addEventListener('input', recordsScope);
+    }
+    scope.hidden = false; recordsScope();
+    if (task) render(task);
+  }
+  $('record-list').addEventListener('click', event => {
+    const row = event.target.closest('.task-row');
+    if (desktop.matches && row) originRecord = {task: row.dataset.taskId, scroll: window.scrollY};
+  }, true);
+  report.addEventListener('click', event => {
+    if (!desktop.matches) return;
+    const ref = event.target.closest('#sec-inferences a.ref');
+    if (ref) {
+      const claim = ref.closest('.claim');
+      const index = [...report.querySelectorAll('#sec-inferences .claim')].indexOf(claim);
+      const refs = [...claim.querySelectorAll('a.ref')];
+      const id = analysis()?.inferences?.[index]?.evidence_ids?.[refs.indexOf(ref)];
+      if (id && target(id)) { event.preventDefault(); event.stopImmediatePropagation(); follow(id, ref); }
+    } else if (event.target.closest('.report-toc button')) setOverview(false);
+  }, true);
+  $('report-expand').addEventListener('click', event => {
+    if (visible()) { event.preventDefault(); event.stopImmediatePropagation(); setReading(!document.body.classList.contains('desktop-report-reading')); }
+  }, true);
+  desktop.addEventListener('change', install);
+  install();
+  return {
+    render,
+    panel(value) { pane = value; if (value !== 'report') setReading(false); syncExpand(); },
+    visibility(open) { if (!open) setReading(false); else syncExpand(); },
+    clear() { setReading(false); restoreOriginal(); task = null; overview = false; document.body.classList.remove('desktop-report-overview'); if (tools) tools.hidden = true; syncExpand(); }
+  };
+})();
+
+/* Desktop work lists over existing owner-scoped knowledge and forecast APIs. */
+window.DesktopLibrary = (() => {
+  const desktop = matchMedia('(min-width: 761px)');
+  const states = {pending:'排队', processing:'处理中', review:'待审阅', failed:'失败', ready:'已发布', rejected:'已拒绝', deleting:'等待删除'};
+  let knowledgeView = null, queueView = null, queueStale = false, listing = null, currentDocument = null;
+  let forecastView = null, forecastItem = null, previewView = null, searchView = null, searchBusy = false;
+  const openDetails = new Map();
+  const make = (tag, value, cls) => { const node = document.createElement(tag); if (value != null) node.textContent = value; if (cls) node.className = cls; return node; };
+  const button = (label, callback, cls = '') => { const node = make('button', label, cls); node.type = 'button'; node.onclick = callback; return node; };
+  const safe = callback => async () => { try { await callback(); } catch (error) { notice(error.message, true); } };
+  function compare(open) {
+    const host = $('knowledge-detail');
+    if (open) {
+      for (const node of host.querySelectorAll('.review-group .source-excerpt details')) { if (!openDetails.has(node)) openDetails.set(node, node.open); node.open = true; }
+    } else { for (const [node, previous] of openDetails) node.open = previous; openDetails.clear(); }
+    host.classList.toggle('desktop-source-compare', desktop.matches && open);
+    host.querySelector('.desktop-compare-toggle')?.setAttribute('aria-pressed', String(open));
+  }
+  function applyName() {
+    if (!knowledgeView || !desktop.matches) return;
+    if ($('desktop-knowledge-scope').dataset.loading === 'true') return;
+    const query = $('desktop-knowledge-query').value.trim().toLowerCase(); let count = 0;
+    for (const row of $('knowledge-list').querySelectorAll('.document-row')) {
+      const item = listing?.items.find(value => value.id === row.dataset.documentId);
+      row.hidden = Boolean(query && !`${item?.logical || ''} ${item?.filename || ''}`.toLowerCase().includes(query));
+      if (!row.hidden) ++count;
+    }
+    const total = listing?.catalog.total;
+    $('desktop-knowledge-scope').textContent = `名称筛选仅作用于已载入版本：显示 ${count} / ${listing?.items.length || 0}${total == null ? '' : `；当前状态共 ${total} 个版本`}。`;
+    $('desktop-knowledge-no-match').hidden = !(query && count === 0 && listing?.items.length);
+  }
+  function paintKnowledge() {
+    if (!knowledgeView || !desktop.matches) return;
+    for (const node of knowledgeView.querySelectorAll('[data-knowledge-status]')) {
+      const status = node.dataset.knowledgeStatus;
+      const count = status ? queueView?.counts?.[status] : queueView?.total;
+      node.textContent = `${states[status] || '全部'}${count == null ? '' : ' ' + count}`;
+      node.setAttribute('aria-pressed', String(status === window.KnowledgeUI.filterStatus()));
+    }
+    const worker = queueView?.worker;
+    $('desktop-knowledge-worker').textContent = queueStale ? '队列暂未更新，以下计数为上次读取结果。' : !worker ? '正在读取当前私有空间的队列状态…' : worker.online ? `清洗进程在线${worker.state === 'busy' ? ' · 正在处理' : ' · 空闲'}` : '清洗进程未在线；上传和批准后仍需等待处理。';
+    applyName();
+  }
+  function reviewCount() {
+    const group = $('knowledge-detail').querySelector('.review-group'), status = $('desktop-review-selection');
+    if (!group || !status || !desktop.matches) return;
+    const checks = [...group.querySelectorAll('input[type="checkbox"]')];
+    status.textContent = `可核对 ${checks.filter(node => !node.disabled).length} 条 · 已选 ${checks.filter(node => node.checked && !node.disabled).length} 条 · 不可批准 ${checks.filter(node => node.disabled).length} 条。未勾选的候选不会发布。`;
+  }
+  function renderDocument() {
+    if (!desktop.matches || !currentDocument || $('knowledge-detail').hidden) return;
+    compare(false);
+    const host = $('knowledge-detail'), {item, versions} = currentDocument;
+    const review = host.querySelector('.review-group');
+    host.querySelectorAll('.desktop-document-added').forEach(node => node.remove());
+    const top = make('section', null, 'desktop-document-added desktop-document-workflow');
+    top.dataset.documentId = item.id;
+    const actions = make('div', null, 'actions');
+    actions.append(make('strong', '版本与处理阶段'), button('返回资料列表', () => {
+      window.KnowledgeUI.close();
+      const row = [...$('knowledge-list').querySelectorAll('.document-row')].find(node => node.dataset.documentId === item.id && !node.hidden);
+      const target = row?.querySelector('button') || $('desktop-knowledge-query'); target.focus(); target.scrollIntoView({block:'center'});
+    }, 'btn tiny'));
+    if (review) actions.append(button('核对待审阅候选', () => {
+      review.querySelector('input[type="checkbox"]:not(:disabled)')?.focus({preventScroll:true});
+      review.scrollIntoView({block:'start',behavior:'smooth'});
+    }, 'btn primary desktop-review-jump'));
+    top.append(actions, make('p', `${states[item.status] || item.status} · ${item.active ? '当前活动版本，检索仍受截止日期控制' : '非活动版本，不代表当前检索版本'}`, 'hint'));
+    const stages = [['received','接收'],['parsed','解析'],['chunked','切分'],['extracted','提取'],['reviewed','审阅'],['published','发布']];
+    const list = make('ol', null, 'desktop-knowledge-stages');
+    const step = item.status === 'review' ? 'reviewed' : item.step;
+    for (const [key, label] of stages) { const node = make('li', label); if (key === step) node.setAttribute('aria-current', 'step'); list.append(node); }
+    top.append(list, make('p', item.status === 'failed' ? `处理失败；最后记录在「${stages.find(([key]) => key === item.step)?.[1] || item.step}」阶段。` : '资料处理与发布分开进行；待审阅版本需要先核对候选。', 'hint'));
+    if (versions.length > 1) {
+      const nav = make('details', null, 'desktop-version-navigation'); nav.open = true; nav.append(make('summary', `切换资料版本 · ${versions.length} 个`));
+      for (const version of versions) {
+        const node = button(`${version.id.slice(0,8)} · ${states[version.status] || version.status}${version.active ? ' · 活动版本' : ''} · ${fmt(version.uploaded)}`, safe(() => window.KnowledgeUI.open(version.id)));
+        node.dataset.versionId = version.id;
+        node.disabled = version.id === item.id; if (node.disabled) node.setAttribute('aria-current', 'true'); nav.append(node);
+      }
+      top.append(nav);
+    }
+    if (review) {
+      const controls = make('div', null, 'desktop-document-added desktop-review-controls');
+      const selection = make('p', null, 'hint'); selection.id = 'desktop-review-selection'; selection.setAttribute('role','status');
+      controls.append(selection, button('并排核对来源', () => compare(!host.classList.contains('desktop-source-compare')), 'btn tiny desktop-compare-toggle'));
+      review.prepend(controls); reviewCount();
+    }
+    host.prepend(top);
+  }
+  function dirtySearch() {
+    if (!desktop.matches || !searchView) return;
+    if (searchBusy || $('knowledge-results').childElementCount || $('knowledge-answer-result').childElementCount) searchView.textContent = '检索条件已变化；下方如有内容仍为上次结果，请重新检索后使用。';
+  }
+  function paintForecasts() {
+    if (!forecastView || !desktop.matches) return;
+    for (const node of forecastView.querySelectorAll('[data-forecast-state]')) node.setAttribute('aria-pressed', String(node.dataset.forecastState === $('forecast-state').value));
+    const rows = forecastItem?.list?.items;
+    $('desktop-forecast-scope').textContent = rows ? `已载入 ${rows.length} 条预测，仅统计当前状态筛选范围${forecastItem.list.cursor != null ? '；仍有更早任务可读取' : ''}。到期不代表已验证。` : '等待本次预测列表读取完成。状态筛选会从服务重新读取。';
+    const due = rows?.filter(item => item.state === 'due').sort((a,b) => Date.parse(a.target_at) - Date.parse(b.target_at))[0];
+    $('desktop-forecast-next').disabled = !due;
+    $('desktop-forecast-next').textContent = due ? `处理已载入待观测预测 · ${due.subject}` : '当前已载入范围没有待观测预测';
+    $('desktop-forecast-next').onclick = due ? safe(async () => {
+      await window.ForecastUI.openTask(due.task_id, false);
+      if (desktop.matches && forecastItem?.tid === due.task_id && !$('forecast-detail').hidden) openObservation();
+    }) : null;
+  }
+  function openObservation() {
+    const details = $('forecast-detail').querySelector('.observation-preview');
+    if (!details) return;
+    details.open = true; $('observation-content').focus(); $('observation-content').scrollIntoView({block:'center'});
+  }
+  function renderForecastDetail() {
+    if (!desktop.matches || !forecastItem?.view || $('forecast-detail').hidden) return;
+    const host = $('forecast-detail'), {view} = forecastItem, p = view.record.prediction, d = view.record.definition;
+    host.querySelectorAll('.desktop-forecast-added').forEach(node => node.remove());
+    const top = make('section', null, 'desktop-forecast-added desktop-forecast-guide');
+    top.append(make('h3', {pending:'待到期 · 先核对观测要求',due:'待观测 · 提供观测后可预览',evaluated:'已有正式回执 · 可单独预览其他观测'}[view.state] || String(view.state)));
+    top.append(make('p', '只读预览 · 不保存评估回执，不覆盖已有档案或回执。来源与日历仍为提供方声明。', 'note'));
+    const actions = make('div', null, 'actions');
+    actions.append(button(view.state === 'due' ? '提供观测并预览' : '查看观测要求', openObservation, 'btn primary'), button('返回预测列表', () => { window.ForecastUI.close(); $('forecast-refresh').focus(); $('forecast-records').scrollIntoView({block:'start'}); }, 'btn'));
+    top.append(actions);
+    const format = make('details', null, 'desktop-observation-format');
+    format.append(make('summary', 'JSON / CSV 格式参考（含占位符）'), make('p', '以下占位符不可直接预览。请从实际来源提供数值、可用时间和来源声明；本页不会把参考内容填入观测表单。', 'hint'));
+    const template = {schema_version:'1',subject:p.subject,metric:d.metric,unit:d.unit,value:'<替换为 JSON 数字>',observed_at:d.target_at,available_at:'<实际可用时点，含时区>',source:'<实际来源声明>',synthetic:p.synthetic};
+    format.append(make('h4','JSON 结构'), make('pre', JSON.stringify(template,null,2), 'mono'));
+    const keys = Object.keys(template), quote = value => '"' + String(value).replaceAll('"','""') + '"';
+    format.append(make('h4','CSV 固定字段，恰好一条观测'), make('pre', keys.join(',') + '\n' + keys.map(key => quote(template[key])).join(','), 'mono'));
+    top.append(format); host.prepend(top);
+  }
+  function renderPreview() {
+    if (!desktop.matches || !previewView?.output.isConnected || previewView.output.hidden || previewView.result.persisted !== false) return;
+    const {result,view,output} = previewView, actual = result.observation, expected = view.record;
+    output.querySelector('.desktop-observation-check')?.remove();
+    const root = make('section', null, 'desktop-observation-check');
+    root.append(make('h4','声明一致性核对 · 预览未保存'), make('p','这些检查核对字段一致性，不认证来源真实性；评分仍取决于到期与可用时点。','hint'));
+    const checks = [
+      ['标的',expected.prediction.subject,actual.subject], ['指标',expected.definition.metric,actual.metric], ['单位',expected.definition.unit,actual.unit],
+      ['合成标记',expected.prediction.synthetic,actual.synthetic], ['目标观测时点',expected.definition.target_at,actual.observed_at]
+    ];
+    const list = make('dl',null,'desktop-match-list');
+    for (const [label,wanted,value] of checks) {
+      const matched = label === '目标观测时点' ? Date.parse(wanted) === Date.parse(value) : wanted === value;
+      list.append(make('dt',label), make('dd',`${matched ? '一致' : '不一致'} · ${String(value)}`));
+    }
+    root.append(list); output.querySelector('h4').after(root);
+  }
+  function records() {
+    const host = $('record-list'); host.querySelectorAll('.desktop-record-date').forEach(node => node.remove());
+    if (!desktop.matches) return;
+    let previous = '';
+    for (const row of host.querySelectorAll('.task-row')) {
+      const date = new Date(row.dataset.recordedAt);
+      if (!Number.isFinite(date.getTime())) continue;
+      const label = date.toLocaleDateString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit'});
+      if (label !== previous) row.before(make('h3',`${label} · 状态记录时间`,'desktop-record-date'));
+      previous = label;
+    }
+  }
+  function resetKnowledge() {
+    listing = null; queueView = null; queueStale = false; currentDocument = null; searchBusy = false; compare(false);
+    $('knowledge-detail').querySelectorAll('.desktop-document-added').forEach(node => node.remove());
+    if (knowledgeView) { $('desktop-knowledge-query').value = ''; $('desktop-knowledge-scope').textContent = ''; }
+    if (searchView) searchView.textContent = '';
+    paintKnowledge();
+  }
+  function forecastClosed() {
+    if (forecastItem) { delete forecastItem.view; delete forecastItem.tid; }
+    previewView = null; $('forecast-detail').querySelectorAll('.desktop-forecast-added,.desktop-observation-check').forEach(node => node.remove());
+  }
+  function install() {
+    if (!desktop.matches) {
+      document.body.classList.remove('desktop-library'); compare(false);
+      if (knowledgeView) knowledgeView.hidden = true;
+      if (forecastView) forecastView.hidden = true;
+      if (searchView) searchView.hidden = true;
+      $('knowledge-detail').querySelectorAll('.desktop-document-added').forEach(node => node.remove());
+      $('knowledge-list').querySelectorAll('.document-row').forEach(node => { node.hidden = false; });
+      $('forecast-detail').querySelectorAll('.desktop-forecast-added,.desktop-observation-check').forEach(node => node.remove());
+      if (window.KnowledgeUI.filterStatus()) window.KnowledgeUI.filter('').catch(error => notice(error.message,true));
+      records(); return;
+    }
+    if (!knowledgeView) {
+      knowledgeView = make('section',null,'desktop-knowledge-worklist'); knowledgeView.setAttribute('aria-label','知识库处理清单');
+      const actions = make('div',null,'section-head'); actions.append(make('h2','处理清单'),button('上传资料',() => { const form=$('knowledge-upload'); form.closest('details').open=true; $('knowledge-file').focus(); form.scrollIntoView({block:'start'}); },'btn primary'));
+      const filters = make('div',null,'desktop-library-filters'); filters.setAttribute('role','group'); filters.setAttribute('aria-label','资料处理状态');
+      for (const status of ['', 'review','pending','processing','failed','ready']) { const node = button(states[status] || '全部',safe(() => window.KnowledgeUI.filter(status))); node.dataset.knowledgeStatus=status; filters.append(node); }
+      const worker = make('p',null,'hint'); worker.id='desktop-knowledge-worker'; worker.setAttribute('role','status');
+      const field = make('label',null,'field'); field.append(make('span','按已载入资料名称筛选')); const input=make('input'); input.id='desktop-knowledge-query'; input.type='search'; input.placeholder='资料名称或文件名'; input.oninput=applyName; field.append(input);
+      const scope=make('p',null,'hint'); scope.id='desktop-knowledge-scope'; scope.setAttribute('role','status');
+      const empty=make('p','已载入版本中没有匹配名称；可清空名称或继续加载。','hint'); empty.id='desktop-knowledge-no-match'; empty.hidden=true;
+      knowledgeView.append(actions,filters,worker,field,scope,empty); document.querySelector('[data-kb-pane="documents"]').prepend(knowledgeView);
+      searchView=make('p','修改条件后重新检索，可核对截止日期与来源版本。','hint desktop-search-state'); searchView.setAttribute('role','status'); $('knowledge-search').after(searchView);
+      $('knowledge-search').addEventListener('input',dirtySearch); $('knowledge-detail').addEventListener('change',reviewCount);
+      forecastView=make('section',null,'desktop-forecast-worklist'); forecastView.setAttribute('aria-label','预测跟踪清单');
+      const forecastFilters=make('div',null,'desktop-library-filters'); forecastFilters.setAttribute('role','group'); forecastFilters.setAttribute('aria-label','预测跟踪状态');
+      for (const [state,label] of [['all','全部'],['pending','待到期'],['due','待观测'],['evaluated','已评估']]) { const node=button(label,()=>{ $('forecast-state').value=state; $('forecast-state').dispatchEvent(new Event('change')); }); node.dataset.forecastState=state; forecastFilters.append(node); }
+      const caption=make('p',null,'hint'); caption.id='desktop-forecast-scope'; const next=button('',null,'btn'); next.id='desktop-forecast-next';
+      forecastView.append(forecastFilters,caption,next); document.querySelector('.forecast-filter').before(forecastView);
+    }
+    document.body.classList.add('desktop-library'); knowledgeView.hidden=forecastView.hidden=searchView.hidden=false;
+    paintKnowledge(); paintForecasts(); renderDocument(); renderForecastDetail(); renderPreview(); records();
+  }
+  desktop.addEventListener('change',install); install();
+  return {
+    knowledge(value) { listing=value; if (desktop.matches) { $('desktop-knowledge-scope').dataset.loading='false'; paintKnowledge(); } },
+    knowledgeLoading() { if (desktop.matches && knowledgeView) { $('desktop-knowledge-scope').textContent='正在读取资料状态…'; $('desktop-knowledge-scope').dataset.loading='true'; paintKnowledge(); } },
+    knowledgeError(message) { if (desktop.matches && knowledgeView) { $('desktop-knowledge-scope').textContent='资料读取失败：'+message+'。可使用原刷新按钮重试。'; $('desktop-knowledge-scope').dataset.loading='false'; } },
+    queue(value) { queueView=value; queueStale=false; paintKnowledge(); }, queueError() { queueStale=true; paintKnowledge(); }, resetKnowledge,
+    document(item,versions) { currentDocument={item,versions}; renderDocument(); },
+    searchLoading(label) { searchBusy=true; if (desktop.matches && searchView) searchView.textContent=`正在${label}；下方如有内容仍为上次结果。`; },
+    searchDiscarded() { searchBusy=false; dirtySearch(); },
+    searchError(message) { searchBusy=false; if (desktop.matches && searchView) searchView.textContent=`读取失败：${message}。请重新检索；下方如有内容仍为上次结果。`; },
+    searchRendered(host,data) { searchBusy=false; if (desktop.matches && searchView && ['knowledge-results','knowledge-answer-result'].includes(host.id)) searchView.textContent=`${host.id === 'knowledge-results' ? '检索' : '规则汇总'}结果已更新 · ${data.results?.length ?? data.citations?.length ?? 0} 段 · 截止 ${data.as_of || '今天'}。请对照来源声明核查。`; },
+    forecasts(value) { forecastItem=value ? {...(forecastItem || {}),list:value} : null; paintForecasts(); },
+    forecastDetail(tid,view) { forecastItem={...(forecastItem || {}),tid,view}; renderForecastDetail(); }, forecastClosed,
+    preview(result,view,output) { previewView={result,view,output}; renderPreview(); }, records
+  };
+})();
+
+/* Desktop configuration guidance. All writes use the original form handlers. */
+window.DesktopSettings = (() => {
+  if (!matchMedia('(min-width: 761px)').matches) return;
+  const tests = new Map(), pane = document.querySelector('[data-view-pane="settings"]');
+  const pending = new Set();
+  let lastDiscovery = null;
+  const make = (tag, value, cls) => { const node=document.createElement(tag); if(value!=null)node.textContent=value; if(cls)node.className=cls; return node; };
+  const button = (label, callback, cls='btn tiny') => { const node=make('button',label,cls); node.type='button'; node.onclick=callback; return node; };
+  const status = (id,message,error=false) => { $(id).textContent=message; $(id).classList.toggle('error-text',error); };
+  const feedback = (id,parent) => { const node=make('p',null,'hint desktop-config-feedback'); node.id=id; node.setAttribute('role','status'); parent.prepend(node); return node; };
+  const label = id => $(id).closest('label');
+  const signature = p => JSON.stringify([p.name,p.provider,p.base_url,p.model,p.parameters,p.supported_parameters,p.temperature_min,p.temperature_max,p.reasoning_effort_map,p.timeout_seconds,p.retries,p.has_secret,p.enabled,p.input_usd_per_million,p.output_usd_per_million]);
+  const overview=make('section',null,'desktop-settings-overview'); overview.setAttribute('aria-label','已保存配置');
+  overview.append(make('h2','已保存的工作区配置'),make('p','保存、测试连接和设为默认分别生效。下面的摘要只显示已保存状态。','hint'));
+  const summary=make('dl',null,'desktop-config-summary');
+  for(const [id,title] of [['model','默认模型'],['tools','外部能力'],['mail','邮件通道']]) { const row=make('div'); row.append(make('dt',title)); const value=make('dd'); value.id='desktop-saved-'+id; row.append(value); summary.append(row); }
+  overview.append(summary); pane.querySelector('.page-head').after(overview);
+
+  const form=$('model-form'), basic=make('div',null,'grid-3 desktop-model-basic'), remote=make('div',null,'grid-2 desktop-model-remote');
+  const advanced=make('details',null,'input-editor desktop-model-advanced'); advanced.append(make('summary','高级参数 · 超时、温度与生成设置'));
+  const advancedGrid=make('div',null,'grid-2 desktop-model-advanced-fields'); advanced.append(advancedGrid);
+  const prior=[...form.children];
+  for(const id of ['model-name','model-provider','model-model']) basic.append(label(id));
+  for(const id of ['model-url','model-key','model-price-in']) remote.append(label(id));
+  for(const id of ['model-timeout','model-retries','model-temperature','model-temp-min','model-temp-max','model-supported','model-effort-map','model-params']) advancedGrid.append(label(id));
+  const submit=form.querySelector('.submit-bar'); submit.before(basic,remote,advanced);
+  for(const node of prior) if(node.tagName==='DIV' && !node.classList.contains('section-head') && !node.classList.contains('submit-bar') && !node.querySelector('input,select,textarea,button')) node.hidden=true;
+  const modelInfo=feedback('desktop-model-feedback',form);
+  const remoteHint=make('p','测试真实服务会发起推理请求并可能计费。密钥留空保留已保存值；保存不会自动测试。','hint'); remote.append(remoteHint);
+  const mcpInfo=feedback('desktop-mcp-feedback',$('mcp-form'));
+
+  function reveal(field,message) {
+    for(let parent=field.parentElement;parent;parent=parent.parentElement) { if(parent.tagName==='DETAILS')parent.open=true; if(parent.dataset.desktopConditional)parent.hidden=false; }
+    field.setAttribute('aria-invalid','true'); field.focus(); field.scrollIntoView({block:'center'});
+    if(message)status(field.closest('form')===form?'desktop-model-feedback':'desktop-mcp-feedback',message,true);
+  }
+  function validateObject(field, empty=false) {
+    if(empty&&!field.value.trim())return;
+    try { const value=JSON.parse(field.value); if(!value||typeof value!=='object'||Array.isArray(value))throw Error(); }
+    catch(_) { throw {field,message:'请填写有效的 JSON 对象，当前输入已保留。'}; }
+  }
+  form.addEventListener('submit',event=>{
+    try { validateObject($('model-params')); validateObject($('model-effort-map')); if($('model-temperature').checked&&Number($('model-temp-min').value)>Number($('model-temp-max').value))throw {field:$('model-temp-min'),message:'温度最小值不能大于最大值。'}; }
+    catch(error) { event.preventDefault();event.stopImmediatePropagation();reveal(error.field,error.message); }
+  },true);
+  form.addEventListener('invalid',event=>reveal(event.target,'请修正标记字段后保存。'),true);
+  form.addEventListener('input',event=>{event.target.removeAttribute('aria-invalid');status('desktop-model-feedback','表单有未保存的修改。');});
+  $('model-provider').addEventListener('change',modelFields);
+  function modelFields() {
+    const mock=$('model-provider').value==='mock'; remote.hidden=mock;
+    for(const id of ['model-url','model-key','model-price-in','model-price-out'])$(id).disabled=mock;
+    $('model-price-in').required=$('model-price-out').required=!mock;
+    status('desktop-model-feedback',mock?'Mock 离线模拟，无需远程地址、密钥或报价。保存后仍需单独设为默认。':'填写远程连接与手动报价；保存后可按需测试，再设为默认。');
+  }
+  function paintTests() {
+    for(const [index,node] of [...$('model-list').querySelectorAll('.record')].entries()) {
+      node.querySelector('.desktop-model-test-state')?.remove();
+      const profile=profiles[index]; if(!profile)continue;
+      const cached=tests.get(profile.id), valid=cached?.signature===signature(profile);
+      node.append(make('p',valid?`${cached.error?'本页测试失败':'本页测试通过'} · ${cached.message}`:'本页尚未测试当前配置。','hint desktop-model-test-state'));
+    }
+  }
+  function modelSaved(profile) {
+    tests.delete(profile.id); editModel(profile,true); advanced.open=false;
+    status('desktop-model-feedback','模型已保存；继续保存会更新同一配置。测试与设为默认可在模型列表单独操作。');
+  }
+
+  const groups=[...$('settings-form').querySelectorAll(':scope > details')];
+  const nav=make('nav',null,'desktop-settings-groups'); nav.setAttribute('aria-label','协作设置分组');
+  for(const group of groups)nav.append(button(group.querySelector('summary').textContent,()=>{group.open=true;group.scrollIntoView({block:'start'});group.querySelector('input:not(:disabled):not([type="hidden"]),select:not(:disabled)')?.focus({preventScroll:true});}));
+  const edits=make('p',null,'hint'); edits.id='desktop-settings-edits'; edits.setAttribute('role','status'); nav.append(edits); $('settings-form').prepend(nav);
+  const draft=make('div',null,'desktop-settings-draft'); draft.append(make('h3','当前表单预览'),make('p','修改后需保存才生效；运行上限还需以具体任务回执为准。','hint')); const draftText=make('p'); draftText.id='desktop-settings-draft-values'; draft.append(draftText); nav.after(draft);
+  const mailFields=[['smtp',['mail-host','mail-port','mail-tls']],['mcp',['mail-mcp-server','mail-mcp-tool']]];
+  for(const [type,ids]of mailFields)for(const id of ids)label(id).dataset.desktopConditional=type;
+  $('settings-form').addEventListener('input',preview); $('settings-form').addEventListener('change',preview);
+  $('settings-form').addEventListener('invalid',event=>{for(let parent=event.target.parentElement;parent&&parent!==$('settings-form');parent=parent.parentElement){if(parent.tagName==='DETAILS')parent.open=true;if(parent.dataset.desktopConditional)parent.hidden=false;}},true);
+  function preview() {
+    if(!settings)return;
+    status('desktop-settings-edits',settingsDirty?`未保存修改 · ${settingsEdits.size} 项字段`:'当前协作设置已保存。');
+    const defaultId=$('default-model').value, model=profiles.find(p=>p.id===defaultId);
+    $('desktop-settings-draft-values').textContent=`默认模型：${model?.name||'未选择'}；最多 ${$('limit-max_calls').value} 次调用 / ${$('limit-timeout_seconds').value} 秒 / $${$('limit-budget_usd').value} 费用预算；邮件：${{file:'本地文件模拟',smtp:'SMTP',mcp:'MCP 工具'}[$('mail-transport').value]}。`;
+    for(const row of $('role-settings').querySelectorAll('.role-row')) {
+      row.querySelector('.desktop-role-effective')?.remove();
+      const select=row.querySelector('select'), role=select.id.replace(/^role-/,'').replace(/-model_id$/,'');
+      const chosen=profiles.find(p=>p.id===(select.value||defaultId)), temp=$(`role-${role}-temperature`), endpoint=$(`role-${role}-endpoint_id`);
+      temp.disabled=Boolean(chosen&&!chosen.supported_parameters.includes('temperature'));
+      temp.title=temp.disabled?'当前表单所选模型不支持温度；保存时不提交角色温度覆盖。':'留空继承模型或全局温度';
+      if(chosen){temp.min=chosen.temperature_min;temp.max=chosen.temperature_max;}
+      const temperature=chosen&&!chosen.supported_parameters.includes('temperature')?'模型不支持温度':temp.value!==''?'角色温度 '+temp.value:chosen?.parameters.temperature!=null?'模型温度 '+chosen.parameters.temperature:'全局温度 '+$('global-temperature').value;
+      row.append(make('p',`${select.value?'角色指定':'继承默认'}：${chosen?.name||'未选择模型'}${chosen&&!chosen.enabled?'（已停用）':''} · ${temperature} · ${endpoint.value?'外部 Agent':'本机运行'}`,'hint desktop-role-effective'));
+    }
+    for(const[type,ids]of mailFields)for(const id of ids)label(id).hidden=$('mail-transport').value!==type;
+  }
+  function refresh() {
+    if(!settings)return;
+    const model=profiles.find(p=>p.id===settings.default_model_id);
+    $('desktop-saved-model').textContent=model?`${model.name} · ${model.enabled?'已启用':'已停用'}${model.provider==='mock'?' · 离线模拟':''}`:'尚未选择默认模型';
+    $('desktop-saved-tools').textContent=`${servers.length} 个 MCP 服务 · ${servers.reduce((sum,s)=>sum+s.allowed_tools.length,0)} 个工具在白名单 · ${endpoints.length} 个 A2A 配置`;
+    $('desktop-saved-mail').textContent=`${{file:'本地文件模拟，不代表邮箱收到',smtp:'SMTP，尚需按投递回执核对',mcp:'MCP 邮件工具，仍须逐轮授权'}[settings.mail.transport]} · ${settings.mail.recipient_allowlist.length} 个清单地址`;
+    paintTests(); preview();
+  }
+
+  function mcpFields() { status('desktop-mcp-feedback','保存连接配置后，再按需测试与发现。发现工具不会自动授权。'); if(lastDiscovery)discovery(lastDiscovery.data,lastDiscovery.server); }
+  function saveState(kind,active) {
+    const editor=$(kind+'-form');editor.inert=active;editor.setAttribute('aria-busy',String(active));
+    editor.querySelector('button[type="submit"]').disabled=active;$(kind+'-new').disabled=active;
+    if(active)pending.add(kind);else pending.delete(kind);
+  }
+  function discovery(data,server) {
+    lastDiscovery={data,server}; $('discovery').querySelector('.desktop-permission-editor')?.remove();
+    const root=make('section',null,'desktop-permission-editor'); root.append(make('h3','待保存的工具权限'),make('p','工具白名单与权限类型需要同时满足；下面的修改只更新表单，点击保存 MCP 服务后才生效。','hint'));
+    if($('mcp-id').value!==server.id)root.append(button('编辑该服务权限',()=>{editServer(server);discovery(data,server);}));
+    else {
+      let allowed,effects;
+      try {allowed=new Set(csv($('mcp-tools').value));effects=JSON.parse($('mcp-effects').value||'{}');if(!effects||typeof effects!=='object'||Array.isArray(effects))throw Error();}
+      catch(_){root.append(make('p','权限 JSON 无法解析，请先修正高级字段。','error-text'));$('discovery').append(root);return;}
+      for(const tool of data.tools) {
+        const row=make('div',null,'desktop-permission-row'), check=make('input');check.type='checkbox';check.checked=allowed.has(tool.name);check.setAttribute('aria-label',`允许工具 ${tool.name}`);
+        const text=make('span',tool.name),effect=make('select'); effect.setAttribute('aria-label',`${tool.name} 权限类型`);
+        for(const[value,title]of [['deny','拒绝'],['read','只读'],['email','邮件（另需授权）']])effect.add(new Option(title,value));effect.value=effects[tool.name]||'deny';
+        const update=()=>{try{const current=new Set(csv($('mcp-tools').value)), map=JSON.parse($('mcp-effects').value||'{}');if(!map||typeof map!=='object'||Array.isArray(map))throw Error();if(check.checked)current.add(tool.name);else current.delete(tool.name);$('mcp-tools').value=[...current].join(',');$('mcp-effects').value=JSON.stringify({...map,[tool.name]:effect.value},null,2);status('desktop-mcp-feedback','权限已更新到表单，尚未保存。');}catch(_){status('desktop-mcp-feedback','权限 JSON 无法解析，现有输入已保留。',true);}};
+        check.onchange=effect.onchange=update;row.append(check,text,effect);root.append(row);
+      }
+    }
+    $('discovery').append(root);
+  }
+  $('mcp-form').addEventListener('input',()=>status('desktop-mcp-feedback','连接或权限表单有未保存修改。'));
+  $('mcp-form').addEventListener('submit',event=>{try{validateObject($('mcp-effects'));validateObject($('mcp-env'),true);const args=JSON.parse($('mcp-args').value);if(!Array.isArray(args))throw {field:$('mcp-args'),message:'启动参数需要 JSON 数组。'};}catch(error){event.preventDefault();event.stopImmediatePropagation();reveal(error.field||$('mcp-args'),error.message||'请修正启动参数 JSON。');}},true);
+  modelFields();mcpFields();refresh();
+  return {refresh,modelFields,modelSaved,mockMode:()=>$('model-provider').value==='mock',modelError:message=>status('desktop-model-feedback','保存失败：'+message+'。当前输入已保留。',true),
+    modelTest(profile,value,error) {tests.set(profile.id,{signature:signature(profile),error:Boolean(error),message:error||value?.message||'测试完成'});paintTests();},
+    saving:kind=>pending.has(kind),beginSave(kind){if(pending.has(kind))return false;saveState(kind,true);return true;},endSave(kind){saveState(kind,false);},
+    mcpError:message=>status('desktop-mcp-feedback','保存失败：'+message+'。当前输入已保留。',true),
+    mcpFields,discovery,mcpSaved(server){editServer(server,true);status('desktop-mcp-feedback','服务已保存；测试发现与授权状态分别生效。');if(lastDiscovery?.server.id===server.id)renderDiscovery(lastDiscovery.data,server);}
+  };
+})();
+
+/* Loaded desktop task records: stable rows, retained pagination and visible refresh receipts. */
+window.DesktopRecords = (() => {
+  const desktop=matchMedia('(min-width: 761px)');if(!desktop.matches)return;
+  const host=$('record-list'),cache=new Map(),dates=new Map(),headings=new Map();
+  let stage='idle',epoch=0;
+  const feedback=document.createElement('div');feedback.id='desktop-record-feedback';feedback.className='desktop-record-feedback';feedback.hidden=true;
+  const status=document.createElement('p');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+  const retry=document.createElement('button');retry.type='button';retry.className='btn tiny';retry.textContent='重新读取记录';retry.onclick=()=>loadRecords(true);retry.hidden=true;
+  feedback.append(status,retry);host.before(feedback);
+  const put=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
+  function receipt(value,text=''){stage=value;feedback.hidden=!text;feedback.dataset.state=value;put(status,text);retry.hidden=!['failed','partial'].includes(value);}
+  function reconcile(nodes){
+    const focused=host.contains(document.activeElement)?document.activeElement:null;
+    let cursor=host.firstChild;
+    for(const node of nodes){if(node===cursor)cursor=cursor.nextSibling;else host.insertBefore(node,cursor);}
+    while(cursor){const next=cursor.nextSibling;cursor.remove();cursor=next;}
+    if(focused?.isConnected&&document.activeElement!==focused)focused.focus({preventScroll:true});
+  }
+  function dateLabel(timestamp){if(!dates.has(timestamp)){const value=new Date(timestamp);dates.set(timestamp,Number.isFinite(value.getTime())?value.toLocaleDateString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit'}):'');}return dates.get(timestamp);}
+  function render({items,filter,query,cursor}){
+    if(!desktop.matches)return false;
+    const counts={all:items.length,active:0,completed:0,failed:0},shown=[],ids=new Set(),timestamps=new Set();
+    for(const task of items){
+      const brief=taskBrief(task),group=recordGroup(task.status.state);counts[group]++;ids.add(task.id);timestamps.add(task.status.timestamp||'');
+      const signature=JSON.stringify([task.status.state,task.status.timestamp,brief.subject,brief.direction,brief.horizon,brief.notify,brief.mail?.status,task.metadata?.error]);
+      let entry=cache.get(task.id);
+      if(!entry){entry={node:recordRow(task)};cache.set(task.id,entry);}
+      else if(entry.signature!==signature){const fresh=recordRow(task);entry.node.replaceChildren(...fresh.childNodes);Object.assign(entry.node.dataset,fresh.dataset);}
+      entry.signature=signature;entry.node.onclick=()=>openRecord(task);
+      const hay=[brief.subject,task.metadata?.error?.code,MAIL_STATE[brief.mail?.status],TASK_STATE[task.status.state]].filter(Boolean).join(' ').toLowerCase();
+      if((filter==='all'||group===filter)&&(!query||hay.includes(query)))shown.push(entry.node);
+    }
+    for(const[id]of cache)if(!ids.has(id))cache.delete(id);
+    for(const[timestamp]of dates)if(!timestamps.has(timestamp))dates.delete(timestamp);
+    for(const chip of $('record-chips').querySelectorAll('[data-filter]')){const key=chip.dataset.filter;put(chip,counts[key]?`${RECORD_FILTER[key]} ${counts[key]}`:RECORD_FILTER[key]);chip.classList.toggle('active',key===filter);chip.classList.toggle('is-empty',counts[key]===0);chip.setAttribute('aria-pressed',String(key===filter));}
+    const nodes=[],usedHeadings=new Set();let prior='',index=0;
+    for(const row of shown){const label=dateLabel(row.dataset.recordedAt);if(label&&label!==prior){const key=index+++'|'+label;usedHeadings.add(key);if(!headings.has(key)){const heading=document.createElement('h3');heading.className='desktop-record-date';heading.textContent=label+' · 状态记录时间';headings.set(key,heading);}nodes.push(headings.get(key));}nodes.push(row);prior=label;}
+    for(const[key]of headings)if(!usedHeadings.has(key))headings.delete(key);
+    if(!shown.length){const empty=document.createElement('p');empty.className='empty';empty.textContent=items.length?`已载入的 ${items.length} 条里没有匹配。${cursor?'可以继续载入更早的记录，或':''}清空筛选再看。`:stage==='loading'?'正在读取任务记录…':stage==='failed'?'本次记录尚未读取成功，请重试。':cursor?'本页尚无主任务记录，可以继续载入更早的记录。':'这里还没有任务记录。跑一次分析，这里就会留下它的标的、方向与投递结果。';nodes.push(empty);
+      if(!items.length&&!cursor&&!['loading','failed'].includes(stage)){const go=document.createElement('button');go.type='button';go.className='btn tiny mt-12';go.textContent='去跑第一次分析';go.onclick=()=>showView('analysis');nodes.push(go);}}
+    reconcile(nodes);
+    put($('record-count'),!items.length?'还没有已加载任务':shown.length===items.length?`已载入 ${items.length} 条${cursor?' · 还有更早的':''}`:`筛出 ${shown.length} 条 · 已载入 ${items.length} 条`);
+    $('record-more-wrap').hidden=!cursor;return true;
+  }
+  const merge=(existing,fresh,prepend)=>{const incoming=new Map(fresh.map(task=>[task.id,task]));if(prepend)return [...incoming.values(),...existing.filter(task=>!incoming.has(task.id))];const known=new Set(existing.map(task=>task.id));return [...existing.map(task=>incoming.get(task.id)||task),...[...incoming.values()].filter(task=>!known.has(task.id))];};
+  async function page({existing,fresh,cursor,pageCursor,reset}){
+    const known=new Set(existing.map(task=>task.id)),overlap=fresh.some(task=>known.has(task.id));
+    let items=merge(existing,fresh,reset),next=reset&&existing.length&&(overlap||pageCursor==null)?cursor:pageCursor,failures=0;
+    if(reset){const latest=new Set(fresh.map(task=>task.id)),older=items.filter(task=>!latest.has(task.id)&&recordGroup(task.status.state)==='active'),updates=[];
+      for(let index=0;index<older.length;index+=4){const results=await Promise.allSettled(older.slice(index,index+4).map(task=>api('tasks/'+task.id)));for(const result of results)if(result.status==='fulfilled')updates.push(result.value);else failures++;}
+      items=merge(items,updates,false);
+    }
+    return {items,cursor:next,warning:failures?`${failures} 条较早的进行中记录未更新；保留原状态，可重新读取。`:''};
+  }
+  function identityChanged(){++epoch;clearTimeout(recordTimer);recordBusy=false;recordLoaded=false;recordCursor=null;records=[];recordFilter='all';recordQuery='';$('record-query').value='';cache.clear();dates.clear();headings.clear();host.replaceChildren();$('record-count').textContent='尚未读取';$('record-more-wrap').hidden=true;receipt('idle');$('record-refresh').disabled=$('record-more').disabled=false;}
+  return {active:()=>desktop.matches,revision:()=>epoch,identityChanged,render,page,
+    loading(){receipt('loading',records.length?`正在更新记录，保留当前已加载的 ${records.length} 条…`:'正在读取任务记录…');$('record-refresh').disabled=$('record-more').disabled=true;},
+    loaded(warning){receipt(warning?'partial':'ready',warning||'记录已更新；筛选仅作用于已加载范围。');},
+    failed(error){receipt('failed','记录读取失败：'+error+'。当前记录和筛选已保留。');render({items:records,filter:recordFilter,query:recordQuery,cursor:recordCursor});},
+    finished(){$('record-refresh').disabled=$('record-more').disabled=false;}
+  };
+})();
+
+/* One desktop read chain per selected task. Backend execution is independent of visibility. */
+window.DesktopPoll=(()=>{
+  const desktop=matchMedia('(min-width: 761px)');if(!desktop.matches)return;
+  let job=null,epoch=0,suspended=false,canceling=null;
+  const feedback=document.createElement('div');feedback.id='desktop-poll-feedback';feedback.className='desktop-poll-feedback';feedback.hidden=true;
+  const status=document.createElement('p');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+  const retry=document.createElement('button');retry.type='button';retry.className='btn tiny';retry.textContent='重新读取进度';retry.onclick=()=>resume();feedback.append(status,retry);$('analysis-pane-progress').prepend(feedback);
+  const same=value=>job===value&&currentTask===value.id&&memoryKey===value.key;
+  const visible=()=>!suspended&&!document.hidden&&document.body.dataset.view==='analysis';
+  function stop(){++epoch;if(job){clearTimeout(job.timer);job.control?.abort();}job=null;canceling=null;$('task-cancel').disabled=false;feedback.hidden=true;window.DesktopWorkbench?.connectionLost(false);}
+  function pause(){if(!job)return;clearTimeout(job.timer);job.timer=null;job.control?.abort();}
+  function schedule(value,delay){clearTimeout(value.timer);if(same(value)&&visible()&&!value.done)value.timer=setTimeout(()=>request(value.id),delay);}
+  function request(id){
+    if(!id||id!==currentTask)return Promise.resolve();
+    if(!job||job.id!==id||job.key!==memoryKey){stop();job={id,key:memoryKey,timer:null,promise:null,control:null,done:false,urgent:false};}
+    const value=job;if(value.done||!visible())return value.promise||Promise.resolve();
+    clearTimeout(value.timer);value.timer=null;
+    if(value.promise){if(value.control?.signal.aborted)value.urgent=true;return value.promise;}
+    const control=new AbortController();value.control=control;let timeout=false,delay=700;
+    const expiry=setTimeout(()=>{timeout=true;control.abort();},8000);retry.disabled=true;feedback.setAttribute('aria-busy','true');
+    value.promise=(async()=>{
+      try{
+        const task=await api('tasks/'+id,'GET',undefined,control.signal);
+        if(!same(value)||!visible()||control.signal.aborted)return;
+        const progress=await api(`tasks/${id}/events?after=${eventCursor}`,'GET',undefined,control.signal);
+        if(!same(value)||!visible()||control.signal.aborted)return;
+        for(const event of progress.events){if(event.seq<=eventCursor)continue;showEvent(event);eventCursor=event.seq;}
+        runvizSample();PonyOffice.sync(task,progress.events);const terminal=showTask(task);
+        feedback.hidden=true;window.DesktopWorkbench?.connectionLost(false);
+        if(terminal&&progress.events.length<100){value.done=true;overviewTask=task;renderSteps();if(memoryKey)refreshMemory().catch(error=>{if(same(value))notice(error.message,true);});}
+      }catch(error){
+        if(!same(value)||!visible()||(control.signal.aborted&&!timeout))return;
+        delay=2500;PonyOffice.disconnected();feedback.hidden=false;window.DesktopWorkbench?.connectionLost(true);
+        const message=`进度读取${timeout?'超时':'中断'}：${timeout?'本次读取超过 8 秒':error.message}。任务可能仍在服务端运行；稍后自动重试，也可手动读取。`;
+        if(status.textContent!==message)status.textContent=message;
+      }finally{
+        clearTimeout(expiry);
+        if(same(value)){value.promise=null;value.control=null;retry.disabled=false;feedback.setAttribute('aria-busy','false');const next=value.urgent?0:delay;value.urgent=false;schedule(value,next);}
+      }
+    })();
+    return value.promise;
+  }
+  function resume(){return request(currentTask);}
+  function ticket(){return {id:currentTask,key:memoryKey,epoch};}
+  const valid=token=>Boolean(token&&token.epoch===epoch&&token.id===currentTask&&token.key===memoryKey);
+  function beginCancel(){if(!currentTask||valid(canceling))return null;canceling=ticket();$('task-cancel').disabled=true;return canceling;}
+  function cancelled(task,token){if(!valid(token)||task.id!==token.id)return Promise.resolve();stop();PonyOffice.sync(task,[]);showTask(task);return request(task.id);}
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();else resume();});
+  window.addEventListener('pagehide',()=>{suspended=true;pause();});window.addEventListener('pageshow',()=>{suspended=false;resume();});
+  return {active:()=>desktop.matches,request,resume,stop,beginCancel,valid,cancelled,endCancel(token){if(canceling===token){canceling=null;$('task-cancel').disabled=false;}},view(name){if(name==='analysis')resume();else pause();}};
+})();
+
+/* Desktop session catalog. Selection/drafts stay in the original workbench. */
+window.DesktopSessions=(()=>{
+  const desktop=matchMedia('(min-width: 761px)');if(!desktop.matches)return;
+  const host=$('sidebar-sessions'),rows=new Map(),deleted=new Set();let owner=memoryKey,epoch=0,items=[],cursor=null,pending=null,control=null,appendPending=false,refreshQueued=false,choose=null;
+  const tools=document.createElement('div');tools.className='desktop-session-tools';
+  const label=document.createElement('label');label.className='field';label.textContent='查找已加载会话';const search=document.createElement('input');search.id='desktop-session-query';search.type='search';search.placeholder='按标的或会话名称筛选';label.append(search);
+  const scope=document.createElement('p');scope.id='desktop-session-scope';scope.className='hint';
+  const feedback=document.createElement('div');feedback.id='desktop-session-feedback';feedback.hidden=true;const status=document.createElement('p');status.className='hint';status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+  const retry=document.createElement('button');retry.type='button';retry.className='btn tiny';retry.textContent='重新读取会话';retry.onclick=()=>load(false,choose);feedback.append(status,retry);tools.append(label,scope,feedback);host.before(tools);
+  const noMatch=document.createElement('p');noMatch.className='hint';noMatch.id='desktop-session-no-match';noMatch.hidden=true;noMatch.textContent='当前已加载范围没有匹配会话。';host.after(noMatch);
+  function receipt(state,message){feedback.hidden=!message;feedback.dataset.state=state;if(status.textContent!==message)status.textContent=message;retry.hidden=state!=='failed';}
+  function busy(value){$('sessions-refresh').disabled=$('sessions-more').disabled=retry.disabled=value;feedback.setAttribute('aria-busy',String(value));}
+  function paint(){
+    const query=search.value.trim().toLocaleLowerCase(),selected=$('conversation-id').value,nodes=[],ids=new Set();let shown=0;
+    for(const item of items){ids.add(item.id);let entry=rows.get(item.id);const title=item.subject||'新分析会话',signature=JSON.stringify([title,item.updated]);
+      if(!entry){const node=document.createElement('button');node.type='button';node.className='session-item';node.dataset.conversation=item.id;node.onclick=()=>{Promise.resolve(choose?.(item.id)).catch(error=>notice(error.message,true));};entry={node};rows.set(item.id,entry);}
+      if(entry.signature!==signature){entry.node.replaceChildren();const name=document.createElement('span');name.className='desktop-session-title';name.textContent=title;const time=document.createElement('time');time.className='hint';time.dateTime=item.updated||'';time.textContent='更新于 '+fmt(item.updated);entry.node.append(name,time);entry.signature=signature;entry.name=title.toLocaleLowerCase();}
+      entry.node.classList.toggle('active',item.id===selected);if(item.id===selected)entry.node.setAttribute('aria-current','true');else entry.node.removeAttribute('aria-current');
+      const hidden=!entry.name.includes(query);if(entry.node.hidden!==hidden)entry.node.hidden=hidden;if(!hidden)shown++;nodes.push(entry.node);
+    }
+    for(const[id]of rows)if(!ids.has(id))rows.delete(id);
+    if(!items.length){const empty=document.createElement('p');empty.className='hint';empty.textContent=!memoryKey?'新建分析后会创建会话空间，也可在「记忆与访问」恢复已有密钥。':feedback.dataset.state==='failed'?'会话暂未读取成功，请重试。':feedback.dataset.state==='loading'?'正在读取会话…':'这里还没有会话，点击「新建分析」开始。';nodes.push(empty);}
+    const focused=host.contains(document.activeElement)?document.activeElement:null;let position=host.firstChild;
+    for(const node of nodes){if(position===node)position=position.nextSibling;else host.insertBefore(node,position);}while(position){const next=position.nextSibling;position.remove();position=next;}
+    if(focused?.isConnected&&!focused.hidden&&document.activeElement!==focused)focused.focus({preventScroll:true});
+    const text=`显示 ${shown} / ${items.length} 个已加载会话${cursor!=null?' · 仍有更早会话':''}`;if(scope.textContent!==text)scope.textContent=text;
+    label.hidden=scope.hidden=!memoryKey;noMatch.hidden=!items.length||shown>0;$('sessions-more').hidden=cursor==null;
+  }
+  function identityChanged(){++epoch;control?.abort();owner=memoryKey;items=[];cursor=null;pending=null;control=null;refreshQueued=false;rows.clear();deleted.clear();search.value='';receipt('idle','');busy(false);paint();}
+  function load(append=false,select){
+    if(select)choose=select;if(owner!==memoryKey)identityChanged();if(!memoryKey){paint();return Promise.resolve();}
+    if(pending){if(!append&&appendPending)refreshQueued=true;return pending;}
+    const generation=epoch,key=memoryKey,existing=items,priorCursor=cursor,requestControl=new AbortController();control=requestControl;const signal=requestControl.signal;appendPending=append;let timeout=false;
+    const expiry=setTimeout(()=>{timeout=true;requestControl.abort();},8000);
+    receipt('loading',items.length?`正在更新，保留已加载的 ${items.length} 个会话…`:'正在读取会话…');busy(true);if(!items.length)paint();
+    pending=(async()=>{
+      try{
+        const page=await api(`conversations?limit=30${append&&priorCursor!=null?'&before='+encodeURIComponent(priorCursor):''}`,'GET',undefined,signal);
+        if(generation!==epoch||key!==memoryKey||signal.aborted)return;
+        const retained=existing.filter(item=>!deleted.has(item.id)),fresh=page.items.filter(item=>!deleted.has(item.id));
+        const incoming=new Map(fresh.map(item=>[item.id,item])),known=new Set(retained.map(item=>item.id)),overlap=fresh.some(item=>known.has(item.id));
+        items=append?[...retained.map(item=>incoming.get(item.id)||item),...[...incoming.values()].filter(item=>!known.has(item.id))]:[...incoming.values(),...retained.filter(item=>!incoming.has(item.id))];
+        cursor=!append&&retained.length&&(overlap||page.next_before==null)?priorCursor:page.next_before;
+        receipt('ready','');paint();
+      }catch(error){if(generation!==epoch||key!==memoryKey||(signal.aborted&&!timeout))return;receipt('failed','会话读取失败：'+(timeout?'本次读取超过 8 秒':error.message)+'。当前列表与筛选已保留。');paint();}
+      finally{clearTimeout(expiry);if(generation===epoch&&key===memoryKey){pending=null;control=null;busy(false);if(refreshQueued){refreshQueued=false;load(false,choose);}}}
+    })();
+    return pending;
+  }
+  search.oninput=paint;paint();
+  return {active:()=>desktop.matches,load,identityChanged,removed(id){deleted.add(id);items=items.filter(item=>item.id!==id);rows.delete(id);paint();}};
+})();
+
+/* Desktop closing behavior and conversation loading. Original controls keep their handlers. */
+window.DesktopInteractions=(()=>{
+  const desktop=matchMedia('(min-width: 761px)');if(!desktop.matches)return;
+  const dock=$('analysis-composer'),message=$('conversation-message'),toolbar=dock.querySelector('.analysis-composer-controls'),menu=$('session-menu'),summary=menu.querySelector('summary');
+  let lock=null,failure=null,focusEpoch=0;
+  const visible=node=>{if(!(node instanceof HTMLElement)||!node.isConnected||!node.getClientRects().length||node.closest('[hidden],[inert]'))return false;for(let parent=node.parentElement;parent;parent=parent.parentElement)if(parent.tagName==='DETAILS'&&!parent.open&&!parent.querySelector(':scope > summary')?.contains(node))return false;return getComputedStyle(node).visibility!=='hidden';};
+  function restoreIfLost(target){const focused=document.activeElement;if(document.querySelector('dialog[open]'))return;if(focused===document.body||!visible(focused))target?.focus({preventScroll:true});}
+  function unlock(){if(!lock)return;message.readOnly=lock.readOnly;toolbar.inert=lock.toolbarInert;if(lock.busy==null)dock.removeAttribute('aria-busy');else dock.setAttribute('aria-busy',lock.busy);lock=null;}
+  function begin(){++focusEpoch;const origin=document.activeElement;window.ComposerControls?.close();if(!lock)lock={readOnly:message.readOnly,toolbarInert:toolbar.inert,busy:dock.getAttribute('aria-busy'),origin};else lock.origin=origin;failure=null;message.readOnly=true;toolbar.inert=true;dock.setAttribute('aria-busy','true');window.DesktopWorkbench?.selectionState({state:'loading'});}
+  function finish(id){const origin=lock?.origin;window.AnalysisInput?.resize();unlock();window.ComposerControls?.update();window.DesktopWorkbench?.selectionState(failure||{state:'idle'});
+    if($('conversation-id').value!==id||document.body.dataset.view!=='analysis')return;
+    const key=memoryKey,generation=focusEpoch,target=failure?$('desktop-feedback-action'):message;
+    requestAnimationFrame(()=>{if(generation===focusEpoch&&!lock&&key===memoryKey&&$('conversation-id').value===id&&document.body.dataset.view==='analysis'){const focused=document.activeElement;if(focused===origin||focused===document.body||!visible(focused))restoreIfLost(target);}});
+  }
+  function failed(id,error,retry,denied=false){const key=memoryKey;failure={state:'failed',denied,message:'会话读取失败：'+error+(denied?'。未恢复或改写本地草稿，请重新读取或选择其他会话。':'。可重新读取或选择其他会话；已保存的草稿仍保留。'),retry:()=>{if(key===memoryKey&&$('conversation-id').value===id)Promise.resolve(retry()).catch(value=>notice(value.message,true));}};}
+  function reset(){++focusEpoch;unlock();failure=null;window.AnalysisInput?.resize();window.DesktopWorkbench?.selectionState({state:'idle'});}
+  const tools=$('conversation-tools'),caption=document.createElement('span');caption.textContent='当前会话操作';caption.className='hint desktop-current-session-label';tools.prepend(caption);menu.querySelector('.desktop-session-tools').after(tools);
+  $('report-close').addEventListener('click',()=>restoreIfLost(visible($('desktop-data'))&&!$('desktop-data').disabled?$('desktop-data'):summary));
+  menu.addEventListener('toggle',()=>{if(desktop.matches&&menu.open&&document.activeElement===summary)$('desktop-session-query').focus();});
+  document.addEventListener('keydown',event=>{
+    if(!desktop.matches)return;
+    if(['Home','End'].includes(event.key)&&event.target.closest('.analysis-tabs [role="tab"]')){event.preventDefault();event.stopImmediatePropagation();const pane=event.key==='Home'?'input':'report';AnalysisInput.open(pane);$('analysis-tab-'+pane).focus();return;}
+    if(event.key!=='Escape')return;
+    event.stopImmediatePropagation();
+    if(document.querySelector('dialog[open]'))return; // Keep native cancel and its saving guard.
+    const popup=$('composer-popover');
+    if(popup&&!popup.hidden){event.preventDefault();ComposerControls.close(true);return;}
+    if(menu.open){event.preventDefault();menu.open=false;summary.focus();return;}
+    if(dock.classList.contains('desktop-history-open')){event.preventDefault();$('desktop-history').click();$('desktop-history').focus();return;}
+    if(document.body.classList.contains('desktop-report-reading')){event.preventDefault();$('report-expand').click();$('report-expand').focus();return;}
+    if(!$('report-inspector').hidden){event.preventDefault();$('report-close').click();}
+  },true);
+  return {active:()=>desktop.matches,blocked:()=>Boolean(lock),draftBlocked:()=>Boolean(lock||failure?.denied),begin,finish,failed,reset,afterDelete(){restoreIfLost(menu.open?$('desktop-session-query'):summary);}};
 })();

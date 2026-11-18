@@ -1,8 +1,10 @@
 """Bundle console feature modules for the existing four-asset HTTP contract."""
+import json
 from pathlib import Path
 
 WEB = Path(__file__).resolve().parents[1] / "src" / "stock_predict_mailer" / "control" / "web"
-MODULES = ("memory", "workspace", "knowledge", "pony-door", "pony-model", "pony-screen", "pony-reference", "pony-rig", "pony-children", "pony-progress", "hall-data", "hall-wall", "market-feed", "pony-office", "analysis-input", "mail-recipients", "composer-controls", "observation-preview", "forecasts")
+MODULES = ("memory", "workspace", "knowledge", "pony-door", "pony-model", "pony-screen", "pony-reference", "pony-rig", "pony-children", "pony-progress", "hall-data", "hall-wall", "market-feed", "pony-office", "analysis-input", "mail-recipients", "composer-controls", "observation-preview", "forecasts", "desktop-workbench", "desktop-report", "desktop-library", "desktop-settings", "desktop-records", "desktop-poll", "desktop-sessions", "desktop-interactions")
+BUDGETS = {"memory.js": 1_900_000, "app.js": 100_000, "style.css": 110_000}
 
 
 def build():
@@ -20,5 +22,19 @@ if __name__ == "__main__":
         if output.read_text(encoding="utf-8") != expected:
             raise SystemExit("Console bundle is stale; run python scripts/build_console.py")
         print("Console bundle is current")
-    else:
+    elif not {"--stats", "--check-budget"}.intersection(sys.argv):
         output.write_text(expected, encoding="utf-8", newline="\n")
+    if {"--stats", "--check-budget"}.intersection(sys.argv):
+        assets = {name: {"bytes": len(expected.encode("utf-8")) if name == "memory.js" else (WEB / name).stat().st_size,
+                         "budget": limit} for name, limit in BUDGETS.items()}
+        for values in assets.values():
+            values["within_budget"] = values["bytes"] <= values["budget"]
+        modules = [{"name": name, "bytes": len((WEB / "modules" / f"{name}.js").read_text(encoding="utf-8").encode("utf-8"))}
+                   for name in MODULES]
+        if "--stats" in sys.argv:
+            print(json.dumps({"assets": assets, "largest_modules": sorted(modules, key=lambda item: item["bytes"], reverse=True)[:8]}, ensure_ascii=False, indent=2))
+        if "--check-budget" in sys.argv:
+            exceeded = [name for name, values in assets.items() if not values["within_budget"]]
+            if exceeded:
+                raise SystemExit("Console growth budget exceeded: " + ", ".join(exceeded))
+            print("Console assets are within growth budgets")

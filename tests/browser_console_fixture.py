@@ -5,6 +5,7 @@ Run: uv run python tests/browser_console_fixture.py --port 8768
 from __future__ import annotations
 
 import argparse
+import asyncio
 import tempfile
 import threading
 from datetime import timedelta
@@ -42,17 +43,40 @@ def seed_forecasts(server):
                 "value": 112, "observed_at": d["target_at"], "available_at": d["target_at"], "source": "browser synthetic observation", "synthetic": True})
 
 
+def seed_records(server):
+    """Synthetic terminal rows for actual HTTP pagination checks, without running agents."""
+    for index in range(70):
+        tid = f"browser-record-{index:03d}"
+        task = a2a_task(tid, "completed")
+        task["metadata"] = {"request": {"subject": f"PAGE-{index:03d}", "direction": "up"}}
+        server.engine.store.task(tid, task)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8768)
     parser.add_argument("--forecast-fixtures", action="store_true")
+    parser.add_argument("--record-fixtures", action="store_true")
+    parser.add_argument("--mock-delay", type=float, default=0, help="Synthetic model latency in seconds, for cancellation checks (0–5).")
     args = parser.parse_args()
+    if not 0 <= args.mock_delay <= 5:
+        parser.error("--mock-delay must be between 0 and 5")
     stopped = threading.Event()
     with tempfile.TemporaryDirectory(prefix="console-browser-") as folder:
         server = make_server(Path(folder), args.port, Fernet.generate_key(), MarketFeed(fetchers=()))
         if args.forecast_fixtures:
             seed_forecasts(server)
+        if args.record_fixtures:
+            seed_records(server)
         server.engine.knowledge.cleaner = FakeCleaner([candidate(RELATION, valid_from="2026-01-01")])
+        if args.mock_delay:
+            generate = server.engine.models.generate
+
+            async def delayed(*params, **kwargs):
+                await asyncio.sleep(args.mock_delay)
+                return await generate(*params, **kwargs)
+
+            server.engine.models.generate = delayed
 
         def worker():
             while not stopped.wait(.1):

@@ -8,9 +8,10 @@ import tempfile
 import threading
 import time
 import unittest
+from copy import deepcopy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import httpx
 from cryptography.fernet import Fernet
@@ -245,6 +246,8 @@ class ModelHTTPHandler(BaseHTTPRequestHandler):
         data = json.loads(self.payload["messages"][-1]["content"])["data"]
         result = {"conclusion_codes": ["MODEL_UP"], "evidence_ids": ["prediction:" + data["prediction"]["prediction_id"]],
                   "uncertainty_codes": ["MODEL_UNVERIFIED"], "delegate_roles": []}
+        if mode == "needs_evidence_list":
+            result.update(conclusion_codes=["INSUFFICIENT"], evidence_ids=data.get("allowed_evidence_ids", [])[:1])
         try:
             self.wfile.write(json.dumps({"choices": [{"message": {"content": json.dumps(result)}}]}).encode())
         except OSError:
@@ -294,6 +297,25 @@ class ModelHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ModelHTTPHandler.attempts, 1)
         self.assertNotIn("mock-key", str(cm.exception))
 
+    async def test_evidence_contract_supports_insufficient_without_context(self):
+        ModelHTTPHandler.mode = "needs_evidence_list"
+        result = await ModelAdapter(self.f.store).test(self.model["id"], self.f.settings)
+        self.assertEqual(result["status"], "ok")
+        data = json.loads(ModelHTTPHandler.payload["messages"][-1]["content"])["data"]
+        self.assertEqual(data["allowed_evidence_ids"], ["prediction:" + data["prediction"]["prediction_id"]])
+
+    async def test_evidence_whitelist_excludes_caller_and_historical_ids(self):
+        p = MockPredictionAdapter().fetch()
+        data = {"prediction": p, "facts": [{"id": "fact-current", "text": "synthetic current fact"}],
+                "source_material": {"results": [{"citation_id": "kb-current"}, {"citation_id": "kb-current"}]},
+                "allowed_evidence_ids": ["forged"], "conversation_memory": {"recalled": [{"id": "historical"}]}}
+        await ModelAdapter(self.f.store).generate(self.model["id"], "main", data, self.f.settings, Budget(self.f.settings["limits"]))
+        sent = json.loads(ModelHTTPHandler.payload["messages"][-1]["content"])["data"]
+        self.assertEqual(sent["allowed_evidence_ids"], ["prediction:" + p["prediction_id"], "fact-current", "kb-current"])
+        await ModelAdapter(self.f.store).generate(self.model["id"], "risk", data, self.f.settings, Budget(self.f.settings["limits"]))
+        sent = json.loads(ModelHTTPHandler.payload["messages"][-1]["content"])["data"]
+        self.assertEqual(sent["allowed_evidence_ids"], ["prediction:" + p["prediction_id"], "fact-current"])
+
     async def test_incompatible_parameters(self):
         ModelHTTPHandler.mode = "bad"
         with self.assertRaises(ServiceError) as cm:
@@ -324,9 +346,13 @@ class OrchestrationTests(unittest.IsolatedAsyncioTestCase):
         self.f = Fixture()
         self.addCleanup(self.f.close)
         self.engine = Orchestrator(self.f.store)
+        # The mock prediction is stable only within one UTC hour.  Keep one
+        # validated input for this test instance so long-running tests cannot
+        # cross an hour boundary between repeated execute calls.
+        self.prediction = deepcopy(MockPredictionAdapter().fetch())
 
     async def run_task(self, complexity="complex", **fields):
-        request = self.engine.prepare({"prediction": MockPredictionAdapter().fetch(), "complexity": complexity, **fields})
+        request = self.engine.prepare({"prediction": deepcopy(self.prediction), "complexity": complexity, **fields})
         return await self.engine.execute("test-task", request)
 
     def result(self, task):
@@ -477,11 +503,23 @@ class OrchestrationTests(unittest.IsolatedAsyncioTestCase):
         self.f.settings["mail"].update(transport="mcp", recipient_allowlist=["preview@example.invalid"], allow_synthetic=True,
                                         mcp_server_id=m["id"], mcp_tool="send_email")
         self.f.store.save_settings(self.f.settings)
-        result = self.result(await self.run_task(notify=True, recipient="preview@example.invalid"))
-        self.assertEqual(result["mail"]["status"], "simulated")
-        self.assertTrue(result["analysis"]["facts"])
-        self.assertEqual(len(result["children"]), 3)
-        again = self.result(await self.run_task(notify=True, recipient="preview@example.invalid"))
+        original_call = self.engine.mcp.call
+        cached_context = None
+
+        async def reuse_verified_context(sid, name, arguments, **kwargs):
+            nonlocal cached_context
+            if name == "get_context":
+                if cached_context is None:
+                    cached_context = await original_call(sid, name, arguments, **kwargs)
+                return deepcopy(cached_context)
+            return await original_call(sid, name, arguments, **kwargs)
+
+        with patch.object(self.engine.mcp, "call", side_effect=reuse_verified_context):
+            result = self.result(await self.run_task(notify=True, recipient="preview@example.invalid"))
+            self.assertEqual(result["mail"]["status"], "simulated")
+            self.assertTrue(result["analysis"]["facts"])
+            self.assertEqual(len(result["children"]), 3)
+            again = self.result(await self.run_task(notify=True, recipient="preview@example.invalid"))
         self.assertEqual(again["mail"]["id"], result["mail"]["id"])
 
     async def test_mcp_marker_recovers_as_uncertain_without_resend(self):
@@ -595,6 +633,25 @@ class ConsoleAPITests(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=2)
         self.f.close()
+
+    def test_disconnected_client_response_closes_without_second_response(self):
+        for error in (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            for phase in ("headers", "body"):
+                with self.subTest(error=error.__name__, phase=phase):
+                    handler = object.__new__(self.server.RequestHandlerClass)
+                    handler.send_response = Mock()
+                    handler.send_header = Mock()
+                    handler.end_headers = Mock(side_effect=error() if phase == "headers" else None)
+                    handler.wfile = Mock()
+                    handler.wfile.write.side_effect = error() if phase == "body" else None
+                    handler.close_connection = False
+                    handler.output({"ok": True})
+                    self.assertTrue(handler.close_connection)
+                    handler.send_response.assert_called_once_with(200)
+                    if phase == "headers":
+                        handler.wfile.write.assert_not_called()
+                    else:
+                        handler.wfile.write.assert_called_once()
 
     def test_progress_endpoint_returns_running_step_and_incremental_cursor(self):
         original = self.server.engine.models.generate

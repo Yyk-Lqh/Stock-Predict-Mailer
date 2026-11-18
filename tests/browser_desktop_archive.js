@@ -1,0 +1,36 @@
+/* Run on disposable --forecast-fixtures service only. */
+(async()=>{
+  const $=id=>document.getElementById(id),checks=[];
+  const assert=(ok,message)=>{if(!ok)throw Error(message);};
+  const wait=async(fn,label)=>{for(let i=0;i<150;i++){if(fn())return;await new Promise(resolve=>setTimeout(resolve,100));}throw Error('Timeout: '+label);};
+  document.querySelector('[data-view="records"]').click(); await wait(()=>!$('forecast-refresh').disabled,'archive');
+  document.querySelector('[data-forecast-state="due"]').click(); await wait(()=>!$('forecast-refresh').disabled,'due filter');
+  assert($('forecast-state').value==='due' && $('desktop-forecast-scope').textContent.includes('筛选范围'),'Loaded/filter scope missing');
+  $('desktop-forecast-next').click(); await wait(()=>$('observation-content')&&!$('forecast-detail').hidden,'due detail');
+  assert(document.querySelector('.observation-preview').open && !$('observation-content').value,'Shortcut did not open empty observation form');
+  assert(document.querySelector('.desktop-forecast-guide').textContent.includes('不保存评估回执'),'Read-only status missing');
+  const reference=document.querySelector('.desktop-observation-format'); reference.open=true;
+  assert(reference.textContent.includes('<替换为 JSON 数字>') && reference.textContent.includes('CSV') && !$('observation-content').value,'Format template fabricated observation');
+  checks.push('state shortcuts and loaded-only due action lead to empty read-only observation form');
+  const view=await api('tasks/browser-due/forecast'),d=view.record.definition;
+  $('observation-content').value=JSON.stringify({schema_version:'1',subject:view.record.prediction.subject,metric:d.metric,unit:d.unit,value:112,observed_at:d.target_at,available_at:d.target_at,source:'synthetic desktop archive source',synthetic:true});
+  $('observation-content').dispatchEvent(new Event('input',{bubbles:true})); $('observation-preview').click(); await wait(()=>!$('observation-preview').disabled,'preview');
+  assert(document.querySelectorAll('.desktop-match-list dd').length===5,'Matching checklist incomplete');
+  assert([...document.querySelectorAll('.desktop-match-list dd')].every(node=>node.textContent.startsWith('一致')),'Matching checklist inconsistent');
+  assert($('observation-result').textContent.includes('未保存') && (await api('tasks/browser-due/forecast')).evaluations.length===0,'Preview persisted a receipt');
+  checks.push('five matching declarations accompany actual preview, without creating receipt');
+  $('observation-content').value='{}'; $('observation-content').dispatchEvent(new Event('input',{bubbles:true}));
+  assert($('observation-result').hidden && !document.querySelector('.desktop-observation-check'),'Editing retained old matching checklist');
+  document.querySelector('[data-forecast-state="pending"]').click(); await wait(()=>!$('forecast-refresh').disabled,'pending');
+  assert($('desktop-forecast-next').disabled && $('forecast-detail').hidden,'Pending state kept stale due action/detail');
+  document.querySelector('[data-forecast-state="evaluated"]').click(); await wait(()=>!$('forecast-refresh').disabled,'evaluated');
+  $('forecast-list').querySelector('button').click(); await wait(()=>$('observation-content'),'receipt detail');
+  assert($('forecast-detail').textContent.includes('已有正式回执') && $('forecast-detail').textContent.includes('绝对误差：2 CNY'),'Existing receipt not separate');
+  assert(!$('forecast-detail').querySelector('img'),'Untrusted source interpreted as markup');
+  checks.push('edits/filter changes clear checklist and due actions; original receipt/source remain intact');
+  await wait(()=>$('record-list').querySelector('.task-row'),'task records');
+  assert($('record-list').querySelector('.desktop-record-date')?.textContent.includes('状态记录时间'),'Date grouping scope not explicit');
+  assert(document.documentElement.scrollWidth<=innerWidth,'Horizontal overflow');
+  checks.push('task dates identify status record time without changing existing order');
+  document.body.dataset.desktopArchiveCheck=JSON.stringify({checks});
+})().catch(error=>{document.body.dataset.desktopArchiveCheck=JSON.stringify({error:error.message});});

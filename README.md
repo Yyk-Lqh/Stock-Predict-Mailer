@@ -77,7 +77,11 @@ Without `STOCK_PREDICT_MAILER_MASTER_KEY`, the console uses a separate developme
 
 Import upstream predictions, inspect numerical or directional forecasts, follow execution events, and review reports and evidence in one conversation. Optional MCP tools and A2A delegation remain permission- and budget-bound. The securities hall distinguishes demonstration displays from configured market sources.
 
-[Workbench](docs/console-workbench.md) · [Protocols and API](docs/control-api.md) · [Execution and charts](docs/hybrid-execution.md) · [Securities hall](docs/securities-hall.md)
+The desktop console starts in a focused workspace with direct model, input, and result actions; the securities hall remains available. Reports offer source-based reading highlights, evidence navigation, focused reading, and a return to the same history position. Session switching protects drafts and explains loading or retry states; keyboard menus close one layer at a time.
+
+Hidden scenes stop continuous drawing, task refreshes share in-flight reads, and loaded lists reuse unchanged rows. Search labels distinguish loaded records from global search. These changes preserve the existing API and four console asset paths.
+
+[Workbench](docs/console-workbench.md) · [Desktop change plan](docs/desktop-frontend-optimization-plan.md) · [Protocols and API](docs/control-api.md) · [Execution and charts](docs/hybrid-execution.md) · [Securities hall](docs/securities-hall.md)
 
 ### Forecast archives and observations
 
@@ -97,6 +101,8 @@ uv run stock-predict-mailer --config config/agent-example.toml knowledge-worker 
 ```
 
 Uploading queues work; it does not finish ingestion. Run the worker against the **same configuration, workspace, and key** as the console. Advanced semantic cleaning is opt-in.
+
+Desktop knowledge tools expose queue states, actual versions, and candidate/source comparison. Model settings separate saving, connection tests, and default selection; MCP discovery requires explicit permission saving. The intake center shows per-file upload outcomes, explicit failed-item retries, mapping validation, and processing-specific publication receipts.
 
 [Private knowledge](docs/private-knowledge.md) · [Cleaning and review](docs/cleaning-agent.md) · [Conversation memory](docs/conversation-memory.md)
 
@@ -124,17 +130,21 @@ uv run stock-predict-mailer-crawler-verify
 
 ## Project status
 
-Version **0.5.0**. This is a working local tool, not a hosted service. The table separates what is exercised today from what remains unverified.
+Version **0.6.0**. This is a working local tool, not a hosted service. The table separates what is exercised today from what remains unverified.
 
 | Area | Status | Notes |
 | --- | --- | --- |
 | CLI, console, reports | Available | Mock input, deterministic analysis, local `.eml` delivery |
+| Desktop workbench | Locally verified | Focus/hall views, report evidence navigation, draft protection, and persistent retry feedback |
+| Real model and project MCP | Bounded integration verified | DeepSeek Flash structured output and project MCP discovery/read-only status passed with synthetic inputs; other profiles and modes need their own validation |
 | Forecast archive and scoring | Available | Official receipts only through the explicit CLI command |
 | Private knowledge and memory | Available with optional extras | Embeddings and semantic cleaning are configured separately |
-| Mail delivery | Simulated by default | One real SMTP submission was verified; inbox placement, bounces, quotas, and bulk sending were not |
+| Mail delivery | Simulated by default | One QQ SMTP test was accepted and receipt confirmed by the user; deliverability, bounces, quotas, and bulk sending were not evaluated |
 | Market data | Display only | The securities hall relays public quotes for display; it is not a collection source for tasks |
 | Hosted multi-user use | Out of scope | No authentication layer beyond the local principal |
 | Branch protection | Not enforced yet | Review and merge rules are conventions until repository rulesets are enabled |
+
+The [live integration record](docs/real-integration-validation.md) separates provider responses, application budgets, SMTP submission, and user-confirmed receipt. Live credentials and workspace configuration are not bundled. Continuing SMTP operation requires local credential injection, explicit transport selection, and a service reload after backend changes.
 
 ## Development
 
@@ -142,10 +152,12 @@ Version **0.5.0**. This is a working local tool, not a hosted service. The table
 uv sync --all-extras --locked
 uv run ruff check src/stock_predict_mailer src/mcp_server tests scripts
 uv run python -m unittest discover -s tests -v
-uv run python scripts/build_console.py --check
+uv run python scripts/build_console.py --check --check-budget
 ```
 
 Tests use `unittest`. CI covers Linux and Windows, Python 3.11/3.13 full environments, and environments without research dependencies. Optional-dependency installation is required for the full suite. Keep generated `control/web/memory.js` synchronized using `scripts/build_console.py`.
+
+For one local entry point, run `uv run --locked --all-extras python scripts/check_desktop_delivery.py --full`. Omit `--full` for static checks. Each run stops on the first failure and keeps step logs and a JSON summary under the ignored `.tmp/desktop-delivery/` directory. See [desktop delivery validation](docs/desktop-delivery-validation.md) for isolated gstack browser fixtures, OS-privilege skips, and actual results.
 
 The distribution/CLI is `stock-predict-mailer`, the import package is `stock_predict_mailer`, and environment variables use `STOCK_PREDICT_MAILER_`. Follow the [contribution guide](CONTRIBUTING.md) for checks, naming, synthetic fixtures, and PR requirements.
 

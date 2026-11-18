@@ -77,7 +77,11 @@ uv run stock-predict-mailer --config config/agent-example.toml console --port 87
 
 导入上游数值或方向预测，在同一会话中跟进执行事件、报告和来源证据。可选 MCP 工具及 A2A 委派受授权与预算控制；证券大厅明确区分演示内容和已配置的行情来源。
 
-[会话式工作台](docs/console-workbench.md) · [协议与 API](docs/control-api.md) · [执行与图表](docs/hybrid-execution.md) · [证券大厅](docs/securities-hall.md)
+桌面控制台默认进入专注工作区，直接提供模型、资料和结果入口，也可切换证券大厅。报告支持原文重点、证据往返、专注阅读及返回原历史位置。切换会话保护草稿，明确显示加载和重试状态；键盘菜单逐层关闭。
+
+隐藏场景暂停持续绘制，任务刷新合并在途读取，已加载列表复用未变化的行。搜索提示区分已加载记录与全局搜索，保留现有 API 和控制台四个静态资源路径。
+
+[会话式工作台](docs/console-workbench.md) · [桌面优化计划](docs/desktop-frontend-optimization-plan.md) · [协议与 API](docs/control-api.md) · [执行与图表](docs/hybrid-execution.md) · [证券大厅](docs/securities-hall.md)
 
 ### 预测归档与观测
 
@@ -97,6 +101,8 @@ uv run stock-predict-mailer --config config/agent-example.toml knowledge-worker 
 ```
 
 上传表示排队，不等于完成入库。Worker 必须与控制台沿用**同一配置、工作区和密钥**，高级语义清洗需显式开启。
+
+桌面知识工具展示队列状态、实际版本及候选/来源对照。模型设置区分保存、连接测试和默认选择，MCP 发现结果需显式保存权限。数据接入中心提供逐文件上传结果、失败项显式重传、映射校验及按处理批次记录的发布回执。
 
 [私有知识库](docs/private-knowledge.md) · [清洗与审批](docs/cleaning-agent.md) · [会话记忆](docs/conversation-memory.md)
 
@@ -124,17 +130,21 @@ uv run stock-predict-mailer-crawler-verify
 
 ## 项目状态
 
-版本 **0.5.0**。这是可用的本机工具，不是托管服务。下表区分当前确实演练过的能力与仍未验证的部分。
+版本 **0.6.0**。这是可用的本机工具，不是托管服务。下表区分当前确实演练过的能力与仍未验证的部分。
 
 | 范围 | 状态 | 说明 |
 | --- | --- | --- |
 | CLI、控制台与报告 | 可用 | Mock 输入、确定性分析、本地 `.eml` 投递 |
+| 桌面工作台 | 已完成本地验证 | 专注/大厅视图、报告证据导航、草稿保护和持续重试反馈 |
+| 真实模型与项目 MCP | 已完成有界联调 | 合成输入下通过 DeepSeek Flash 结构化输出及项目 MCP 发现/只读状态；其他配置与强度需分别验证 |
 | 预测归档与评分 | 可用 | 正式回执只能通过显式 CLI 命令写入 |
 | 私有知识库与会话记忆 | 安装可选依赖后可用 | Embedding 与语义清洗分别配置 |
-| 邮件投递 | 默认文件模拟 | 验证过一次真实 SMTP 提交；送达率、退信、配额与批量发送未验证 |
+| 邮件投递 | 默认文件模拟 | QQ SMTP 接受单封测试，用户已确认收到；送达率、退信、配额与批量发送未评估 |
 | 行情数据 | 仅用于显示 | 证券大厅中继公开报价，不作为任务采集端 |
 | 托管多用户 | 非目标 | 除本机 principal 外没有认证层 |
 | 分支保护 | 尚未启用 | 在启用仓库规则集前，审查与合并属于约定 |
+
+[真实联调记录](docs/real-integration-validation.md)区分供应商响应、应用预算、SMTP 提交和用户确认收件。发布内容不包含真实凭据和工作区配置；持续 SMTP 运行仍需在本机注入凭据、明确选择通道，并在后端改动后重载服务。
 
 ## 开发
 
@@ -142,10 +152,12 @@ uv run stock-predict-mailer-crawler-verify
 uv sync --all-extras --locked
 uv run ruff check src/stock_predict_mailer src/mcp_server tests scripts
 uv run python -m unittest discover -s tests -v
-uv run python scripts/build_console.py --check
+uv run python scripts/build_console.py --check --check-budget
 ```
 
 使用 `unittest`。CI 覆盖 Linux/Windows 的 Python 3.11/3.13 完整环境，以及不安装研究依赖的环境。全量测试需安装可选依赖。通过 `scripts/build_console.py` 同步生成的 `control/web/memory.js`。
+
+统一本地入口为 `uv run --locked --all-extras python scripts/check_desktop_delivery.py --full`；省略 `--full` 只执行静态检查。首个步骤失败后停止，逐步日志和 JSON 汇总保存在被忽略的 `.tmp/desktop-delivery/`。独立 gstack 浏览器夹具、系统权限跳过及实际结果见[桌面交付验收](docs/desktop-delivery-validation.md)。
 
 发行名和命令为 `stock-predict-mailer`，导入名为 `stock_predict_mailer`，环境变量使用 `STOCK_PREDICT_MAILER_` 前缀。检查、命名、合成测试资料及 PR 要求见[贡献指南](CONTRIBUTING.md#chinese)。
 

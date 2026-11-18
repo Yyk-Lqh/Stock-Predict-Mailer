@@ -58,7 +58,7 @@ jobs:
       - run: node tests/test_pony_door_anchor.cjs
       - run: node tests/test_pony_door_meeting.cjs
       - run: node tests/test_hall_data.cjs
-      - run: uv run python scripts/build_console.py --check
+      - run: uv run python scripts/build_console.py --check --check-budget
       - run: uv run python scripts/build_runtime_diagram.py --check
 
   tests:

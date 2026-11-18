@@ -77,7 +77,11 @@ Without `STOCK_PREDICT_MAILER_MASTER_KEY`, the console uses a separate developme
 
 Import upstream predictions, inspect numerical or directional forecasts, follow execution events, and review reports and evidence in one conversation. Optional MCP tools and A2A delegation remain permission- and budget-bound. The securities hall distinguishes demonstration displays from configured market sources.
 
-[Workbench](docs/console-workbench.md) · [Protocols and API](docs/control-api.md) · [Execution and charts](docs/hybrid-execution.md) · [Securities hall](docs/securities-hall.md)
+The desktop console starts in a focused workspace with direct model, input, and result actions; the securities hall remains available. Reports offer source-based reading highlights, evidence navigation, focused reading, and a return to the same history position. Session switching protects drafts and explains loading or retry states; keyboard menus close one layer at a time.
+
+Hidden scenes stop continuous drawing, task refreshes share in-flight reads, and loaded lists reuse unchanged rows. Search labels distinguish loaded records from global search. These changes preserve the existing API and four console asset paths.
+
+[Workbench](docs/console-workbench.md) · [Desktop change plan](docs/desktop-frontend-optimization-plan.md) · [Protocols and API](docs/control-api.md) · [Execution and charts](docs/hybrid-execution.md) · [Securities hall](docs/securities-hall.md)
 
 ### Forecast archives and observations
 

@@ -77,7 +77,11 @@ uv run stock-predict-mailer --config config/agent-example.toml console --port 87
 
 导入上游数值或方向预测，在同一会话中跟进执行事件、报告和来源证据。可选 MCP 工具及 A2A 委派受授权与预算控制；证券大厅明确区分演示内容和已配置的行情来源。
 
-[会话式工作台](docs/console-workbench.md) · [协议与 API](docs/control-api.md) · [执行与图表](docs/hybrid-execution.md) · [证券大厅](docs/securities-hall.md)
+桌面控制台默认进入专注工作区，直接提供模型、资料和结果入口，也可切换证券大厅。报告支持原文重点、证据往返、专注阅读及返回原历史位置。切换会话保护草稿，明确显示加载和重试状态；键盘菜单逐层关闭。
+
+隐藏场景暂停持续绘制，任务刷新合并在途读取，已加载列表复用未变化的行。搜索提示区分已加载记录与全局搜索，保留现有 API 和控制台四个静态资源路径。
+
+[会话式工作台](docs/console-workbench.md) · [桌面优化计划](docs/desktop-frontend-optimization-plan.md) · [协议与 API](docs/control-api.md) · [执行与图表](docs/hybrid-execution.md) · [证券大厅](docs/securities-hall.md)
 
 ### 预测归档与观测
 

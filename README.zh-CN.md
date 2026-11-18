@@ -102,6 +102,8 @@ uv run stock-predict-mailer --config config/agent-example.toml knowledge-worker 
 
 上传表示排队，不等于完成入库。Worker 必须与控制台沿用**同一配置、工作区和密钥**，高级语义清洗需显式开启。
 
+桌面知识工具展示队列状态、实际版本及候选/来源对照。模型设置区分保存、连接测试和默认选择，MCP 发现结果需显式保存权限。数据接入中心提供逐文件上传结果、失败项显式重传、映射校验及按处理批次记录的发布回执。
+
 [私有知识库](docs/private-knowledge.md) · [清洗与审批](docs/cleaning-agent.md) · [会话记忆](docs/conversation-memory.md)
 
 ### 邮件与运行管理

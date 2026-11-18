@@ -102,6 +102,8 @@ uv run stock-predict-mailer --config config/agent-example.toml knowledge-worker 
 
 Uploading queues work; it does not finish ingestion. Run the worker against the **same configuration, workspace, and key** as the console. Advanced semantic cleaning is opt-in.
 
+Desktop knowledge tools expose queue states, actual versions, and candidate/source comparison. Model settings separate saving, connection tests, and default selection; MCP discovery requires explicit permission saving. The intake center shows per-file upload outcomes, explicit failed-item retries, mapping validation, and processing-specific publication receipts.
+
 [Private knowledge](docs/private-knowledge.md) · [Cleaning and review](docs/cleaning-agent.md) · [Conversation memory](docs/conversation-memory.md)
 
 ### Email and operations

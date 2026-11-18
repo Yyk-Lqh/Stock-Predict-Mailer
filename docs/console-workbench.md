@@ -1,5 +1,37 @@
 # 会话式分析工作台
 
+## 2026-11-17 桌面交互收尾
+
+后续完整本地交付检查、独立浏览器夹具及真实服务联调条件见 [桌面交付验收](desktop-delivery-validation.md)。
+
+真实DeepSeek、项目MCP和QQ邮件的实际回执、协议修复及后续运行配置见 [真实服务联调](real-integration-validation.md)。
+
+桌面Esc依次处理当前弹出菜单、分析会话菜单、会话记录、专注阅读和资料面板，每次只关闭一层并回到可见入口。原生邮箱对话框仍使用浏览器取消行为，授权保存期间禁止退出。分析资料页签支持Home/End到首尾，保留左右方向键。
+
+切换会话时，移到页面底部的输入框也会只读，工具栏暂停，并明确显示正在读取。最后一次选择完成后恢复草稿和焦点，旧请求不能解除新选择的锁定；切换中的临时空白不会保存。暂时读取失败提供持续重试入口并保留本地草稿；权限拒绝时不恢复或改写缓存，离开该会话也不会用空白覆盖原草稿。新建、独立任务和访问密钥变化会清除旧锁定。恢复或重试会话后，邮件仍默认关闭。
+
+当前会话的原导出、删除入口移至“分析会话”菜单内，沿用原确认及接口。桌面重复旧引导不再遮挡摘要；短窗口收紧摘要间距，内容超过可见高度时保留独立滚动。未开展手机端工作。
+
+### 桌面交互复验
+
+仅在 `python tests/browser_console_fixture.py --port 8768` 启动的临时服务执行；所有浏览操作使用gstack `/browse`。以下 `browse` 指本机gstack可执行文件，PowerShell可用 `& $browse` 调用其绝对路径。先 `browse goto http://127.0.0.1:8768`、`browse viewport 1280x600`，再 `browse wait 'body[data-view="analysis"]'`，每份脚本前重新导航以隔离页面状态。
+
+- `tests/browser_desktop_layers.js`：执行后等待 `body[data-desktop-layers-test]`，读取对应dataset，覆盖键盘层级、原导出和实际临时会话删除，共5组。
+- `tests/browser_desktop_selection.js`：必须驱动下列真实键盘步骤，不能用JavaScript直接赋值代替输入；结果7组。
+
+```text
+browse eval tests/browser_desktop_selection.js
+browse wait 'body[data-selection-typing-ready]'
+browse type SHOULD_NOT_EDIT
+browse js 'window.__desktopNativeBlocked=document.getElementById("conversation-message").value===window.__desktopSelectionBefore;window.__desktopSelectionContinue()'
+browse wait 'body[data-desktop-selection-test]'
+browse js 'document.body.dataset.desktopSelectionTest'
+```
+
+- `tests/browser_desktop_modal.js`：执行后依次等待 `body[data-native-escape-ready]`、`body[data-grant-escape-ready]`、`body[data-failed-grant-escape-ready]`；每个阶段均执行 `browse press Escape`，再 `browse js 'window.__desktopModalContinue()'`。最后读取 `body[data-desktop-modal-test]` 的dataset，结果2组。授权失败由页面合成响应提供，不写实际授权。
+
+全部结果必须没有 `error`，不能仅凭CLI退出码或出现完成标记判断通过。当前轮共58组浏览器检查及3个原有完整流程通过；长名称和深浅主题的桌面几何另行核对。最终执行 `python scripts/build_console.py --check --check-budget`，确保生成产物与资源预算同步；本轮未运行远程CI或发布。
+
 ## 2026-11-17 桌面轮询与会话反馈更新
 
 同一任务的并发刷新共用在途读取，只保留一个后续轮询计时器。离开分析页、隐藏标签页或页面暂停时停止读取，服务端任务照常执行；返回后按原事件游标恢复。终态任务读完全部事件后停止轮询，再打开历史任务时重新读取。读取超时或中断会持续显示重试入口，主工作台也标明进度暂未更新，不把读取失败显示为任务失败。

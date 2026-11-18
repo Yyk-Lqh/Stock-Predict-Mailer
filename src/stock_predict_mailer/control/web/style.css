@@ -133,26 +133,53 @@ button { font: inherit; }
 .section-head .hint { margin-left: auto; }
 
 /* ---------- buttons ---------- */
+/* One press language for the whole console: secondary buttons lift on hover and
+   sink on press; primary actions are pills whose brass tint grows from a small dot
+   while a chevron steps in. Nothing moves outside the button, so hovering never
+   reflows the row it sits in. */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   padding: 8px 14px; border: 1px solid var(--rule-strong); border-radius: var(--radius-sm);
   background: var(--surface-2); color: var(--ink); font-size: 12.5px; cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
 }
 .btn:hover { background: var(--surface-3); border-color: rgba(255, 255, 255, 0.24); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn.primary {
-  background: var(--brass); border-color: var(--brass); color: #17130b; font-weight: 500;
+  position: relative; isolation: isolate; overflow: hidden;
+  padding: 8px 22px; border-radius: 999px; white-space: nowrap;
+  background: var(--brass); border-color: var(--brass); color: #17130b; font-weight: 600;
 }
-.btn.primary:hover { background: #d2b98c; border-color: #d2b98c; }
+/* The wash that fills the pill: it starts as a dot on the left and covers the
+   button on hover, ending on the same tone the old hover state used. */
+.btn.primary::before {
+  content: ""; position: absolute; z-index: -1; left: 18%; top: 42%; width: 6px; height: 6px;
+  border-radius: 999px; background: #d2b98c; opacity: 0;
+  transition: opacity 0.16s ease, left 0.3s ease, top 0.3s ease, width 0.3s ease, height 0.3s ease, border-radius 0.3s ease;
+}
+.btn.primary::after {
+  content: ""; position: absolute; right: 10px; top: 50%; width: 5px; height: 5px;
+  border-top: 1.4px solid currentColor; border-right: 1.4px solid currentColor; opacity: 0;
+  transform: translateY(-50%) rotate(45deg) translateX(-3px);
+  transition: opacity 0.2s ease 0.05s, transform 0.3s ease;
+}
+.btn.primary:hover::before { opacity: 1; left: 0; top: 0; width: 100%; height: 100%; border-radius: 0; }
+.btn.primary:hover::after { opacity: 0.85; transform: translateY(-50%) rotate(45deg) translateX(0); }
+.btn.primary:disabled::before, .btn.primary:disabled::after { opacity: 0; }
+.btn.primary:disabled:hover::before, .btn.primary:disabled:hover::after { opacity: 0; }
 .btn.quiet { border-color: transparent; background: none; color: var(--ink-2); padding: 6px 9px; }
 .btn.quiet:hover { background: var(--surface-2); color: var(--ink); }
 .btn.tiny { padding: 3px 9px; font-size: 11.5px; }
+.btn.tiny.primary { padding: 3px 18px; }
 .btn.danger { color: var(--danger); border-color: rgba(210, 96, 79, 0.4); background: transparent; }
 .btn.danger:hover { background: var(--danger-soft); border-color: var(--danger); }
 .btn:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {
   outline: 1px solid var(--brass); outline-offset: 2px;
 }
+/* Buttons carry the same thicker brass ring as the navigation, so the focus stop
+   is equally obvious on a pill and on a compact chip. */
+.btn:focus-visible { outline-width: 2px; outline-offset: 3px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* ---------- overview ---------- */
@@ -857,7 +884,7 @@ html[data-theme-mode="system"] .theme-toggle::after { content: ""; position: abs
 :root[data-theme="light"] .btn.primary,
 :root[data-theme="light"] .chip.active,
 :root[data-theme="light"] .steps li[data-done="true"] .mark { color: #ffffff; }
-:root[data-theme="light"] .btn.primary:hover { background: #684b1e; border-color: #684b1e; }
+:root[data-theme="light"] .btn.primary::before { background: #684b1e; }
 :root[data-theme="light"] input::placeholder,
 :root[data-theme="light"] textarea::placeholder,
 :root[data-theme="light"] .filter-bar input[type="search"]::placeholder { color: #707986; }
@@ -1313,6 +1340,7 @@ body[data-view="analysis"].inspector-visible #analysis-composer { left: var(--do
   #desktop-focus-copy { max-width: 52ch; color: var(--ink-2); font-size: 14px; line-height: 1.8; margin-bottom: 20px; }
   .desktop-focus-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
   .desktop-focus-actions .btn { min-height: 38px; padding: 8px 16px; font-size: 13px; }
+  .desktop-focus-actions .btn.primary { padding-right: 22px; }
   .desktop-sample-note { margin: 12px 0 0; max-width: 62ch; }
   .desktop-summary { max-width: 700px; margin: 26px auto 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 21px 28px; padding-top: 22px; border-top: 1px solid var(--rule-strong) !important; }
   .desktop-summary > div { min-width: 0; }
@@ -1519,5 +1547,6 @@ body[data-view="analysis"].inspector-visible #analysis-composer { left: var(--do
   #desktop-focus-title { font-size: 22px; margin-bottom: 8px; }
   #desktop-focus-copy { font-size: 13px; margin-bottom: 12px; }
   .desktop-focus-actions .btn { min-height: 32px; padding: 6px 12px; }
+  .desktop-focus-actions .btn.primary { padding-right: 22px; }
   .desktop-summary { margin-top: 16px; padding-top: 14px; gap: 12px 22px; }
 }

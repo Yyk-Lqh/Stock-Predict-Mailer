@@ -130,7 +130,7 @@ uv run stock-predict-mailer-crawler-verify
 
 ## Project status
 
-Version **0.5.0**. This is a working local tool, not a hosted service. The table separates what is exercised today from what remains unverified.
+Version **0.6.0**. This is a working local tool, not a hosted service. The table separates what is exercised today from what remains unverified.
 
 | Area | Status | Notes |
 | --- | --- | --- |

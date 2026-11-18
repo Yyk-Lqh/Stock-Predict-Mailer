@@ -154,6 +154,29 @@
 - 静态白名单仍是 `/`、`/app.js`、`/memory.js`、`/style.css`，没有新增资源路径。
 - `prefers-reduced-motion` 下关闭全部过渡与动画（含运行图）。
 
+### 按钮与按压语言
+
+- 次要按钮 `.btn` 保持 5px 圆角与 `--surface-2` 底色：悬停升到 `--surface-3`，按下整体下移 1px，过渡 150ms。
+- 主要按钮 `.btn.primary` 统一为胶囊：`border-radius: 999px`、内边距 `8px 22px`（`.tiny.primary` 为 `3px 18px`），
+  静止状态仍是实心黄铜 `#c3a97a`，字重 600、`white-space: nowrap`。
+- 悬停动效只用两个伪元素实现，不改结构、不加图标依赖：
+  - `::before` 是一枚 6px、`#d2b98c` 的圆点，起始位于按钮左侧 18% / 上方 42%，悬停时展开到 100%×100% 覆盖整个按钮（300ms），
+    收束在旧版 hover 色上，所以最终观感与旧交互一致；
+  - `::after` 用 `border-top/right` 画 5px 勾形箭头，悬停时从 `translateX(-3px)` 淡入到原位（300ms）。
+- 展开被 `overflow: hidden` 限制在按钮内部，按钮宽度与所在行在悬停前后完全不变，行内不会回流。
+- 浅色主题把展开色换成 `#684b1e`、标签保持 `#ffffff`；`:disabled` 时展开与箭头强制为 0，整体仍是 40% 透明。
+- 键盘焦点：`.btn` 统一 2px 黄铜描边、`outline-offset: 3px`，与导航一致；焦点不触发填充展开，避免误认已按下。
+- 动效随 `prefers-reduced-motion` 一起关闭，关闭后仍直接呈现最终配色。
+
+### 顶部导航
+
+- 七个入口（＋ 新建分析、分析工作台、知识库、任务记录、使用引导、设置、记忆与访问）统一为胶囊：`border-radius: 999px`、`padding: 8px 12px`、`gap: 4px`。
+- 悬停沿用按钮的圆点展开，填充色是 `--surface-3`（比主按钮克制）；当前视图用 `--brass-soft` 底 + `--brass` 字，替代原来的下划线。
+- 「＋ 新建分析」是导航里的主操作，直接复用主按钮那套：实心黄铜、`padding: 8px 22px`、同样的展开色和勾形箭头。
+- 761–1024px 之间收窄到 `padding: 8px 9px`、`gap: 2px`，七个标签在 861px 起也不会横向滚动；手机抽屉里保持既有横向滚动。
+- `.nav` 上下各留 6px 内边距：`overflow-x: auto` 会裁剪溢出，留白后 2px 焦点环不会被切掉。
+- 当前导航项在 `body.desktop-workbench` 下也曾被单独染成 `--ink`，现已与其它视图统一为 `--brass`。
+
 ## 不连后端预览
 
 ```powershell

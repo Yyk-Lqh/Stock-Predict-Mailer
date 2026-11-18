@@ -133,26 +133,53 @@ button { font: inherit; }
 .section-head .hint { margin-left: auto; }
 
 /* ---------- buttons ---------- */
+/* One press language for the whole console: secondary buttons lift on hover and
+   sink on press; primary actions are pills whose brass tint grows from a small dot
+   while a chevron steps in. Nothing moves outside the button, so hovering never
+   reflows the row it sits in. */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   padding: 8px 14px; border: 1px solid var(--rule-strong); border-radius: var(--radius-sm);
   background: var(--surface-2); color: var(--ink); font-size: 12.5px; cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
 }
 .btn:hover { background: var(--surface-3); border-color: rgba(255, 255, 255, 0.24); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn.primary {
-  background: var(--brass); border-color: var(--brass); color: #17130b; font-weight: 500;
+  position: relative; isolation: isolate; overflow: hidden;
+  padding: 8px 22px; border-radius: 999px; white-space: nowrap;
+  background: var(--brass); border-color: var(--brass); color: #17130b; font-weight: 600;
 }
-.btn.primary:hover { background: #d2b98c; border-color: #d2b98c; }
+/* The wash that fills the pill: it starts as a dot on the left and covers the
+   button on hover, ending on the same tone the old hover state used. */
+.btn.primary::before {
+  content: ""; position: absolute; z-index: -1; left: 18%; top: 42%; width: 6px; height: 6px;
+  border-radius: 999px; background: #d2b98c; opacity: 0;
+  transition: opacity 0.16s ease, left 0.3s ease, top 0.3s ease, width 0.3s ease, height 0.3s ease, border-radius 0.3s ease;
+}
+.btn.primary::after {
+  content: ""; position: absolute; right: 10px; top: 50%; width: 5px; height: 5px;
+  border-top: 1.4px solid currentColor; border-right: 1.4px solid currentColor; opacity: 0;
+  transform: translateY(-50%) rotate(45deg) translateX(-3px);
+  transition: opacity 0.2s ease 0.05s, transform 0.3s ease;
+}
+.btn.primary:hover::before { opacity: 1; left: 0; top: 0; width: 100%; height: 100%; border-radius: 0; }
+.btn.primary:hover::after { opacity: 0.85; transform: translateY(-50%) rotate(45deg) translateX(0); }
+.btn.primary:disabled::before, .btn.primary:disabled::after { opacity: 0; }
+.btn.primary:disabled:hover::before, .btn.primary:disabled:hover::after { opacity: 0; }
 .btn.quiet { border-color: transparent; background: none; color: var(--ink-2); padding: 6px 9px; }
 .btn.quiet:hover { background: var(--surface-2); color: var(--ink); }
 .btn.tiny { padding: 3px 9px; font-size: 11.5px; }
+.btn.tiny.primary { padding: 3px 18px; }
 .btn.danger { color: var(--danger); border-color: rgba(210, 96, 79, 0.4); background: transparent; }
 .btn.danger:hover { background: var(--danger-soft); border-color: var(--danger); }
 .btn:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {
   outline: 1px solid var(--brass); outline-offset: 2px;
 }
+/* Buttons carry the same thicker brass ring as the navigation, so the focus stop
+   is equally obvious on a pill and on a compact chip. */
+.btn:focus-visible { outline-width: 2px; outline-offset: 3px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* ---------- overview ---------- */
@@ -818,10 +845,25 @@ button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px soli
   --danger: #b23e32;
   --danger-soft: #fceeea;
 }
-.theme-switch { display: inline-flex; flex-shrink: 0; gap: 2px; padding: 3px; border: 1px solid var(--rule); border-radius: 7px; background: var(--void); }
-.theme-switch button { border: 0; border-radius: 4px; padding: 4px 10px; background: transparent; color: var(--ink-3); cursor: pointer; font-size: 11px; white-space: nowrap; }
-.theme-switch button:hover { color: var(--ink); }
-.theme-switch button[aria-pressed="true"] { color: var(--ink); background: var(--surface-3); }
+/* Theme: one orb in the top bar. Its material follows the page — pale on the
+   graphite theme, deep on the light one — and its two capsule eyes blink while
+   motion is welcome. A brass ring marks "跟随系统", so a followed preference and
+   a fixed one never look alike. */
+.theme-toggle { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent; cursor: pointer; }
+.theme-orb { position: relative; display: block; width: 20px; height: 20px; border-radius: 50%; background: #f4f4f5; box-shadow: inset 0 -2px 3px rgba(9, 9, 11, .16); transition: transform .16s ease, background-color .18s ease; }
+:root[data-theme="light"] .theme-orb { background: #1d2126; box-shadow: inset 0 -2px 3px rgba(0, 0, 0, .4), inset 0 2px 3px rgba(255, 255, 255, .14); }
+.theme-toggle:hover .theme-orb { transform: scale(1.08); }
+.theme-toggle:active .theme-orb { transform: scale(.94); }
+.theme-orb-eye { position: absolute; top: 31%; left: 30%; width: 15%; height: 32%; border-radius: 999px; background: #09090b; transform: translate(var(--gaze-x, 0px), var(--gaze-y, 0px)); transition: transform .16s ease; }
+.theme-orb-eye:nth-child(2) { left: 55%; }
+:root[data-theme="light"] .theme-orb-eye { background: #f4f4f5; }
+.theme-orb.is-blinking .theme-orb-eye { transform: translate(var(--gaze-x, 0px), var(--gaze-y, 0px)) scaleY(.14); }
+html[data-theme-mode="system"] .theme-toggle::after { content: ""; position: absolute; inset: 3px; border: 1px solid var(--brass-line); border-radius: 50%; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .theme-orb, .theme-orb-eye { transition: none; }
+  .theme-toggle:hover .theme-orb, .theme-toggle:active .theme-orb { transform: none; }
+}
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 /* Appearance panel: the same preference as the quick switch, spelled out. */
 .theme-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .theme-option { display: flex; align-items: flex-start; gap: 10px; padding: 14px 16px; border: 1px solid var(--rule); border-radius: var(--radius-sm); background: var(--surface-2); cursor: pointer; }
@@ -842,7 +884,7 @@ button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px soli
 :root[data-theme="light"] .btn.primary,
 :root[data-theme="light"] .chip.active,
 :root[data-theme="light"] .steps li[data-done="true"] .mark { color: #ffffff; }
-:root[data-theme="light"] .btn.primary:hover { background: #684b1e; border-color: #684b1e; }
+:root[data-theme="light"] .btn.primary::before { background: #684b1e; }
 :root[data-theme="light"] input::placeholder,
 :root[data-theme="light"] textarea::placeholder,
 :root[data-theme="light"] .filter-bar input[type="search"]::placeholder { color: #707986; }
@@ -862,8 +904,7 @@ button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px soli
 @media (max-width: 760px) {
   .workspace-bar { gap: 10px; }
   .workspace-bar > #workspace-title { min-width: 0; flex: 1; }
-  .theme-switch { margin-left: auto; }
-  .theme-switch button { padding-inline: 8px; }
+  .theme-toggle { margin-left: auto; }
 }
 :root[data-theme="light"] .check input:checked::after { border-color: #ffffff; }
 :root[data-theme="light"] .rail .seg[data-status="running"] { background: var(--brass-soft); }
@@ -946,9 +987,47 @@ body[data-view="analysis"] .wrap { padding-top: 24px; }
 .topbar { position: sticky; inset: auto; top: 0; width: 100%; height: var(--navigation-height); padding: 0 24px; flex-direction: row; align-items: center; gap: 20px; border-right: 0; border-bottom: 1px solid var(--rule); transform: none; }
 .wordmark { flex: none; padding: 0; }
 .wordmark i { display: none; }
-.nav { flex: 1; min-width: 0; width: auto; flex-direction: row; align-items: center; gap: 3px; overflow-x: auto; scrollbar-width: thin; }
+.nav { flex: 1; min-width: 0; width: auto; flex-direction: row; align-items: center; gap: 4px; padding: 6px 0; overflow-x: auto; scrollbar-width: thin; }
 .nav button { width: auto; flex: none; white-space: nowrap; padding: 8px 10px; }
 .nav .new-analysis { margin: 0 8px 0 0; }
+/* The top tabs use the same press language as the buttons: a quiet pill that fills
+   from a dot, a brass tint on the current view, and the CTA keeps the solid wash
+   plus the chevron. Tabs never resize on hover, so the row does not jitter. */
+.nav button {
+  position: relative; isolation: isolate; overflow: hidden;
+  width: auto; flex: none; white-space: nowrap;
+  margin: 0; padding: 8px 12px; border: 0; border-bottom: 0; border-radius: 999px;
+  background: none; color: var(--ink-3); font-size: 12.5px; cursor: pointer;
+  transition: color 0.15s ease;
+}
+.nav button::before {
+  content: ""; position: absolute; z-index: -1; left: 20%; top: 42%; width: 5px; height: 5px;
+  border-radius: 999px; background: var(--surface-3); opacity: 0;
+  transition: opacity 0.16s ease, left 0.28s ease, top 0.28s ease, width 0.28s ease, height 0.28s ease, border-radius 0.28s ease;
+}
+.nav button:hover { color: var(--ink); background: none; }
+.nav button:hover::before { opacity: 1; left: 0; top: 0; width: 100%; height: 100%; border-radius: 999px; }
+.nav button.active { background: var(--brass-soft); color: var(--brass); border: 0; }
+.nav button.active::before { background: var(--brass-line); }
+.nav .new-analysis { padding: 8px 22px; border: 0; background: var(--brass); color: #17130b; font-weight: 600; }
+.nav .new-analysis::before { background: #d2b98c; }
+.nav .new-analysis::after {
+  content: ""; position: absolute; right: 10px; top: 50%; width: 5px; height: 5px;
+  border-top: 1.4px solid currentColor; border-right: 1.4px solid currentColor; opacity: 0;
+  transform: translateY(-50%) rotate(45deg) translateX(-3px);
+  transition: opacity 0.2s ease 0.05s, transform 0.3s ease;
+}
+.nav .new-analysis:hover { color: #17130b; }
+.nav .new-analysis:hover::after { opacity: 0.85; transform: translateY(-50%) rotate(45deg) translateX(0); }
+:root[data-theme="light"] .nav .new-analysis { color: #ffffff; }
+:root[data-theme="light"] .nav .new-analysis::before { background: #684b1e; }
+/* Between the phone drawer and the full top bar the seven pills stop fitting at
+   their roomy padding; tightening them keeps every tab visible without scrolling. */
+@media (min-width: 761px) and (max-width: 1024px) {
+  .nav { gap: 2px; }
+  .nav button { padding: 8px 9px; }
+  .nav .new-analysis { padding: 8px 18px; }
+}
 .sidebar-history { position: relative; flex: none; overflow: visible; }
 .sidebar-history > summary { cursor: pointer; padding: 8px 10px; color: var(--ink-2); white-space: nowrap; border: 1px solid var(--rule-strong); border-radius: 5px; }
 .sidebar-history[open] > summary { color: var(--ink); background: var(--surface-3); }
@@ -1052,16 +1131,11 @@ body :where(*):not(:where(.topbar, .topbar *, #analysis-composer, #analysis-comp
 }
 .analysis-tabs button[aria-selected="true"], .office-role-state.selected,
 .office-role-button[aria-pressed="true"] { background: var(--brass-soft); }
-.topbar .theme-switch { gap: 2px; padding: 0; border: 0; background: transparent; margin: 0; }
-.topbar .theme-switch button { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 7px; color: var(--ink-3); }
-.topbar .theme-switch button:hover { background: var(--surface-2); color: var(--ink); }
-.topbar .theme-switch button[aria-pressed="true"] { background: var(--brass-soft); color: var(--brass); }
-.theme-switch svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.topbar .theme-toggle { margin: 0; }
 @media (max-width: 760px) {
   .topbar, body.sidebar-open .topbar { grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 8px; }
-  .topbar .theme-switch { grid-column: 2; grid-row: 1; }
+  .topbar .theme-toggle { grid-column: 2; grid-row: 1; margin-left: 0; }
   .topbar .sidebar-history { grid-column: 3; }
-  .topbar .theme-switch button { width: 30px; height: 34px; }
   .topbar .nav { justify-content: flex-start; }
 }
 
@@ -1304,6 +1378,7 @@ body[data-view="analysis"].inspector-visible #analysis-composer { left: var(--do
   #desktop-focus-copy { max-width: 52ch; color: var(--ink-2); font-size: 14px; line-height: 1.8; margin-bottom: 20px; }
   .desktop-focus-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
   .desktop-focus-actions .btn { min-height: 38px; padding: 8px 16px; font-size: 13px; }
+  .desktop-focus-actions .btn.primary { padding-right: 22px; }
   .desktop-sample-note { margin: 12px 0 0; max-width: 62ch; }
   .desktop-summary { max-width: 700px; margin: 26px auto 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 21px 28px; padding-top: 22px; border-top: 1px solid var(--rule-strong) !important; }
   .desktop-summary > div { min-width: 0; }
@@ -1316,7 +1391,7 @@ body[data-view="analysis"].inspector-visible #analysis-composer { left: var(--do
   .desktop-send-hint { margin-left: auto; font-size: 10px; color: var(--ink-3); white-space: nowrap; }
   #desktop-workflow button:focus-visible, #desktop-focus button:focus-visible,
   #desktop-feedback button:focus-visible { outline: 2px solid var(--brass); outline-offset: 4px; }
-  body.desktop-workbench .nav [aria-current="page"] { color: var(--ink); }
+  body.desktop-workbench .nav [aria-current="page"] { color: var(--brass); }
   body.desktop-workbench #analysis-pane-input > #analysis-data-status { color: var(--ink-2); }
   body.desktop-workbench #analysis-pane-input #prediction-editor > summary { color: var(--ink); font-size: 13px; }
   body.desktop-workbench .inspector-head h2 { font-size: 19px; }
@@ -1510,5 +1585,6 @@ body[data-view="analysis"].inspector-visible #analysis-composer { left: var(--do
   #desktop-focus-title { font-size: 22px; margin-bottom: 8px; }
   #desktop-focus-copy { font-size: 13px; margin-bottom: 12px; }
   .desktop-focus-actions .btn { min-height: 32px; padding: 6px 12px; }
+  .desktop-focus-actions .btn.primary { padding-right: 22px; }
   .desktop-summary { margin-top: 16px; padding-top: 14px; gap: 12px 22px; }
 }

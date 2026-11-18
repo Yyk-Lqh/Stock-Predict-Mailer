@@ -152,10 +152,12 @@ The [live integration record](docs/real-integration-validation.md) separates pro
 uv sync --all-extras --locked
 uv run ruff check src/stock_predict_mailer src/mcp_server tests scripts
 uv run python -m unittest discover -s tests -v
-uv run python scripts/build_console.py --check
+uv run python scripts/build_console.py --check --check-budget
 ```
 
 Tests use `unittest`. CI covers Linux and Windows, Python 3.11/3.13 full environments, and environments without research dependencies. Optional-dependency installation is required for the full suite. Keep generated `control/web/memory.js` synchronized using `scripts/build_console.py`.
+
+For one local entry point, run `uv run --locked --all-extras python scripts/check_desktop_delivery.py --full`. Omit `--full` for static checks. Each run stops on the first failure and keeps step logs and a JSON summary under the ignored `.tmp/desktop-delivery/` directory. See [desktop delivery validation](docs/desktop-delivery-validation.md) for isolated gstack browser fixtures, OS-privilege skips, and actual results.
 
 The distribution/CLI is `stock-predict-mailer`, the import package is `stock_predict_mailer`, and environment variables use `STOCK_PREDICT_MAILER_`. Follow the [contribution guide](CONTRIBUTING.md) for checks, naming, synthetic fixtures, and PR requirements.
 

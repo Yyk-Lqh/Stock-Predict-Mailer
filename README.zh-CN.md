@@ -152,10 +152,12 @@ uv run stock-predict-mailer-crawler-verify
 uv sync --all-extras --locked
 uv run ruff check src/stock_predict_mailer src/mcp_server tests scripts
 uv run python -m unittest discover -s tests -v
-uv run python scripts/build_console.py --check
+uv run python scripts/build_console.py --check --check-budget
 ```
 
 使用 `unittest`。CI 覆盖 Linux/Windows 的 Python 3.11/3.13 完整环境，以及不安装研究依赖的环境。全量测试需安装可选依赖。通过 `scripts/build_console.py` 同步生成的 `control/web/memory.js`。
+
+统一本地入口为 `uv run --locked --all-extras python scripts/check_desktop_delivery.py --full`；省略 `--full` 只执行静态检查。首个步骤失败后停止，逐步日志和 JSON 汇总保存在被忽略的 `.tmp/desktop-delivery/`。独立 gstack 浏览器夹具、系统权限跳过及实际结果见[桌面交付验收](docs/desktop-delivery-validation.md)。
 
 发行名和命令为 `stock-predict-mailer`，导入名为 `stock_predict_mailer`，环境变量使用 `STOCK_PREDICT_MAILER_` 前缀。检查、命名、合成测试资料及 PR 要求见[贡献指南](CONTRIBUTING.md#chinese)。
 

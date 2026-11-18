@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
+from copy import deepcopy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -345,9 +346,13 @@ class OrchestrationTests(unittest.IsolatedAsyncioTestCase):
         self.f = Fixture()
         self.addCleanup(self.f.close)
         self.engine = Orchestrator(self.f.store)
+        # The mock prediction is stable only within one UTC hour.  Keep one
+        # validated input for this test instance so long-running tests cannot
+        # cross an hour boundary between repeated execute calls.
+        self.prediction = deepcopy(MockPredictionAdapter().fetch())
 
     async def run_task(self, complexity="complex", **fields):
-        request = self.engine.prepare({"prediction": MockPredictionAdapter().fetch(), "complexity": complexity, **fields})
+        request = self.engine.prepare({"prediction": deepcopy(self.prediction), "complexity": complexity, **fields})
         return await self.engine.execute("test-task", request)
 
     def result(self, task):
@@ -498,11 +503,23 @@ class OrchestrationTests(unittest.IsolatedAsyncioTestCase):
         self.f.settings["mail"].update(transport="mcp", recipient_allowlist=["preview@example.invalid"], allow_synthetic=True,
                                         mcp_server_id=m["id"], mcp_tool="send_email")
         self.f.store.save_settings(self.f.settings)
-        result = self.result(await self.run_task(notify=True, recipient="preview@example.invalid"))
-        self.assertEqual(result["mail"]["status"], "simulated")
-        self.assertTrue(result["analysis"]["facts"])
-        self.assertEqual(len(result["children"]), 3)
-        again = self.result(await self.run_task(notify=True, recipient="preview@example.invalid"))
+        original_call = self.engine.mcp.call
+        cached_context = None
+
+        async def reuse_verified_context(sid, name, arguments, **kwargs):
+            nonlocal cached_context
+            if name == "get_context":
+                if cached_context is None:
+                    cached_context = await original_call(sid, name, arguments, **kwargs)
+                return deepcopy(cached_context)
+            return await original_call(sid, name, arguments, **kwargs)
+
+        with patch.object(self.engine.mcp, "call", side_effect=reuse_verified_context):
+            result = self.result(await self.run_task(notify=True, recipient="preview@example.invalid"))
+            self.assertEqual(result["mail"]["status"], "simulated")
+            self.assertTrue(result["analysis"]["facts"])
+            self.assertEqual(len(result["children"]), 3)
+            again = self.result(await self.run_task(notify=True, recipient="preview@example.invalid"))
         self.assertEqual(again["mail"]["id"], result["mail"]["id"])
 
     async def test_mcp_marker_recovers_as_uncertain_without_resend(self):

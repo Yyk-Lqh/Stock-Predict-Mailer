@@ -987,9 +987,47 @@ body[data-view="analysis"] .wrap { padding-top: 24px; }
 .topbar { position: sticky; inset: auto; top: 0; width: 100%; height: var(--navigation-height); padding: 0 24px; flex-direction: row; align-items: center; gap: 20px; border-right: 0; border-bottom: 1px solid var(--rule); transform: none; }
 .wordmark { flex: none; padding: 0; }
 .wordmark i { display: none; }
-.nav { flex: 1; min-width: 0; width: auto; flex-direction: row; align-items: center; gap: 3px; overflow-x: auto; scrollbar-width: thin; }
+.nav { flex: 1; min-width: 0; width: auto; flex-direction: row; align-items: center; gap: 4px; padding: 6px 0; overflow-x: auto; scrollbar-width: thin; }
 .nav button { width: auto; flex: none; white-space: nowrap; padding: 8px 10px; }
 .nav .new-analysis { margin: 0 8px 0 0; }
+/* The top tabs use the same press language as the buttons: a quiet pill that fills
+   from a dot, a brass tint on the current view, and the CTA keeps the solid wash
+   plus the chevron. Tabs never resize on hover, so the row does not jitter. */
+.nav button {
+  position: relative; isolation: isolate; overflow: hidden;
+  width: auto; flex: none; white-space: nowrap;
+  margin: 0; padding: 8px 12px; border: 0; border-bottom: 0; border-radius: 999px;
+  background: none; color: var(--ink-3); font-size: 12.5px; cursor: pointer;
+  transition: color 0.15s ease;
+}
+.nav button::before {
+  content: ""; position: absolute; z-index: -1; left: 20%; top: 42%; width: 5px; height: 5px;
+  border-radius: 999px; background: var(--surface-3); opacity: 0;
+  transition: opacity 0.16s ease, left 0.28s ease, top 0.28s ease, width 0.28s ease, height 0.28s ease, border-radius 0.28s ease;
+}
+.nav button:hover { color: var(--ink); background: none; }
+.nav button:hover::before { opacity: 1; left: 0; top: 0; width: 100%; height: 100%; border-radius: 999px; }
+.nav button.active { background: var(--brass-soft); color: var(--brass); border: 0; }
+.nav button.active::before { background: var(--brass-line); }
+.nav .new-analysis { padding: 8px 22px; border: 0; background: var(--brass); color: #17130b; font-weight: 600; }
+.nav .new-analysis::before { background: #d2b98c; }
+.nav .new-analysis::after {
+  content: ""; position: absolute; right: 10px; top: 50%; width: 5px; height: 5px;
+  border-top: 1.4px solid currentColor; border-right: 1.4px solid currentColor; opacity: 0;
+  transform: translateY(-50%) rotate(45deg) translateX(-3px);
+  transition: opacity 0.2s ease 0.05s, transform 0.3s ease;
+}
+.nav .new-analysis:hover { color: #17130b; }
+.nav .new-analysis:hover::after { opacity: 0.85; transform: translateY(-50%) rotate(45deg) translateX(0); }
+:root[data-theme="light"] .nav .new-analysis { color: #ffffff; }
+:root[data-theme="light"] .nav .new-analysis::before { background: #684b1e; }
+/* Between the phone drawer and the full top bar the seven pills stop fitting at
+   their roomy padding; tightening them keeps every tab visible without scrolling. */
+@media (min-width: 761px) and (max-width: 1024px) {
+  .nav { gap: 2px; }
+  .nav button { padding: 8px 9px; }
+  .nav .new-analysis { padding: 8px 18px; }
+}
 .sidebar-history { position: relative; flex: none; overflow: visible; }
 .sidebar-history > summary { cursor: pointer; padding: 8px 10px; color: var(--ink-2); white-space: nowrap; border: 1px solid var(--rule-strong); border-radius: 5px; }
 .sidebar-history[open] > summary { color: var(--ink); background: var(--surface-3); }
@@ -1353,7 +1391,7 @@ body[data-view="analysis"].inspector-visible #analysis-composer { left: var(--do
   .desktop-send-hint { margin-left: auto; font-size: 10px; color: var(--ink-3); white-space: nowrap; }
   #desktop-workflow button:focus-visible, #desktop-focus button:focus-visible,
   #desktop-feedback button:focus-visible { outline: 2px solid var(--brass); outline-offset: 4px; }
-  body.desktop-workbench .nav [aria-current="page"] { color: var(--ink); }
+  body.desktop-workbench .nav [aria-current="page"] { color: var(--brass); }
   body.desktop-workbench #analysis-pane-input > #analysis-data-status { color: var(--ink-2); }
   body.desktop-workbench #analysis-pane-input #prediction-editor > summary { color: var(--ink); font-size: 13px; }
   body.desktop-workbench .inspector-head h2 { font-size: 19px; }

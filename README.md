@@ -135,12 +135,16 @@ Version **0.5.0**. This is a working local tool, not a hosted service. The table
 | Area | Status | Notes |
 | --- | --- | --- |
 | CLI, console, reports | Available | Mock input, deterministic analysis, local `.eml` delivery |
+| Desktop workbench | Locally verified | Focus/hall views, report evidence navigation, draft protection, and persistent retry feedback |
+| Real model and project MCP | Bounded integration verified | DeepSeek Flash structured output and project MCP discovery/read-only status passed with synthetic inputs; other profiles and modes need their own validation |
 | Forecast archive and scoring | Available | Official receipts only through the explicit CLI command |
 | Private knowledge and memory | Available with optional extras | Embeddings and semantic cleaning are configured separately |
-| Mail delivery | Simulated by default | One real SMTP submission was verified; inbox placement, bounces, quotas, and bulk sending were not |
+| Mail delivery | Simulated by default | One QQ SMTP test was accepted and receipt confirmed by the user; deliverability, bounces, quotas, and bulk sending were not evaluated |
 | Market data | Display only | The securities hall relays public quotes for display; it is not a collection source for tasks |
 | Hosted multi-user use | Out of scope | No authentication layer beyond the local principal |
 | Branch protection | Not enforced yet | Review and merge rules are conventions until repository rulesets are enabled |
+
+The [live integration record](docs/real-integration-validation.md) separates provider responses, application budgets, SMTP submission, and user-confirmed receipt. Live credentials and workspace configuration are not bundled. Continuing SMTP operation requires local credential injection, explicit transport selection, and a service reload after backend changes.
 
 ## Development
 

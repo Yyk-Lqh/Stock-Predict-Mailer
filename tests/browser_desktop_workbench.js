@@ -16,6 +16,17 @@
   };
   assert(innerWidth > 760, 'Use desktop viewport');
   await wait(() => $('desktop-workflow') && $('workspace-health').textContent !== '正在连接', 'boot');
+  document.querySelector('.desktop-focus-toggle').click();
+  assert(document.querySelectorAll('[data-workflow-node]').length >= 9, 'Professional canvas must expose the real analysis stages');
+  assert(document.querySelector('#desktop-workflow-inspector').textContent.includes('当前状态'), 'Canvas must expose node runtime details');
+  assert(document.querySelector('#desktop-workflow-validation').textContent.includes('流程校验通过'), 'Default workflow must pass DAG validation');
+  checks.push('professional canvas renders default stages, inspector and validation state');
+  document.querySelector('[data-workflow-action="add"]').click();
+  assert(document.querySelectorAll('[data-workflow-node]').length === 10 && $('desktop-workflow-save').textContent.includes('*'), 'Canvas add must retain an unsaved editable node');
+  document.querySelector('[data-workflow-action="undo"]').click();
+  assert(document.querySelectorAll('[data-workflow-node]').length === 9, 'Canvas undo must restore the prior graph');
+  document.querySelector('[data-workflow-action="save"]').click();
+  checks.push('custom node add and undo preserve the current graph');
   $('new-analysis').click();
   await wait(() => $('conversation-id').value && !$('new-analysis').disabled, 'new conversation');
   assert($('desktop-result').disabled, 'Fresh workspace must not offer a report');
@@ -28,18 +39,18 @@
   document.querySelector('[data-view="analysis"]').click();
   checks.push('missing model leads to configuration; no fabricated report');
 
-  document.querySelector('[data-desktop-mode="hall"]').click();
+  document.querySelector('.desktop-hall-toggle').click();
   assert(!document.querySelector('.office-stage').inert && getComputedStyle(document.querySelector('.market-wall')).display !== 'none', 'Hall must remain interactive');
   assert(localStorage.getItem('stock_predict_mailer.desktop.view.v1') === 'hall', 'Hall preference not saved');
-  document.querySelector('[data-desktop-mode="focus"]').click();
+  document.querySelector('.desktop-focus-toggle').click();
   assert(document.querySelector('.office-stage').inert && getComputedStyle(document.querySelector('.market-wall')).display === 'none', 'Hidden hall must not remain interactive');
   checks.push('view choice persists and hidden scene has no interactive targets');
 
-  $('desktop-data').focus(); $('desktop-data').click();
+  $('desktop-focus-data').focus(); $('desktop-focus-data').click();
   assert($('prediction-editor').open && document.activeElement.id === 'p-subject', 'Data entry must open and focus required fields');
   assert(document.querySelector('.inspector-head h2').textContent === '分析资料', 'Incorrect input panel title');
   $('report-close').click();
-  assert(document.activeElement.id === 'desktop-data', 'Close must return focus to visible data entry');
+  assert(document.activeElement.id === 'desktop-focus-data', 'Close must return focus to visible data entry');
   checks.push('one-click required fields, contextual title and focus return');
 
   set('conversation-message', '桌面优化验收：核对风险，保留我的问题。');

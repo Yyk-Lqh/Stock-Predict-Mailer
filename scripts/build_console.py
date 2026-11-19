@@ -25,10 +25,12 @@ if __name__ == "__main__":
     elif not {"--stats", "--check-budget"}.intersection(sys.argv):
         output.write_text(expected, encoding="utf-8", newline="\n")
     if {"--stats", "--check-budget"}.intersection(sys.argv):
-        assets = {name: {"bytes": len(expected.encode("utf-8")) if name == "memory.js" else (WEB / name).stat().st_size,
-                         "budget": limit} for name, limit in BUDGETS.items()}
-        for values in assets.values():
-            values["within_budget"] = values["bytes"] <= values["budget"]
+        assets = {}
+        for name, limit in BUDGETS.items():
+            # Count repository LF endings consistently across Git checkout settings.
+            content = expected if name == "memory.js" else (WEB / name).read_text(encoding="utf-8")
+            size = len(content.encode("utf-8"))
+            assets[name] = {"bytes": size, "budget": limit, "within_budget": size <= limit}
         modules = [{"name": name, "bytes": len((WEB / "modules" / f"{name}.js").read_text(encoding="utf-8").encode("utf-8"))}
                    for name in MODULES]
         if "--stats" in sys.argv:

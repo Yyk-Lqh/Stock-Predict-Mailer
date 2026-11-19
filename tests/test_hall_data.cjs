@@ -1,7 +1,10 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const c=vm.createContext({});vm.runInContext(fs.readFileSync('src/stock_predict_mailer/control/web/modules/hall-data.js','utf8'),c);
 const {Feed,normalize,seat}=c.PonyHallData,feed=new Feed();
-assert.equal(feed.connection,'demo');assert.equal(feed.market.as_of,null,'static sample never claims a live timestamp');assert.equal(feed.market.candles.length,0,'demo does not invent OHLC');
+assert.equal(feed.connection,'down');
+assert.equal(feed.market.demo,false);
+assert.equal(feed.market.as_of,null,'missing data has no timestamp');
+for(const key of ['quotes','history','candles'])assert.equal(feed.market[key].length,0,'missing data cannot populate '+key);
 const live={source:'Authorized fixture feed',as_of:'2026-11-13T02:03:04Z',timezone:'Asia/Shanghai',quotes:[{symbol:'FIXTURE',name:'测试标的',last:10.5,change_pct:-.5}],history:[{at:'2026-11-12',value:10},{at:'2026-11-13',value:10.5}],candles:[{at:'2026-11-13',open:10,high:11,low:9,close:10.5,volume:123}]};
 for(const invalid of [{...live,source:''},{...live,as_of:'invalid'},{...live,quotes:[{...live.quotes[0],last:NaN}]},{...live,quotes:[live.quotes[0],live.quotes[0]]},{...live,candles:[{...live.candles[0],high:9}]},{...live,timezone:'not-a-zone'}])assert.throws(()=>normalize(invalid));
 feed.receive(live);const snapshot=feed.market;assert.equal(feed.connection,'connected');assert.equal(snapshot.demo,false);assert.equal(snapshot.candles[0].volume,123);
@@ -9,7 +12,7 @@ assert.equal(feed.status(feed.receivedAt+91000),'stale','no new snapshot eventua
 const relayed={...live,session:'delayed',omitted:2},relayFeed=new Feed();relayFeed.receive(relayed);
 assert.equal(relayFeed.market.session,'delayed','relay session reaches the wall');assert.equal(relayFeed.market.omitted,2);
 const relaySnapshot=relayFeed.market;relayFeed.stale();assert.equal(relayFeed.status(),'stale','relay silence is visible');assert.equal(relayFeed.market,relaySnapshot,'stale keeps the last snapshot');
-assert.equal(new Feed().market.session,undefined,'demo never claims a live session');
+assert.equal(new Feed().market.session,undefined,'missing data has no market session');
 assert.equal(normalize({...live,session:'invented'}).session,undefined,'unknown session values are dropped');
 feed.disconnect();assert.equal(feed.connection,'disconnected');assert.equal(feed.market,snapshot,'disconnect retains exact last quote snapshot and time');
 assert.throws(()=>feed.receive({...live,source:''}));assert.equal(feed.market,snapshot,'invalid update cannot replace last data');
@@ -30,4 +33,4 @@ for(const desktop of [true,false]){
  assert.equal(find('main').x,desktop?525:220);assert.equal(find('mail').x,desktop?830:220);assert.equal(find('prediction').x,desktop?220:525);
  assert.equal(context.PonyFloor.hall,desktop);
 }
-console.log('Hall data passed: labelled demo, validated source/time/OHLC, stale preservation, genuine task state and unchanged mobile layout.');
+console.log('Hall data passed: empty feed, validated source/time/OHLC, stale preservation, genuine task state and unchanged mobile layout.');

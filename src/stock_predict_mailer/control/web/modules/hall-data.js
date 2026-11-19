@@ -5,12 +5,7 @@ globalThis.PonyHallData=(()=>{
   const units={trading_days:'交易日',calendar_days:'自然日',hours:'小时'};
   const horizon=p=>p&&Number.isFinite(p.value)?`${p.value} ${units[p.unit]||p.unit||''}`:'未提供周期';
   const number=value=>finite(value)?value.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2}):'—';
-  const demo=()=>({demo:true,source:'内置静态示例',as_of:null,timezone:null,quotes:[
-    {symbol:'DEMO.SH',name:'沪市综合 · DEMO',last:3268.42,change_pct:.68},
-    {symbol:'DEMO.SZ',name:'深市综合 · DEMO',last:10482.16,change_pct:-.42},
-    {symbol:'DEMO.GROW',name:'成长板块 · DEMO',last:2186.75,change_pct:1.26},
-    {symbol:'DEMO.WATCH',name:'自选组合 · DEMO',last:1286.30,change_pct:.35}
-  ],history:[3228,3235,3231,3247,3240,3255,3248,3251,3241,3259,3254,3261,3258,3270,3264,3268.42].map((value,i)=>({at:new Date(Date.UTC(2026,0,5+i)).toISOString(),value})),candles:[]});
+  const demo=()=>({demo:false,source:'未连接行情源',as_of:null,timezone:null,quotes:[],history:[],candles:[]});
   function normalize(raw){
     if(!raw||typeof raw.source!=='string'||!raw.source.trim()||!Number.isFinite(Date.parse(raw.as_of)))throw Error('行情必须提供来源与有效更新时间');
     if(!Array.isArray(raw.quotes)||raw.quotes.length<1||raw.quotes.length>50)throw Error('行情须包含1至50个标的');
@@ -31,7 +26,7 @@ globalThis.PonyHallData=(()=>{
     return{demo:false,source:raw.source.trim().slice(0,100),as_of:new Date(raw.as_of).toISOString(),timezone:raw.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone,quotes,history,candles,...session?{session}:{},...omitted?{omitted}:{}};
   }
   class Feed{
-    constructor(){this.market=demo();this.connection='demo';this.resetTask();}
+    constructor(){this.market=demo();this.connection='down';this.resetTask();}
     receive(raw){const snapshot=normalize(raw);this.market=snapshot;this.connection='connected';this.receivedAt=Date.now();return snapshot;}
     disconnect(){if(!this.market.demo)this.connection='disconnected';}
     stale(){if(this.connection==='connected')this.connection='stale';}

@@ -19,7 +19,7 @@ globalThis.PonyHall=(()=>{
       const mode=snapshot.demo?'演示行情':status==='connected'?(snapshot.session==='live'?'实时行情':'最近快照'):status==='stale'?'行情暂未更新':'行情连接中断';
       find('.market-mode').textContent=mode;
       wall.dataset.marketState=status;
-      const stamp=snapshot.as_of?new Date(snapshot.as_of).toLocaleString('zh-CN',{hour12:false,timeZone:snapshot.timezone}):'静态示例 · 未连接行情服务';
+      const stamp=snapshot.as_of?new Date(snapshot.as_of).toLocaleString('zh-CN',{hour12:false,timeZone:snapshot.timezone}):'未获取实时快照 · 不显示模拟行情';
       find('.market-provenance').textContent=`${snapshot.source} · ${stamp}${snapshot.timezone?' · '+snapshot.timezone:''}${snapshot.omitted?' · '+snapshot.omitted+' 个标的未返回':''}`;
       const quotes=find('.market-quotes');quotes.replaceChildren();
       for(const q of snapshot.quotes.slice(0,5)){

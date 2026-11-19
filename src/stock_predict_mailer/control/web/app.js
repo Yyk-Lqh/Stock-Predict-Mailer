@@ -1561,6 +1561,7 @@ function showTask(task) {
   window.Workbench?.task(task);
   window.PonyOffice?.sync(task, null);
   window.DesktopReport?.render(task);
+  window.DesktopWorkbench?.observe(task);
   return finished;
 }
 
@@ -1736,6 +1737,7 @@ function showEvent(event) {
     text(figure, 'figcaption', event.caption, 'hint');
     $('chart-preview').append(figure);
   }
+  window.DesktopWorkbench?.event(event);
 }
 async function poll(id) {
   if (window.DesktopPoll?.active()) return window.DesktopPoll.request(id);

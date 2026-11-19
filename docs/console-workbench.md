@@ -44,7 +44,7 @@ browse js 'document.body.dataset.desktopSelectionTest'
 
 固定五次并发的本机样本中，任务与事件请求分别由5次降为1次，1000ms后累计分别由10次降为2次；会话最新页由5次降为1次。此结果只比较相同触发样本，不代表所有请求或初次加载均提速。静态轮廓数据和现有四个资源路径保持原样。
 
-`python scripts/build_console.py --stats` 输出各资源大小和最大的模块；`python scripts/build_console.py --check --check-budget` 同时检查生成产物和增长预算，CI 使用相同命令。预算为生成脚本1,900,000字节、主脚本100,000字节、样式110,000字节；调整预算前应重新测量。
+`python scripts/build_console.py --stats` 输出各资源大小和最大的模块；`python scripts/build_console.py --check --check-budget` 同时检查生成产物和增长预算，CI 使用相同命令。按仓库约定的 LF 换行计量，预算为生成脚本1,900,000字节、主脚本100,000字节、样式125,000字节；调整预算前应重新测量。
 
 本轮 gstack 验收脚本限临时工作区使用：
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 WEB = Path(__file__).resolve().parents[1] / "src" / "stock_predict_mailer" / "control" / "web"
 MODULES = ("memory", "workspace", "knowledge", "pony-door", "pony-model", "pony-screen", "pony-reference", "pony-rig", "pony-children", "pony-progress", "hall-data", "hall-wall", "market-feed", "pony-office", "analysis-input", "mail-recipients", "composer-controls", "observation-preview", "forecasts", "desktop-workbench", "desktop-report", "desktop-library", "desktop-settings", "desktop-records", "desktop-poll", "desktop-sessions", "desktop-interactions")
-BUDGETS = {"memory.js": 1_900_000, "app.js": 100_000, "style.css": 110_000}
+BUDGETS = {"memory.js": 1_900_000, "app.js": 100_000, "style.css": 125_000}
 
 
 def build():

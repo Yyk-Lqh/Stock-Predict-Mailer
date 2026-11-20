@@ -1,4 +1,5 @@
 import csv
+import importlib.util
 import io
 import json
 import tempfile
@@ -124,6 +125,36 @@ class WriteTests(unittest.TestCase):
                 clock=clock_at(), fetch=source(*payload))
             rows = list(csv.DictReader(io.StringIO(output.read_text(encoding="utf-8"))))
         self.assertEqual([row["date"] for row in rows], ["2026-11-18", "2026-11-19", "2026-11-18", "2026-11-19"])
+
+
+    def test_a_backfill_without_the_flag_warns_about_available_at(self):
+        _, provenance = collect(("sh.600519",), date(2026, 11, 2), date(2026, 11, 6),
+                                clock=clock_at(day=20), fetch=source(bar("2026-11-06")))
+        self.assertEqual(len(provenance["warnings"]), 1)
+        self.assertIn("--assume-session-close", provenance["warnings"][0])
+
+    def test_a_daily_fetch_right_after_the_close_does_not_warn(self):
+        _, provenance = collect(("sh.600519",), date(2026, 11, 18), date(2026, 11, 19),
+                                clock=clock_at(day=20), fetch=source(bar("2026-11-19")))
+        self.assertEqual(provenance["warnings"], [])
+
+
+@unittest.skipUnless(importlib.util.find_spec("pyarrow"), "需要 research 额外依赖（pyarrow）")
+class SnapshotSeamTests(unittest.TestCase):
+    def test_a_collected_csv_becomes_a_snapshot_unchanged(self):
+        from stock_predict_mailer.core import Config
+        from stock_predict_mailer.data import import_csv
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            output = root / "bars.csv"
+            run("sh.600519", "2026-11-18", "2026-11-19", output,
+                clock=clock_at(), fetch=source(bar("2026-11-19")))
+            summary = import_csv(Config(root), output)
+            self.assertTrue((root / "snapshots" / summary["snapshot_id"]).is_dir())
+        self.assertEqual(summary["row_count"], 1)
+        self.assertEqual(summary["security_count"], 1)
+        self.assertEqual(summary["sources"], ["market_eastmoney"])
 
 
 class CliTests(unittest.TestCase):

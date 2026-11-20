@@ -87,6 +87,10 @@ def collect(symbol_ids, first, last, *, source="market_eastmoney", timeout=8.0,
     if fetched_at.tzinfo is None:
         raise FetchError("取数时间必须带时区")
     rows, seen = [], set()
+    warnings = []
+    if not assume_session_close and last < fetched_at.date() - timedelta(days=1):
+        warnings.append(f"区间止于 {last}，但 available_at 记为取数时间 {fetched_at.date()}：这批数据只能用于"
+                        f"晚于该时间的截止点；若要回溯历史，请加 --assume-session-close 并接受其假设")
     for symbol_id in symbol_ids:
         market, code = SECURITY.match(symbol_id).groups()
         try:
@@ -123,6 +127,7 @@ def collect(symbol_ids, first, last, *, source="market_eastmoney", timeout=8.0,
         "rows": len(rows), "first_date": rows[0]["date"], "last_date": rows[-1]["date"],
         "available_at": "session_close" if assume_session_close else "fetched",
         "price_basis": "unadjusted",
+        "warnings": warnings,
         "timeout_seconds": timeout,
     }
     return rows, provenance

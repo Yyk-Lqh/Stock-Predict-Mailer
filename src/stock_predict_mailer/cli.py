@@ -225,6 +225,8 @@ def main(argv=None):
 
             result = bars_fetch.run(args.symbols, args.start, args.end, args.output, source=args.source,
                                     timeout=args.timeout, assume_session_close=args.assume_session_close)
+            for warning in result["warnings"]:
+                print(f"警告：{warning}", file=sys.stderr)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         cfg = load(args.config)

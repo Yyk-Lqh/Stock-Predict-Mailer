@@ -4,7 +4,7 @@
 
 ### 新增
 
-- 行情采集端 `bars-fetch`：从已声明的行情源按日期区间取日线，写出《数据契约》要求的九字段 CSV 与来源记录。`available_at` 默认写真实取数时间，历史回补可用 `--assume-session-close` 改写当日 18:00 并在来源记录中标注；当日未收盘、缺行、区间外日期、OHLC 不自洽、同标的同日重复一律停止写入。
+- 行情采集端 `bars-fetch`：从已声明的行情源按日期区间取日线，写出《数据契约》要求的九字段 CSV 与来源记录。`available_at` 默认写真实取数时间，历史回补可用 `--assume-session-close` 改写当日 18:00 并在来源记录中标注；当日未收盘、缺行、区间外日期、OHLC 不自洽、同标的同日重复一律停止写入。回补却未加该开关时会在 stderr 与来源记录里警告：这批数据只适用于晚于取数时间的截止点。
 - 行情源新增 `bars` 能力，东方财富实现该能力（`fqt=0` 不复权——复权由本地 `actions-import` 因子换算，避免二次复权）；`plugins-check` 会校验声明了能力却没有实现的源。
 - 插件系统第一版：三个结构匹配的扩展契约（行情源、报告渲染、通知渠道）、类定义期校验的 manifest 与静态白名单注册表。只接受表内 id，不扫目录、不读 entry points、不读环境变量或配置路径。
 - `plugins-list` 只读列出各插件的用途、声明能力、可选依赖与可用状态；不联网，也不需要配置文件。
@@ -19,6 +19,10 @@
 - `plugins-list` 与 `plugins-check` 的每项增加 `module` 与 `module_digest`。
 - 通知渠道**未**插件化：`mail_core/transports.py` 已有结构匹配的 `Transport` Protocol 与对 `transport` 方式的显式校验，而三个实现都需要按消息上下文构造，硬套 manifest 只会多一层工厂壳。理由记在设计文档第 10 节。
 - 插件失败一律显式报错并返回 `PLUGIN_*` 错误码：未声明的 id、用途不符、接口版本不符、声明能力未实现、缺可选依赖，都不降级、不跳过。
+
+### 修复
+
+- 自采文档的依赖命令：`import-csv`/`update-bars` 用 pyarrow 写 Parquet，属于 `research` extra，原文只写 `uv sync --extra trees`，照做会在导入时报缺模块。改为 `--extra research --extra trees` 并注明用途。
 
 ### 文档
 

@@ -40,6 +40,11 @@ def main(argv=None) -> int:
     update.add_argument("--allow-stale", action="store_true", help="Record a stale update instead of refusing it")
     update.add_argument("--synthetic", action="store_true")
     update.add_argument("--market", default="unknown", help="Recorded in provenance for later review")
+    audit = sub.add_parser("bars-audit", help="核对已采集日线：重复、可用时间、缺失与跳空；只报告事实")
+    audit.add_argument("path", type=Path)
+    audit.add_argument("--market", help="对照认证日历的市场，如 CN；不填则按文件内日期计算缺失")
+    audit.add_argument("--threshold", type=float, default=0.11, help="列入待核对的单日变动幅度")
+    audit.add_argument("--limit", type=int, default=20, help="每类问题最多列多少条")
     sub.add_parser("update-history", help="List recorded incremental updates")
     research = sub.add_parser("research", help="Run SYNTHETIC-only purged research")
     research.add_argument("snapshot_id")
@@ -150,6 +155,12 @@ def main(argv=None) -> int:
             else:
                 result = exchange_calendar.import_actions(cfg, args.path, args.source)
             print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "bars-audit":
+        from .bars_audit import audit
+
+        report = audit(cfg, args.path, market=args.market, threshold=args.threshold, limit=args.limit)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report["ok"] else 2
     elif args.command in ("update-bars", "update-history"):
         from .marketdata import update_bars, update_history
         with tracked_run(cfg, args.command):

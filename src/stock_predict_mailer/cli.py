@@ -15,6 +15,7 @@ from .agent_service.mail import MailService
 from .agent_service.reporting import save_report
 from .cli_io import utf8_console
 from .naming import COMMAND, PROJECT_NAME, SUMMARY_ZH, banner
+from .plugins.errors import PluginError
 
 MANIFEST_COLUMNS = "path,logical,source,document_date,available_date,valid_to,companies,industries,topics,stock_codes"
 
@@ -128,6 +129,9 @@ def main(argv=None):
     doctor.add_argument("--port", type=int, default=8767)
     doctor.add_argument("--crawler-workspace", type=Path)
     doctor.add_argument("--skip-port-check", action="store_true")
+    sub.add_parser("plugins-list", help="列出内置插件白名单、声明能力与可选依赖状态；不联网")
+    plugin_check = sub.add_parser("plugins-check", help="体检插件依赖与行情源链，指出大厅能否启动；不联网")
+    plugin_check.add_argument("--market", type=Path, help="含 market.json 的目录；留空检查默认链")
     runtime = sub.add_parser("runtime", help="组件状态、显式后台启动、实例匹配停止与有界生命周期日志")
     runtime_sub = runtime.add_subparsers(dest="runtime_action", required=True)
     for name in ("status", "start", "stop", "logs"):
@@ -195,6 +199,17 @@ def main(argv=None):
             atomic_write(args.output, json.dumps(result, ensure_ascii=False, indent=2).encode("utf-8"))
             print(json.dumps(result, ensure_ascii=False))
             return 0
+        if args.command == "plugins-list":
+            from .plugins.registry import describe
+
+            print(json.dumps(describe(), ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "plugins-check":
+            from .plugins.doctor import check
+
+            report = check(args.market)
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0 if report["ok"] else 2
         cfg = load(args.config)
         if args.command == "forecast":
             from .agent_service.forecast_archive import ForecastArchive
@@ -371,6 +386,9 @@ def main(argv=None):
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if args.command == "mail-status" or result["status"] in ("submitted", "simulated") else 2
     except ServiceError as exc:
+        print(json.dumps(exc.as_dict(), ensure_ascii=False))
+        return 2
+    except PluginError as exc:
         print(json.dumps(exc.as_dict(), ensure_ascii=False))
         return 2
     except (OSError, sqlite3.Error):

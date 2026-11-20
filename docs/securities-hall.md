@@ -54,10 +54,13 @@ PonyOffice.hall.receive({
 ```json
 {"enabled": true, "refresh_seconds": 10,
  "instruments": [{"symbol": "sh000001", "name": "上证指数"},
-                 {"symbol": "sh600519", "name": "贵州茅台"}]}
+                 {"symbol": "sh600519", "name": "贵州茅台"}],
+ "sources": ["market_tencent", "market_sina"]}
 ```
 
-`symbol` 只接受 `sh`/`sz` 加六位数字，最多四个；文件无效时整体回退默认值，不部分生效。`enabled: false` 关闭中继，页面回到演示行情，浏览器测试桩用这种方式隔离外部网络。
+`symbol` 只接受 `sh`/`sz` 加六位数字，最多四个；`enabled`、`refresh_seconds`、`instruments` 写错会整体回退默认值，不部分生效。`sources` 是例外：它决定进程会联系哪些外部行情端点，写错直接报错——未知 id 抛 `PLUGIN_NOT_FOUND`，重复、非字符串、空列表或超过四个抛 `ValueError`。默认链固定为腾讯→新浪；**声明东方财富不会让它自动生效**，要启用就显式写进 `sources`，可用 id 见 `uv run stock-predict-mailer plugins-list`。选中的源里必须有一个能提供日线，否则概览图显式报错，而不是悄悄少一张图。`enabled: false` 关闭中继，页面回到演示行情，浏览器测试桩用这种方式隔离外部网络。
+
+启动时这份配置是严格的：写错会让控制台直接起不来，可以先用只读体检 `uv run stock-predict-mailer plugins-check --market data/agent-local` 确认（不联网，退出码 2 表示有问题）。运行中改动不用重启——下一次请求会重新读取文件；若新文件无效，则保留上一组行情源，并在接口的 `detail` 里写明原因，不会悄悄换成另一个源。
 
 - **缓存**：交易时段（工作日 09:10–15:10）5 秒，其余时间 5 分钟。多个标签页共用同一份快照，不会成倍请求上游。
 - **图**：概览走势用日线收盘画实线。K 线只在来源提供 OHLC 且点数不超过 20 时渲染——76px 高的条带画不下几十根蜡烛，密集序列改用收盘线。

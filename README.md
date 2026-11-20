@@ -141,6 +141,7 @@ Version **0.6.0**. This is a working local tool, not a hosted service. The table
 | Private knowledge and memory | Available with optional extras | Embeddings and semantic cleaning are configured separately |
 | Mail delivery | Simulated by default | One QQ SMTP test was accepted and receipt confirmed by the user; deliverability, bounces, quotas, and bulk sending were not evaluated |
 | Market data | Display only | The securities hall relays public quotes for display; it is not a collection source for tasks |
+| Plugin system | Quote sources and report renderers available | Static whitelist: Tencent/Sina form the default quote chain, Eastmoney is opt-in; `sources` reloads without a restart and a bad edit keeps the previous chain; reports record their renderers in `renderers.json`; `plugins-check` validates before startup; notification channels are contract-only |
 | Hosted multi-user use | Out of scope | No authentication layer beyond the local principal |
 | Branch protection | Not enforced yet | Review and merge rules are conventions until repository rulesets are enabled |
 

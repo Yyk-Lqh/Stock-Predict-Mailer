@@ -15,6 +15,8 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from ..plugins.errors import PluginError
+
 SHANGHAI = timezone(timedelta(hours=8))
 SYMBOL = re.compile(r"^(sh|sz)\d{6}$")
 TENCENT_QUOTE = "https://qt.gtimg.cn/q={symbols}"
@@ -28,6 +30,7 @@ DEFAULT_INSTRUMENTS = (
     ("sh000300", "沪深300"),
 )
 MAX_INSTRUMENTS = 4
+MAX_SOURCES = 4
 MAX_POINTS = 500
 KLINE_COUNT = 40
 LIVE_SECONDS = 180
@@ -164,8 +167,14 @@ def tencent_candles(symbol, timeout, count=KLINE_COUNT):
 
 
 def _settings(root):
-    """Read ``market.json`` from the workspace; invalid files fall back to the four indices."""
-    fallback = (DEFAULT_INSTRUMENTS, 10, True)
+    """Read ``market.json``; display knobs fall back, the source list does not.
+
+    Instruments, refresh and the on/off switch only change what is drawn, so a bad
+    value reverts to the four indices. ``sources`` decides which external endpoints
+    the process contacts, so it is returned raw and validated strictly by
+    :func:`_sources` — silently substituting a provider would be a surprise.
+    """
+    fallback = (DEFAULT_INSTRUMENTS, 10, True, None)
     if not root:
         return fallback
     try:
@@ -180,31 +189,66 @@ def _settings(root):
     refresh = raw.get("refresh_seconds", 10)
     if isinstance(refresh, bool) or not isinstance(refresh, int) or not 5 <= refresh <= 60:
         refresh = 10
+    sources = raw.get("sources")
     items = raw.get("instruments")
     if not isinstance(items, list) or not 1 <= len(items) <= MAX_INSTRUMENTS:
-        return (DEFAULT_INSTRUMENTS, refresh, enabled)
+        return (DEFAULT_INSTRUMENTS, refresh, enabled, sources)
     instruments, seen = [], set()
     for item in items:
         symbol = item.get("symbol") if isinstance(item, dict) else item
         label = item.get("name") if isinstance(item, dict) else None
         symbol = symbol.strip().lower() if isinstance(symbol, str) else ""
         if not SYMBOL.match(symbol) or symbol in seen:
-            return (DEFAULT_INSTRUMENTS, refresh, enabled)
+            return (DEFAULT_INSTRUMENTS, refresh, enabled, sources)
         seen.add(symbol)
         instruments.append((symbol, label.strip()[:60] if isinstance(label, str) and label.strip() else ""))
-    return (tuple(instruments), refresh, enabled)
+    return (tuple(instruments), refresh, enabled, sources)
+
+
+def _sources(raw):
+    """An explicit, validated source chain; ``None`` means the declared default."""
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or not 1 <= len(raw) <= MAX_SOURCES:
+        raise ValueError(f"market.json 的 sources 须为 1 到 {MAX_SOURCES} 个插件 id")
+    ids = []
+    for item in raw:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"market.json 的 sources 须为 1 到 {MAX_SOURCES} 个插件 id")
+        if item.strip() in ids:
+            raise ValueError(f"market.json 的 sources 重复：{item.strip()}")
+        ids.append(item.strip())
+    return tuple(ids)
+
+
+def source_chain(root=None):
+    """The validated source ids this workspace would use; ``None`` for the default chain."""
+    _, _, _, sources = _settings(root)
+    return _sources(sources)
+
+
+def _stamp(root):
+    """Cheap change detector for ``market.json``; ``None`` when the file is absent."""
+    if not root:
+        return None
+    try:
+        info = (Path(root) / "market.json").stat()
+    except OSError:
+        return None
+    return (info.st_mtime_ns, info.st_size)
 
 
 class MarketFeed:
     """One validated snapshot shared by every browser tab, refreshed on demand."""
 
     def __init__(self, root=None, fetchers=None, candles=None, timeout=TIMEOUT_SECONDS, clock=time.time):
-        self.instruments, self.refresh_seconds, self.enabled = _settings(root)
-        default = (("腾讯行情", tencent_quotes), ("新浪行情", sina_quotes))
-        self.fetchers = tuple(default if fetchers is None else fetchers) if self.enabled else ()
-        self.candles = candles or tencent_candles
+        self.root = root
         self.timeout = timeout
         self.clock = clock
+        self._custom = fetchers is not None or candles is not None
+        self._applied = _stamp(root)
+        self._rejected = None
+        self.reload_problem = ""
         self._lock = threading.Lock()
         self._snapshot = None
         self._retrieved = 0.0
@@ -212,6 +256,47 @@ class MarketFeed:
         self._candles_symbol = ""
         self._candles_at = 0.0
         self._candles_failed_at = 0.0
+        self._apply(fetchers, candles)
+
+    def _apply(self, fetchers=None, candles=None):
+        """Build the chain from the current file; a bad config raises at construction."""
+        self.instruments, self.refresh_seconds, self.enabled, raw = _settings(self.root)
+        self.sources = _sources(raw)
+        # Defaults come from the declared plugin table. A source whose optional
+        # extra is missing raises here instead of quietly shortening the chain.
+        if fetchers is None or candles is None:
+            from ..plugins.registry import market_candles, market_fetchers
+        if fetchers is None:
+            fetchers = market_fetchers(self.sources)
+        if candles is None:
+            candles = market_candles(self.sources)
+        self.fetchers = tuple(fetchers) if self.enabled else ()
+        self.candles = candles
+        if not self.enabled:
+            # A disabled relay must not keep showing the last quotes as if live.
+            self._snapshot, self._retrieved = None, 0.0
+
+    def sync_config(self):
+        """Apply a changed ``market.json``. Startup is strict, a live edit is not.
+
+        A rejected file keeps the previous chain and leaves a reason behind; it is
+        never replaced by a different provider the operator did not ask for.
+        """
+        if self._custom:
+            return False
+        stamp = _stamp(self.root)
+        if stamp == self._applied or stamp == self._rejected:
+            return False
+        try:
+            self._apply()
+        except (PluginError, ValueError) as exc:
+            self._rejected = stamp
+            self.reload_problem = f"新的 market.json 未被采用：{exc}；继续使用上一组行情源"
+            return False
+        self._applied, self._rejected, self.reload_problem = stamp, None, ""
+        # A different chain must not keep serving the old provider's snapshot.
+        self._retrieved, self._candles, self._candles_symbol, self._candles_at = 0.0, (), "", 0.0
+        return True
 
     def _ttl(self, now):
         local = datetime.fromtimestamp(now, SHANGHAI)
@@ -256,6 +341,7 @@ class MarketFeed:
         age = now - datetime.fromisoformat(snapshot["as_of"]).timestamp()
         snapshot["session"] = "live" if age <= LIVE_SECONDS else "delayed"
         body = {"status": status or snapshot["session"], "snapshot": snapshot, "refresh_seconds": self.refresh_seconds}
+        detail = "；".join(filter(None, (detail, self.reload_problem)))
         if detail:
             body["detail"] = detail
         return body
@@ -263,6 +349,7 @@ class MarketFeed:
     def payload(self, force=False):
         """Return ``{status, snapshot, refresh_seconds}``; never raises for provider failures."""
         with self._lock:
+            self.sync_config()
             now = self.clock()
             if self._snapshot is not None and not force and now - self._retrieved < self._ttl(now):
                 return self._decorate(now)
@@ -271,6 +358,6 @@ class MarketFeed:
             except Exception:
                 if self._snapshot is None:
                     return {"status": "unavailable", "snapshot": None, "refresh_seconds": self.refresh_seconds,
-                            "detail": "行情源不可用，尚未取得实时报价"}
+                            "detail": self.reload_problem or "行情源不可用，尚未取得实时报价"}
                 return self._decorate(now, "stale", "行情源暂时不可用，保留上一份快照")
             return self._decorate(now)

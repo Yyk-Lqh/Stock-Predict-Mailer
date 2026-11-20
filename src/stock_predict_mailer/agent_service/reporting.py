@@ -1,81 +1,37 @@
-"""Readable escaped HTML and plain text from the same structured result."""
+"""Readable escaped HTML and plain text from the same structured result.
+
+The formatters themselves live in ``plugins/builtin/report.py``; this module keeps
+the public entry points and the write path, so callers, frozen mail bodies and
+tests keep the same bytes. Each saved report also records which renderers and
+which module versions produced it — a report is a frozen artifact, and the rest
+of this project already hashes whatever it freezes.
+"""
 from __future__ import annotations
 
-from html import escape
-from zoneinfo import ZoneInfo
-
+from .. import __version__
 from ..core import atomic_write, write_json
-from .charts import chart_svg
-from .contracts import instant
-from .input_evidence import fingerprint, persist
+from .input_evidence import persist
+
+
+def render_with_provenance(analysis, timezone="Asia/Shanghai", *, charts="inline"):
+    """Both formats plus the declared renderers behind them."""
+    from ..plugins.registry import API_VERSION, identity, resolve
+
+    view = {"analysis": analysis, "timezone": timezone, "charts": charts}
+    text_plugin = resolve("report_text", kind="report_renderer")
+    html_plugin = resolve("report_html", kind="report_renderer")
+    text = text_plugin.render(view).decode("utf-8")
+    html = html_plugin.render(view).decode("utf-8")
+    provenance = {"plugin_api_version": API_VERSION, "release": __version__,
+                  "renderers": [{"format": "text", **identity(text_plugin.manifest.id)},
+                                {"format": "html", **identity(html_plugin.manifest.id)}]}
+    return text, html, provenance
 
 
 def render(analysis, timezone="Asia/Shanghai", *, charts="inline"):
-    p = analysis["prediction"]
-    time = instant(p["generated_at"]).astimezone(ZoneInfo(timezone)).isoformat()
-    lines = ["预测分析报告" + (" [MOCK 合成演示]" if p["synthetic"] else ""),
-             f"状态：{analysis['status']}；分析模式：{analysis['mode']}", f"预测对象：{p['subject']}；时间：{time}",
-             f"模型版本：{p['model_version']}；周期：{p['horizon']['value']} {p['horizon']['unit']}",
-             "模型预测", f"方向：{p.get('direction', '未提供')}；数值：{p.get('value', '未提供')} {p.get('value_unit', '')}",
-             f"置信度（上游）：{p['confidence'] if p['confidence'] is not None else '未提供'}",
-             f"相关指标（上游）：{p['metrics']}", "客观数据（上游声明，未独立核实）"]
-    lines += [f"[{f['id']}] {f['name']}：{f['value']} {f['unit']}；来源：{f['source']}；观测：{f['observed_at']}；可用：{f['available_at']}"
-              for f in analysis["facts"]] or ["无可用上下文。"]
-    lines += ["Agent 推断"] + [f"{i['text']}（依据：{', '.join(i['evidence_ids'])}）" for i in analysis["inferences"]]
-    if analysis.get("forecast_evidence"):
-        evidence = analysis["forecast_evidence"]
-        d, r = evidence["definition"], evidence["definition"]["reference"]
-        lines += ["事前预测归档与评价定义", f"预测归档 ID：{evidence['forecast_id']}；注册：{evidence['registered_at']}",
-                  f"目标时点：{d['target_at']}；时区：{d['timezone']}；指标：{d['metric']}；单位：{d['unit']}",
-                  f"比较基准：{r['value']} {d['unit']}；来源声明：{r['source']}；观测：{r['observed_at']}；可用：{r['available_at']}",
-                  f"平盘阈值（含边界）：{d['flat_tolerance']} {d['unit']}",
-                  f"预测与定义内容摘要：{evidence['content_id']}；注册记录摘要：{evidence['integrity_id']}",
-                  "此报告仅包含事前定义，未读取事后观测或评估结果；摘要不代表来源认证。"]
-        if "calendar" in d:
-            lines += [f"交易日历声明来源：{d['calendar']['source']}；后续交易日：{', '.join(d['calendar']['sessions'])}"]
-    if analysis.get("user_constraints"):
-        lines += ["本轮用户约束", *analysis["user_constraints"]]
-    for title, key in (("不确定性与限制", "limitations"), ("风险提示", "risks"), ("建议（不作收益保证）", "recommendations")):
-        lines += [title] + analysis[key]
-    if analysis.get("input_evidence"):
-        evidence = analysis["input_evidence"]
-        snapshot = evidence["snapshot"]
-        source = snapshot["source"]
-        lines += ["输入快照与来源追溯（摘要不代表来源认证）", f"快照 ID：{evidence['snapshot_id']}",
-                  f"上游预测 ID：{snapshot['prediction']['prediction_id']}；预测内容摘要：{fingerprint(snapshot['prediction'])}",
-                  f"上下文摘要：{fingerprint(snapshot['context'])}",
-                  f"来源文件：{source['filename']}；CSV SHA256：{source['csv_sha256']}",
-                  f"来源元数据内容摘要：{source['metadata_sha256']}；原始行摘要：{fingerprint(source['record'])}"]
-        for fact in analysis["facts"]:
-            lines += [f"[{fact['id']}] 来源行：{source['row_number']}；字段：{source['fact_fields'][fact['id']]}；"
-                      f"报告期：{source['record']['report_date']}；披露日：{source['record']['pub_date']}；"
-                      f"原始采集时间：{source['record']['collected_at']}"]
-    evidence = analysis.get("knowledge_evidence")
-    if evidence:
-        lines += ["私有资料证据（来源声明，未独立核实）", "资料截止：" + evidence["as_of"]]
-        for item in evidence["results"]:
-            lines += [f"[{item['citation_id']}] {item['filename']}；位置：{item['location']}；版本校验：{item['source_hash']}；日期：{item['metadata']}",
-                      item["text"], "；".join(item["warnings"]) or "来源内容需核实"]
-    figures = analysis.get("charts", [])
-    if analysis.get("report_format") == "brief":
-        headline = ["简版摘要", f"{p['subject']} · {p['horizon']['value']} {p['horizon']['unit']}",
-                    *[item["text"] for item in analysis["inferences"]], "完整依据与风险见下方。"]
-        lines = headline + lines
-    text = "\n\n".join(lines + [f"{chart['title']}：{chart['caption']}" for chart in figures])
-    html = '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>预测分析报告</title><body>'
-    html += "".join(f"<p>{escape(line)}</p>" for line in lines)
-    for idx, chart in enumerate(figures):
-        visual = chart_svg(chart) if charts == "inline" else f'<img src="cid:chart-{idx}@stock-predict-mailer.local" alt="{escape(chart["title"])}">' if charts == "cid" else ""
-        legend = {"observed": ("历史观测", "#17634d"), "forecast": ("模型预测", "#2356a3"),
-                  "backtest": ("历史预测", "#a64b29")}
-        labels = "".join(f'<p style="color:{legend[k][1]}">{legend[k][0]} · {escape(v["source"])}</p>'
-                         for k, v in chart["series"].items())
-        points = [p for series in chart["series"].values() for p in series["points"]]
-        labels += f'<p>单位：{escape(chart["unit"])}；{escape(min(p["at"] for p in points))} — {escape(max(p["at"] for p in points))}</p>'
-        if any("lower" in p for p in points):
-            labels += "<p>浅蓝竖线：上游预测区间</p>"
-        html += f"<figure><h2>{escape(chart['title'])}</h2>{visual}<figcaption>{escape(chart['caption'])}{labels}</figcaption></figure>"
-    return text, html + "</body></html>"
+    """Both formats come from the declared renderers; neither owns the content."""
+    text, html, _ = render_with_provenance(analysis, timezone, charts=charts)
+    return text, html
 
 
 def save_report(workspace, analysis, timezone="Asia/Shanghai"):
@@ -83,6 +39,7 @@ def save_report(workspace, analysis, timezone="Asia/Shanghai"):
         persist(workspace, analysis["input_evidence"])
     folder = workspace / "analysis" / analysis["analysis_id"]
     write_json(folder / "analysis.json", analysis)
-    _, html = render(analysis, timezone)
+    _, html, provenance = render_with_provenance(analysis, timezone)
     atomic_write(folder / "report.html", html.encode())
+    write_json(folder / "renderers.json", provenance)
     return folder

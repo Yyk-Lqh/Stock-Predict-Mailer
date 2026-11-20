@@ -16,7 +16,7 @@ from .errors import PluginIncompatible
 API_VERSION = 1
 KINDS = ("market_source", "report_renderer", "notifier")
 KIND_CAPABILITIES = {
-    "market_source": ("quotes", "candles"),
+    "market_source": ("quotes", "candles", "bars"),
     "report_renderer": ("html", "text"),
     "notifier": ("send",),
 }
@@ -76,7 +76,12 @@ def declare(*, id: str, kind: str, label: str, capabilities: tuple[str, ...] = (
 
 
 class DataSourcePlugin(Protocol):
-    """Read-only quote relay. ``quotes`` mirrors ``MarketFeed``'s fetcher signature."""
+    """Read-only quote relay. ``quotes`` mirrors ``MarketFeed``'s fetcher signature.
+
+    ``candles(symbol, timeout)`` and ``bars(symbol, start, end, timeout)`` are
+    optional: a source declares them only when ``plugins-check`` will find a real
+    implementation behind the name.
+    """
 
     manifest: PluginManifest
 

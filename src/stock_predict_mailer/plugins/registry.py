@@ -20,7 +20,7 @@ from .contract import API_VERSION, KINDS, validate_manifest
 from .errors import PluginError, PluginIncompatible, PluginKindMismatch, PluginMissingDependency, PluginNotFound
 
 _REQUIRED_METHODS = {"market_source": ("quotes",), "report_renderer": ("render",), "notifier": ("send",)}
-_OPTIONAL_METHODS = {"market_source": ("candles",)}
+_OPTIONAL_METHODS = {"market_source": ("candles", "bars")}
 _NOT_FOUND = "未声明的插件：{id}（只接受内置白名单中的 id）"
 
 

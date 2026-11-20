@@ -14,6 +14,7 @@
 - [Frontend handoff / 前端交接](frontend-handoff.md)
 - [Execution and charts / 执行与图表](hybrid-execution.md)
 - [Securities hall / 证券大厅](securities-hall.md)
+- [Quote collection / 行情采集端](行情采集端.md)
 
 ## Forecast lifecycle
 

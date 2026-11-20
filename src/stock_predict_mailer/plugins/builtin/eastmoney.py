@@ -24,6 +24,9 @@ QUOTE_URL = ("https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&secids={sec
 KLINE_URL = ("https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}"
              "&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58"
              "&klt=101&fqt=1&lmt={count}&end=20500101")
+BARS_URL = ("https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}"
+            "&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58"
+            "&klt=101&fqt=0&beg={beg}&end={end}")
 MAX_POINTS = 500  # the console refuses a chart with more points than this
 DEFAULT_COUNT = 40
 
@@ -103,10 +106,9 @@ def parse_quotes(text, instruments):
     return quotes
 
 
-def parse_candles(text, symbol):
-    """Daily OHLC from ``date,open,close,high,low,volume`` rows; never synthesises bars."""
-    rows = _body(text, "日线数据").get("klines") or []
-    candles = []
+def _bar_rows(rows):
+    """Shared row validation: ``date,open,close,high,low,volume,...`` in that order."""
+    bars = []
     for item in rows:
         fields = str(item).split(",")
         if len(fields) < 6:
@@ -120,16 +122,27 @@ def parse_candles(text, symbol):
         high, low = _number(fields[3], "最高", 0, 1e9), _number(fields[4], "最低", 0, 1e9)
         if low > min(open_, close) or high < max(open_, close) or low > high:
             raise EastmoneyError("日线高低范围无效")
-        candles.append({"at": day, "open": open_, "high": high, "low": low, "close": close,
-                        "volume": _number(fields[5], "成交量", 0, 1e18)})
+        bars.append({"at": day, "open": open_, "high": high, "low": low, "close": close,
+                     "volume": _number(fields[5], "成交量", 0, 1e18)})
+    return bars
+
+
+def parse_candles(text, symbol):
+    """Daily OHLC for the overview chart; never synthesises bars."""
+    candles = _bar_rows(_body(text, "日线数据").get("klines") or [])
     if len(candles) < 2:
         raise EastmoneyError("日线数据不足")
     return candles[-MAX_POINTS:]
 
 
+def parse_bars(text, symbol):
+    """Every row in the requested window, or none; the caller decides what is fatal."""
+    return _bar_rows(_body(text, "日线数据").get("klines") or [])
+
+
 class EastmoneySource:
     manifest = declare(id="market_eastmoney", kind="market_source", label="东方财富行情",
-                       capabilities=("quotes", "candles"))
+                       capabilities=("quotes", "candles", "bars"))
 
     @staticmethod
     def quotes(instruments, timeout):
@@ -140,3 +153,15 @@ class EastmoneySource:
     def candles(symbol, timeout, count=DEFAULT_COUNT):
         market, code = _secid(symbol)
         return parse_candles(_get(KLINE_URL.format(secid=f"{market}.{code}", count=count), timeout), symbol)
+
+    @staticmethod
+    def bars(symbol, start, end, timeout):
+        """Unadjusted daily bars for the snapshot pipeline.
+
+        ``fqt=0`` on purpose: forward-adjusted history is rewritten on every
+        dividend, and the contract applies corporate actions locally from
+        ``actions-import``. Fetching adjusted bars here would adjust twice.
+        """
+        market, code = _secid(symbol)
+        url = BARS_URL.format(secid=f"{market}.{code}", beg=start.strftime("%Y%m%d"), end=end.strftime("%Y%m%d"))
+        return parse_bars(_get(url, timeout), symbol)

@@ -13,6 +13,7 @@ from .agent_service.config import load
 from .agent_service.contracts import ServiceError, decode, prediction
 from .agent_service.mail import MailService
 from .agent_service.reporting import save_report
+from .bars_fetch import FetchError
 from .cli_io import utf8_console
 from .naming import COMMAND, PROJECT_NAME, SUMMARY_ZH, banner
 from .plugins.errors import PluginError
@@ -132,6 +133,15 @@ def main(argv=None):
     sub.add_parser("plugins-list", help="列出内置插件白名单、声明能力与可选依赖状态；不联网")
     plugin_check = sub.add_parser("plugins-check", help="体检插件依赖与行情源链，指出大厅能否启动；不联网")
     plugin_check.add_argument("--market", type=Path, help="含 market.json 的目录；留空检查默认链")
+    bars = sub.add_parser("bars-fetch", help="从已声明的行情源取日线，写出数据契约 CSV 与来源记录；需联网")
+    bars.add_argument("--symbols", required=True, help="逗号分隔，如 sh.600519,sz.000001")
+    bars.add_argument("--start", required=True, help="起始日期 YYYY-MM-DD")
+    bars.add_argument("--end", required=True, help="结束日期 YYYY-MM-DD")
+    bars.add_argument("--output", type=Path, required=True, help="输出 CSV 路径；来源记录写在同名 .provenance.json")
+    bars.add_argument("--source", default="market_eastmoney", help="已声明的行情源 id，见 plugins-list")
+    bars.add_argument("--timeout", type=float, default=8.0)
+    bars.add_argument("--assume-session-close", action="store_true",
+                      help="历史回补时把 available_at 记为当日 18:00；默认写真实取数时间")
     runtime = sub.add_parser("runtime", help="组件状态、显式后台启动、实例匹配停止与有界生命周期日志")
     runtime_sub = runtime.add_subparsers(dest="runtime_action", required=True)
     for name in ("status", "start", "stop", "logs"):
@@ -210,6 +220,13 @@ def main(argv=None):
             report = check(args.market)
             print(json.dumps(report, ensure_ascii=False, indent=2))
             return 0 if report["ok"] else 2
+        if args.command == "bars-fetch":
+            from . import bars_fetch
+
+            result = bars_fetch.run(args.symbols, args.start, args.end, args.output, source=args.source,
+                                    timeout=args.timeout, assume_session_close=args.assume_session_close)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
         cfg = load(args.config)
         if args.command == "forecast":
             from .agent_service.forecast_archive import ForecastArchive
@@ -389,6 +406,9 @@ def main(argv=None):
         print(json.dumps(exc.as_dict(), ensure_ascii=False))
         return 2
     except PluginError as exc:
+        print(json.dumps(exc.as_dict(), ensure_ascii=False))
+        return 2
+    except FetchError as exc:
         print(json.dumps(exc.as_dict(), ensure_ascii=False))
         return 2
     except (OSError, sqlite3.Error):

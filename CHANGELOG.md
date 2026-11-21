@@ -4,6 +4,7 @@
 
 ### 新增
 
+- `config/agent-local.toml` 与 `config/task-cn.json`：前者只有 `workspace` 与 `timezone`，让 `legacy` 命令指向控制台的 `data/agent-local`（加载器不接受 `local.toml` 的 `[mail]` 段）；后者是 11 标的（基准 `sh.000001`）的 CN 契约，`contract_id = d77eca9c…`，供真实数据训练使用。
 - 专业模式把已训练的模型做成节点：节点库新增「已训练模型」，点选后读取 `GET /api/registry`（新增接口，只读注册表清单：算法、训练区间、行数、合成/真实、状态），把最新版本作为节点接入画布，节点标题为「算法 · 版本前 8 位」，详情写训练行数与标签截止；`modelVersion` 随工作流一起保存，卡片提示完整版本号。
 - `model_registry.describe_models()`：按可见范围列出最近版本并读取各自 manifest，单个目录损坏只把该条标记为 `broken`，不会让整个列表失败。
 

@@ -1,0 +1,4 @@
+# 让 legacy 命令直接操作控制台（小马大厅）的工作区，便于训练出的模型出现在注册表接口里。
+# 只有 workspace 与 timezone：legacy 的加载器不接受 [mail] 等控制台段，那部分留在 local.toml。
+workspace = "../data/agent-local"
+timezone = "Asia/Shanghai"

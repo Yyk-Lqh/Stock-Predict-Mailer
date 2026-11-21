@@ -4,11 +4,11 @@ import io
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, datetime
 from pathlib import Path
 
-from stock_predict_mailer.bars_fetch import SHANGHAI, FetchError, collect, parse_symbols, parse_window, run
+from stock_predict_mailer.bars_fetch import SHANGHAI, FetchError, collect, parse_symbols, parse_window, read_symbols, run
 from stock_predict_mailer.cli import main
 from stock_predict_mailer.data import FIELDS, validate_rows
 
@@ -157,7 +157,97 @@ class SnapshotSeamTests(unittest.TestCase):
         self.assertEqual(summary["sources"], ["market_eastmoney"])
 
 
+class PoolFileTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def pool(self, name, text):
+        path = self.root / name
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_plain_lines_accept_prefixes_and_bare_codes(self):
+        path = self.pool("pool.txt", "# 自选\n600519\nsz.000001\n300750\n\n")
+        self.assertEqual(read_symbols(path), ("sh.600519", "sz.000001", "sz.300750"))
+
+    def test_csv_reads_the_catalog_column(self):
+        path = self.pool("stock_data117.csv", "股票代码,股票名称,现价\n600519,贵州茅台,1400\n000001,平安银行,11\n")
+        self.assertEqual(read_symbols(path), ("sh.600519", "sz.000001"))
+
+    def test_duplicates_collapse(self):
+        self.assertEqual(read_symbols(self.pool("pool.txt", "600519\nsh.600519\n")), ("sh.600519",))
+
+    def test_an_unsupported_market_is_refused_with_a_hint(self):
+        with self.assertRaises(FetchError) as caught:
+            read_symbols(self.pool("pool.txt", "430047\n"))
+        self.assertIn("只支持 sh/sz", str(caught.exception))
+
+    def test_a_csv_without_a_code_column_names_what_it_found(self):
+        with self.assertRaises(FetchError) as caught:
+            read_symbols(self.pool("x.csv", "a,b\n1,2\n"))
+        self.assertIn("实际列", str(caught.exception))
+
+    def test_an_empty_pool_is_refused(self):
+        with self.assertRaises(FetchError):
+            read_symbols(self.pool("pool.txt", "# 只有注释\n"))
+
+
+def mixed_fetch(symbol, first, last, timeout):
+    return [] if symbol == "sz000001" else [bar("2026-11-19")]
+
+
+class PartialFailureTests(unittest.TestCase):
+    def test_skip_mode_keeps_the_good_symbols_and_records_the_failure(self):
+        rows, provenance = collect(("sh.600519", "sz.000001"), date(2026, 11, 18), date(2026, 11, 19),
+                                   clock=clock_at(), fetch=mixed_fetch, on_error="skip")
+        self.assertEqual([row["security_id"] for row in rows], ["sh.600519"])
+        self.assertEqual([item["symbol"] for item in provenance["failed"]], ["sz.000001"])
+        self.assertIn("没有返回任何日线", provenance["failed"][0]["error"])
+
+    def test_stop_stays_the_default(self):
+        with self.assertRaises(FetchError):
+            collect(("sh.600519", "sz.000001"), date(2026, 11, 18), date(2026, 11, 19),
+                    clock=clock_at(), fetch=mixed_fetch)
+
+    def test_all_failures_write_nothing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "bars.csv"
+            with self.assertRaises(FetchError):
+                run("sh.600519,sz.000001", "2026-11-18", "2026-11-19", output,
+                    clock=clock_at(), fetch=lambda *args: [], on_error="skip")
+            self.assertFalse(output.exists())
+
+    def test_a_partial_run_reports_not_ok_but_keeps_the_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "bars.csv"
+            result = run("sh.600519,sz.000001", "2026-11-18", "2026-11-19", output,
+                         clock=clock_at(), fetch=mixed_fetch, on_error="skip")
+            self.assertFalse(result["ok"])
+            self.assertTrue(output.is_file())
+        self.assertEqual([item["symbol"] for item in result["failed"]], ["sz.000001"])
+
+
 class CliTests(unittest.TestCase):
+    def test_symbols_and_a_pool_file_are_mutually_exclusive(self):
+        with tempfile.TemporaryDirectory() as folder, redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                main(["bars-fetch", "--symbols", "sh.600519", "--symbols-file", "pool.txt", "--start", "2026-11-18",
+                      "--end", "2026-11-19", "--output", str(Path(folder, "bars.csv"))])
+
+    def test_a_pool_with_an_unsupported_market_exits_as_a_fetch_error(self):
+        with tempfile.TemporaryDirectory() as folder:
+            pool = Path(folder, "pool.txt")
+            pool.write_text("430047\n", encoding="utf-8")
+            with redirect_stdout(io.StringIO()) as out:
+                code = main(["bars-fetch", "--symbols-file", str(pool), "--start", "2026-11-18",
+                             "--end", "2026-11-19", "--output", str(Path(folder, "bars.csv"))])
+        self.assertEqual(code, 2)
+        self.assertIn("FETCH_FAILED", out.getvalue())
+
     def test_unknown_source_exits_as_a_plugin_error(self):
         with tempfile.TemporaryDirectory() as folder, redirect_stdout(io.StringIO()) as out:
             code = main(["bars-fetch", "--symbols", "sh.600519", "--start", "2026-11-18", "--end", "2026-11-19",

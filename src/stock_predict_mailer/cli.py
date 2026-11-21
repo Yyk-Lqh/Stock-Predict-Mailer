@@ -134,12 +134,16 @@ def main(argv=None):
     plugin_check = sub.add_parser("plugins-check", help="体检插件依赖与行情源链，指出大厅能否启动；不联网")
     plugin_check.add_argument("--market", type=Path, help="含 market.json 的目录；留空检查默认链")
     bars = sub.add_parser("bars-fetch", help="从已声明的行情源取日线，写出数据契约 CSV 与来源记录；需联网")
-    bars.add_argument("--symbols", required=True, help="逗号分隔，如 sh.600519,sz.000001")
+    pool = bars.add_mutually_exclusive_group(required=True)
+    pool.add_argument("--symbols", help="逗号分隔，如 sh.600519,sz.000001")
+    pool.add_argument("--symbols-file", type=Path, help="股票池文件：CSV 取代码列，或每行一个代码")
     bars.add_argument("--start", required=True, help="起始日期 YYYY-MM-DD")
     bars.add_argument("--end", required=True, help="结束日期 YYYY-MM-DD")
     bars.add_argument("--output", type=Path, required=True, help="输出 CSV 路径；来源记录写在同名 .provenance.json")
     bars.add_argument("--source", default="market_eastmoney", help="已声明的行情源 id，见 plugins-list")
     bars.add_argument("--timeout", type=float, default=8.0)
+    bars.add_argument("--on-error", choices=("stop", "skip"), default="stop",
+                      help="单个标的失败时停止（stop）或跳过并记入来源记录（skip）")
     bars.add_argument("--assume-session-close", action="store_true",
                       help="历史回补时把 available_at 记为当日 18:00；默认写真实取数时间")
     runtime = sub.add_parser("runtime", help="组件状态、显式后台启动、实例匹配停止与有界生命周期日志")
@@ -223,12 +227,16 @@ def main(argv=None):
         if args.command == "bars-fetch":
             from . import bars_fetch
 
-            result = bars_fetch.run(args.symbols, args.start, args.end, args.output, source=args.source,
-                                    timeout=args.timeout, assume_session_close=args.assume_session_close)
+            symbols = args.symbols if args.symbols else bars_fetch.read_symbols(args.symbols_file)
+            result = bars_fetch.run(symbols, args.start, args.end, args.output, source=args.source,
+                                    timeout=args.timeout, assume_session_close=args.assume_session_close,
+                                    on_error=args.on_error)
+            for item in result["failed"]:
+                print(f"失败：{item['symbol']} {item['error']}", file=sys.stderr)
             for warning in result["warnings"]:
                 print(f"警告：{warning}", file=sys.stderr)
             print(json.dumps(result, ensure_ascii=False, indent=2))
-            return 0
+            return 0 if result["ok"] else 2
         cfg = load(args.config)
         if args.command == "forecast":
             from .agent_service.forecast_archive import ForecastArchive

@@ -53,6 +53,29 @@ def read_contract(path: Path) -> dict:
     return validate_contract(json.loads(path.read_text(encoding="utf-8")))
 
 
+def draft_contract(rows: list[dict], benchmark_id: str, market: str = "CN", *, horizon: int = 5,
+                   timezone: str = "Asia/Shanghai", price_basis: str = "unadjusted") -> dict:
+    """Draft a contract from the securities a snapshot actually contains.
+
+    The universe is every security except the benchmark. Nothing is padded: a
+    snapshot without the benchmark, or with fewer than three other securities,
+    is refused here instead of producing a contract the model cannot honour.
+    """
+    symbols = sorted({str(row["security_id"]).strip() for row in rows})
+    if benchmark_id not in symbols:
+        raise ValueError(f"快照里没有基准 {benchmark_id}，请先用 --benchmark 指定一个存在的标的")
+    universe = [symbol for symbol in symbols if symbol != benchmark_id]
+    if len(universe) < 3:
+        raise ValueError(f"快照里除基准外只有 {len(universe)} 个标的，契约至少需要 3 个")
+    return validate_contract({
+        "schema_version": 1, "market": market, "benchmark_id": benchmark_id,
+        "universe": universe, "features": list(FEATURE_ORDER), "horizon": horizon,
+        "timezone": timezone, "feature_cutoff": "20:00:00",
+        "price_basis": price_basis, "volume_unit": "shares",
+        "calendar": "benchmark_sessions", "target": "open_to_open_excess_return",
+    })
+
+
 def prepare_rows(raw: list[dict], contract: dict, cutoff: str, *, sessions: list[str] | None = None,
                  actions: dict | None = None) -> tuple[list[dict], list[dict]]:
     """Build point-in-time features and matured labels.

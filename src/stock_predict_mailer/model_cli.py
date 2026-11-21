@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .core import tracked_run
+from .core import tracked_run, write_json
 
-COMMANDS = {"contract-check", "model-train", "model-evaluate", "model-publish", "model-list", "model-select", "model-predict",
+COMMANDS = {"contract-check", "contract-draft", "model-train", "model-evaluate", "model-publish", "model-list", "model-select", "model-predict",
             "model-keygen", "model-export", "model-install", "model-compare", "model-drift", "drift-history",
             "residual-fit", "model-retention", "retention-log",
             "prediction-report", "shadow-record", "shadow-evaluate", "shadow-status",
@@ -17,6 +17,13 @@ COMMANDS = {"contract-check", "model-train", "model-evaluate", "model-publish", 
 def add_commands(sub):
     check = sub.add_parser("contract-check", help="Validate fixed model feature and label contract")
     check.add_argument("contract", type=Path)
+    draft = sub.add_parser("contract-draft", help="Draft a contract from the securities a snapshot actually holds")
+    draft.add_argument("snapshot_id")
+    draft.add_argument("--benchmark", required=True, help="必须出现在快照里的基准标的")
+    draft.add_argument("--market", default="CN")
+    draft.add_argument("--horizon", type=int, default=5)
+    draft.add_argument("--price-basis", default="unadjusted", choices=("unadjusted", "forward_adjusted", "backward_adjusted"))
+    draft.add_argument("--output", type=Path, help="写入路径；不填只打印")
     train = sub.add_parser("model-train", help="Trusted local platform publisher: train a candidate, never publish automatically")
     train.add_argument("snapshot_id")
     train.add_argument("--contract", type=Path, required=True)
@@ -232,6 +239,18 @@ def dispatch(cfg, args):
         elif args.command == "contract-check":
             contract = read_contract(args.contract)
             result = {"contract_id": contract_id(contract), "contract": contract}
+        elif args.command == "contract-draft":
+            from .contracts import draft_contract
+            from .data import load_snapshot
+
+            _, rows = load_snapshot(cfg, args.snapshot_id)
+            contract = draft_contract(rows, args.benchmark, args.market, horizon=args.horizon,
+                                      price_basis=args.price_basis)
+            result = {"contract_id": contract_id(contract), "contract": contract,
+                      "securities": len(rows) and len({row["security_id"] for row in rows})}
+            if args.output:
+                write_json(args.output, contract)
+                result["output"] = str(args.output)
         elif args.command == "model-train":
             result = train_platform(cfg, args.snapshot_id, read_contract(args.contract), args.cutoff, args.algorithm,
                                     confirm_platform_data=args.confirm_platform_data, allow_unverified_real=args.allow_unverified_real)

@@ -381,6 +381,14 @@ def make_server(root, port=8767, master_key=None, market=None):
                     else:
                         raise ServiceError("NOT_FOUND", "任务接口不存在")
                     return
+                if kind == "plugins":
+                    if method == "GET" and len(parts) == 2:
+                        from ..plugins.doctor import check
+
+                        self.output(check(store.root))
+                    else:
+                        raise ServiceError("NOT_FOUND", "插件接口不存在")
+                    return
                 if kind == "market":
                     if method == "GET" and parts[2:] == ["snapshot"]:
                         self.output(market.payload())

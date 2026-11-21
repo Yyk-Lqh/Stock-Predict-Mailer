@@ -653,6 +653,16 @@ class ConsoleAPITests(unittest.TestCase):
                     else:
                         handler.wfile.write.assert_called_once()
 
+    def test_plugins_endpoint_reports_the_declared_chain(self):
+        body = self.client.get("/api/plugins").json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["source_chain"], ["market_tencent", "market_sina"])
+        self.assertEqual(body["candles_from"], "market_tencent")
+        self.assertEqual([plugin["id"] for plugin in body["plugins"]],
+                         ["market_tencent", "market_sina", "market_eastmoney", "report_text", "report_html"])
+        self.assertTrue(all(len(plugin["module_digest"]) == 64 for plugin in body["plugins"]))
+        self.assertEqual(self.client.post("/api/plugins", json={}).status_code, 404)
+
     def test_progress_endpoint_returns_running_step_and_incremental_cursor(self):
         original = self.server.engine.models.generate
         entered, release = threading.Event(), threading.Event()

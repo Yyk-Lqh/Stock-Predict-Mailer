@@ -5,13 +5,16 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import date
 from pathlib import Path
+from unittest import mock
 
 from stock_predict_mailer import __version__
 from stock_predict_mailer.agent_service.reporting import render, save_report
 from stock_predict_mailer.cli import main
 from stock_predict_mailer.control.market_feed import MarketFeed
 from stock_predict_mailer.plugins import registry
+from stock_predict_mailer.plugins.builtin import market as market_module
 from stock_predict_mailer.plugins.builtin import report as report_module
 from stock_predict_mailer.plugins.builtin.eastmoney import EastmoneyError, EastmoneySource
 from stock_predict_mailer.plugins.builtin.eastmoney import parse_candles as eastmoney_candles
@@ -262,6 +265,39 @@ class EastmoneyTests(unittest.TestCase):
             eastmoney_candles(eastmoney_body(klines=["2026-11-19,3583.12,3577.62,3584.28,3547.94,412912755"]), "sh000001")
         with self.assertRaises(EastmoneyError):
             eastmoney_candles(eastmoney_body(klines=["2026-11-19,3583.12"]), "sh000001")
+
+
+class TencentBarsTests(unittest.TestCase):
+    @staticmethod
+    def body(rows, symbol="sh600519"):
+        return json.dumps({"code": 0, "data": {symbol: {"day": rows}}})
+
+    def test_field_order_is_date_open_close_high_low_volume(self):
+        rows = market_module.parse_bars(
+            self.body([["2026-11-19", "1442.000", "1460.210", "1464.990", "1432.100", "42692.000"]]), "sh600519")
+        self.assertEqual((rows[0]["open"], rows[0]["close"], rows[0]["high"], rows[0]["low"], rows[0]["volume"]),
+                         (1442.0, 1460.21, 1464.99, 1432.1, 42692.0))
+
+    def test_bad_payloads_are_refused(self):
+        for text in ("not json", json.dumps({"code": 0, "data": {}}),
+                     self.body([["2026-11-19", "1442.0", "1460.2", "1432.0", "1435.0", "1"]]),
+                     self.body([["2026-11-19", "1442.0", "-1", "1464.9", "1432.1", "1"]]),
+                     self.body([["2026-11-19", "1442.0", "1460.2"]])):
+            with self.assertRaises(market_module.TencentError):
+                market_module.parse_bars(text, "sh600519")
+
+    def test_long_windows_are_split_into_yearly_chunks(self):
+        calls = []
+
+        def fake(url, timeout):
+            calls.append(url)
+            return self.body([["2026-11-19", "1", "2", "3", "0.5", "7"]])
+
+        with mock.patch.object(market_module, "_get", fake):
+            rows = market_module.TencentSource.bars("sh600519", date(2024, 1, 1), date(2026, 11, 20), 5)
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(all("param=sh600519,day," in url for url in calls))
+        self.assertEqual(len(rows), 3)
 
 
 class SourceSelectionTests(unittest.TestCase):

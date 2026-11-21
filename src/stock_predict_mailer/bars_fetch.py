@@ -27,6 +27,7 @@ SESSION_CLOSE = time(15, 5)
 SETTLED_AT = time(18, 0)
 MAX_SPAN_DAYS = 3660
 MAX_ROWS = 200_000
+LOT_SIZE = 100  # quoting sources report 手; the contract's volume unit is shares
 POOL_COLUMNS = ("股票代码", "security_id", "symbol", "code")
 MARKET_BY_PREFIX = {"6": "sh", "0": "sz", "3": "sz"}
 
@@ -78,7 +79,7 @@ def _row(symbol_id, bar, available):
     if low > min(open_, close) or high < max(open_, close) or low > high:
         raise FetchError(f"{symbol_id} {day} 的开高低收不自洽")
     return {"date": day, "security_id": symbol_id, "open": open_, "high": high, "low": low,
-            "close": close, "volume": bar["volume"], "available_at": available, "source": ""}
+            "close": close, "volume": bar["volume"] * LOT_SIZE, "available_at": available, "source": ""}
 
 
 def _normalise(token):
@@ -194,6 +195,8 @@ def collect(symbol_ids, first, last, *, source="market_eastmoney", timeout=8.0,
         "rows": len(rows), "first_date": rows[0]["date"], "last_date": rows[-1]["date"],
         "available_at": "session_close" if assume_session_close else "fetched",
         "price_basis": "unadjusted",
+        "volume_unit": "shares",
+        "source_volume_unit": "lots",
         "failed": failures,
         "warnings": warnings,
         "timeout_seconds": timeout,

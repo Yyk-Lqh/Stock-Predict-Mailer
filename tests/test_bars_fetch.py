@@ -55,6 +55,8 @@ class CollectTests(unittest.TestCase):
                          (1, "2026-11-19", "2026-11-19"))
         self.assertEqual(provenance["available_at"], "fetched")
         self.assertEqual(provenance["price_basis"], "unadjusted")
+        self.assertEqual(rows[0]["volume"], 100 * 1000)  # 行情源报手，契约要股
+        self.assertEqual((provenance["volume_unit"], provenance["source_volume_unit"]), ("shares", "lots"))
 
     def test_assume_session_close_records_the_settlement_convention(self):
         rows, provenance = collect(("sh.600519",), date(2026, 11, 18), date(2026, 11, 19),

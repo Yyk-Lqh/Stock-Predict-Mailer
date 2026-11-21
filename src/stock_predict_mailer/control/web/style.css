@@ -1566,9 +1566,6 @@ body[data-view="analysis"].inspector-visible #analysis-composer { left: var(--do
   .desktop-record-feedback[data-state="failed"] p, .desktop-record-feedback[data-state="partial"] p { color: var(--danger); }
   .desktop-settings-overview { margin: 0 0 26px; padding-block: 18px 22px; border-block: 1px solid var(--rule) !important; }
   .desktop-settings-overview > h2 { font-size: 16px; margin-bottom: 7px; }
-  .desktop-mode-choice { margin: 0 0 26px; padding-block: 18px 22px; border-bottom: 1px solid var(--rule); }
-  .desktop-mode-choice > h2 { font-size: 16px; margin-bottom: 7px; }
-  .desktop-mode-choice .desktop-view-switch { margin-top: 10px; }
   .desktop-config-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 24px; margin: 20px 0 0; }
   .desktop-config-summary > div { min-width: 0; }
   .desktop-config-summary dt { color: var(--ink-3); font-size: 11px; margin-bottom: 8px; }
@@ -1754,3 +1751,10 @@ body[data-view="analysis"].inspector-visible #analysis-composer { left: var(--do
 .plugin-dialog::backdrop { background: rgba(20,28,30,.32); }
 .plugin-dialog-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .plugin-dialog-head button { min-height: 26px; padding: 3px 9px; border: 1px solid var(--rule-strong); border-radius: 5px; background: var(--surface-2); color: var(--ink-2); font-size: 11px; cursor: pointer; }
+
+/* 界面模式切换 */
+.desktop-mode-switch { display: flex; flex: none; gap: 2px; margin-left: 10px; padding: 3px; border: 1px solid var(--rule); border-radius: 7px; background: var(--surface-2); }
+.nav .desktop-mode-switch button { min-height: 22px; margin: 0; padding: 2px 8px; border: 0; border-bottom: 0; border-radius: 5px; background: transparent; color: var(--ink-2); font-size: 11px; cursor: pointer; }
+.nav .desktop-mode-switch button[aria-pressed="true"] { background: var(--brass-soft); color: var(--ink); }
+body.desktop-focus-view .topbar .nav .desktop-mode-switch { margin: 6px 0 0; width: 100%; }
+body.desktop-focus-view .topbar .nav .desktop-mode-switch button { flex: 1; padding: 4px 6px; text-align: center; }

@@ -279,7 +279,7 @@
     },
     "legacy.registry": {
       "source": "stock_predict_mailer/model_registry.py",
-      "source_id": "690f365b7871f2987c5c567cad6d77b0ad63affa2053f9b3a13f680dddf86306",
+      "source_id": "5b981783b5214a75fbf4e819121826529e8fafb0cc7738b2c462e21d59930322",
       "ddl": [
         "CREATE TABLE IF NOT EXISTS registry_models (\n        version TEXT PRIMARY KEY, owner TEXT NOT NULL, created_by TEXT NOT NULL,\n        scope TEXT NOT NULL, origin TEXT NOT NULL, status TEXT NOT NULL,\n        channel TEXT, manifest_sha256 TEXT NOT NULL, publication_sha256 TEXT);",
         "CREATE TABLE IF NOT EXISTS registry_evaluations (\n        id TEXT PRIMARY KEY, model_version TEXT NOT NULL, owner TEXT NOT NULL,\n        sha256 TEXT NOT NULL);",

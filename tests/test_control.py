@@ -653,6 +653,11 @@ class ConsoleAPITests(unittest.TestCase):
                     else:
                         handler.wfile.write.assert_called_once()
 
+    def test_registry_endpoint_lists_trained_models(self):
+        body = self.client.get("/api/registry").json()
+        self.assertEqual(body["models"], [])
+        self.assertEqual(self.client.post("/api/registry", json={}).status_code, 404)
+
     def test_plugins_endpoint_reports_the_declared_chain(self):
         body = self.client.get("/api/plugins").json()
         self.assertTrue(body["ok"])

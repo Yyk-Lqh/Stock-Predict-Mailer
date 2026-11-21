@@ -381,6 +381,15 @@ def make_server(root, port=8767, master_key=None, market=None):
                     else:
                         raise ServiceError("NOT_FOUND", "任务接口不存在")
                     return
+                if kind == "registry":
+                    if method == "GET" and len(parts) == 2:
+                        from ..core import Config
+                        from ..model_registry import describe_models
+
+                        self.output({"models": describe_models(Config(store.root))})
+                    else:
+                        raise ServiceError("NOT_FOUND", "模型注册表接口不存在")
+                    return
                 if kind == "plugins":
                     if method == "GET" and len(parts) == 2:
                         from ..plugins.doctor import check

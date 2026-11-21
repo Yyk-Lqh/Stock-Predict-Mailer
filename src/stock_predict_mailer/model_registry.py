@@ -226,6 +226,31 @@ def list_models(cfg: Config) -> list[dict]:
         return [dict(row) for row in con.execute("SELECT version,owner,scope,status,channel,origin FROM registry_models WHERE created_by=? OR (scope='platform' AND status='published') ORDER BY rowid DESC", (cfg.principal,))]
 
 
+def describe_models(cfg: Config, limit: int = 20) -> list[dict]:
+    """Recent visible versions with the facts a node card needs.
+
+    Reads each manifest only (never the payload) and degrades one entry to
+    ``broken`` instead of failing the whole list when a folder is unreadable.
+    """
+    described = []
+    for row in list_models(cfg)[:limit]:
+        folder = (model_folder(cfg, row["version"]) if row["scope"] == "platform"
+                  else personal_model_folder(cfg, row["owner"], row["version"]))
+        entry = {"version": row["version"], "scope": row["scope"], "status": row["status"], "channel": row["channel"]}
+        try:
+            manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            entry.update({"algorithm": None, "synthetic": None, "train_label_end": None,
+                          "contract_id": None, "training_rows": None, "status": "broken"})
+        else:
+            entry.update({"algorithm": manifest.get("algorithm"), "synthetic": manifest.get("synthetic"),
+                          "train_label_end": manifest.get("train_label_end"),
+                          "contract_id": manifest.get("contract_id"),
+                          "training_rows": manifest.get("training_rows")})
+        described.append(entry)
+    return described
+
+
 def _store_selection(cfg: Config, owner: str, model_version: str) -> None:
     with connect(cfg) as con:
         schema(con)

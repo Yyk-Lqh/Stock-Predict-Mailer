@@ -6,6 +6,18 @@
   assert(innerWidth >= 1200, 'Use a desktop viewport at least 1200px wide');
   const canvas = document.getElementById('desktop-workflow-canvas');
   document.querySelector('.desktop-focus-toggle').click();
+  const collapse = document.querySelector('.desktop-nav-collapse');
+  const wasCollapsed = collapse.getAttribute('aria-expanded') === 'false';
+  if (!wasCollapsed) collapse.click();
+  const navButtons = [...document.querySelectorAll('.topbar .nav button:not([hidden])')];
+  assert(navButtons.length >= 9, 'All navigation modules must be available when collapsed');
+  for (const button of navButtons) {
+    const icon = button.querySelector('.desktop-nav-icon');
+    assert(button.getAttribute('aria-label') && icon?.getClientRects().length && getComputedStyle(icon).opacity === '1', 'Collapsed navigation must show a visible icon and preserve its accessible label');
+  }
+  if (!wasCollapsed) collapse.click();
+  const viewportTools = document.querySelector('.desktop-flow-viewport-tools');
+  assert(viewportTools.closest('.desktop-flow-toolbar') && !canvas.contains(viewportTools), 'Zoom and fit must be in the top toolbar');
   const surface = document.getElementById('desktop-workflow-surface');
   const svg = document.getElementById('desktop-workflow-edges');
   const fit = () => document.querySelector('[data-viewport-action="fit"]').click();
@@ -94,7 +106,7 @@
     assert(close(parseFloat(model().style.left), position.x), 'Cancel must restore the node after auto-pan');
     fit();
     document.body.dataset.desktopCanvasCheck = 'passed';
-    return 'Passed: grid, pan, zoom, drag, keyboard, edges, fit, save and auto-pan.';
+    return 'Passed: navigation, toolbar, grid, pan, zoom, drag, keyboard, edges, fit, save and auto-pan.';
   } finally {
     canvas.setPointerCapture = originalCapture;
   }

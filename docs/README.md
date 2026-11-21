@@ -7,6 +7,7 @@
 - [Runtime flow / 运行流程](runtime-flow.md)
 - [Console setup / 控制台启动](control-console.md)
 - [Workbench / 会话工作台](console-workbench.md)
+- [Professional mode / 专业模式设计](专业模式设计.md)
 - [Desktop delivery checks / 桌面交付验收](desktop-delivery-validation.md)
 - [Live model, MCP and mail validation / 真实服务联调](real-integration-validation.md)
 - [Contracts / 数据契约](interfaces.md)

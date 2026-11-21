@@ -1619,7 +1619,7 @@ body[data-view="analysis"].inspector-visible #analysis-composer { left: var(--do
   #desktop-workflow-validation { border-color: transparent; background: transparent; }
   #desktop-workflow-validation[data-state="invalid"] { color: var(--danger); }
   #desktop-workflow-validation[data-state="valid"] { color: var(--brass); }
-  .desktop-flow-layout { display: grid; grid-template-columns: minmax(0, 1fr) 292px; gap: 12px; min-height: 0; }
+  .desktop-flow-layout { display: grid; grid-template-columns: 168px minmax(0, 1fr) 292px; gap: 12px; min-height: 0; }
   #desktop-workflow-edges { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; color: var(--brass); pointer-events: none; }
   .desktop-flow-edge { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; opacity: .7; pointer-events: stroke; cursor: pointer; }
   .desktop-flow-edge:hover, .desktop-flow-edge:focus { stroke-width: 4; opacity: 1; outline: none; }
@@ -1758,3 +1758,15 @@ body[data-view="analysis"].inspector-visible #analysis-composer { left: var(--do
 .nav .desktop-mode-switch button[aria-pressed="true"] { background: var(--brass-soft); color: var(--ink); }
 body.desktop-focus-view .topbar .nav .desktop-mode-switch { margin: 6px 0 0; width: 100%; }
 body.desktop-focus-view .topbar .nav .desktop-mode-switch button { flex: 1; padding: 4px 6px; text-align: center; }
+
+/* 专业模式：左侧节点库、节点类型色条与端口 */
+.desktop-flow-palette { align-self: start; min-width: 0; padding: 10px; border: 1px solid var(--rule-strong); border-radius: 9px; background: var(--surface); }
+.desktop-flow-palette .eyebrow { margin: 0 0 8px; }
+.desktop-flow-palette button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--ink-2); font-size: 11.5px; text-align: left; cursor: pointer; }
+.desktop-flow-palette button:hover { border-color: var(--rule); background: var(--surface-2); color: var(--ink); }
+.desktop-flow-palette i { flex: none; width: 7px; height: 7px; border-radius: 2px; }
+body.desktop-focus-view .desktop-flow-palette { position: absolute; z-index: 7; left: 18px; top: max(76px, calc(var(--desktop-flow-toolbar-height, 0px) + 24px)); bottom: calc(var(--composer-height, 150px) + 22px); width: 158px; overflow-y: auto; background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(12px); box-shadow: 0 14px 38px rgba(0,0,0,.14); }
+.desktop-flow-node::before { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 3px; border-radius: 9px 0 0 9px; background: var(--node-accent, var(--brass)); }
+.desktop-flow-port { position: absolute; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border: 1px solid var(--rule-strong); border-radius: 50%; background: var(--surface); }
+.desktop-flow-port.in { left: -4px; }
+.desktop-flow-port.out { right: -4px; }

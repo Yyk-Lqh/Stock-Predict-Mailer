@@ -383,9 +383,11 @@ def make_server(root, port=8767, master_key=None, market=None):
                     return
                 if kind == "registry":
                     if method == "GET" and len(parts) == 2:
-                        from ..core import Config
-                        from ..model_registry import describe_models
-
+                        try:
+                            from ..core import Config
+                            from ..model_registry import describe_models
+                        except ImportError as exc:
+                            raise ServiceError("NOT_READY", f"模型注册表需要 research 额外依赖（缺少 {exc.name}）") from None
                         self.output({"models": describe_models(Config(store.root))})
                     else:
                         raise ServiceError("NOT_FOUND", "模型注册表接口不存在")

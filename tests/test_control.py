@@ -1,4 +1,5 @@
 import asyncio
+import importlib.util
 import json
 import os
 import socket
@@ -653,6 +654,7 @@ class ConsoleAPITests(unittest.TestCase):
                     else:
                         handler.wfile.write.assert_called_once()
 
+    @unittest.skipUnless(importlib.util.find_spec("numpy"), "需要 research 额外依赖（numpy）")
     def test_registry_endpoint_lists_trained_models(self):
         body = self.client.get("/api/registry").json()
         self.assertEqual(body["models"], [])

@@ -45,6 +45,7 @@
 
 ### 修复
 
+- `GET /api/registry` 在缺少 `research` 依赖（numpy）时不再抛 500：改为返回 `NOT_READY` 并说明缺哪个包。CI 的 agent-only 任务不装额外依赖，`test_control` 曾因此整体失败。
 - 自采文档的依赖命令：`import-csv`/`update-bars` 用 pyarrow 写 Parquet，属于 `research` extra，原文只写 `uv sync --extra trees`，照做会在导入时报缺模块。改为 `--extra research --extra trees` 并注明用途。
 
 ### 文档

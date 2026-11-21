@@ -5,7 +5,7 @@
   assert(location.hostname === '127.0.0.1' && location.port === '8768', 'Use the disposable fixture');
   assert(innerWidth >= 1200, 'Use a desktop viewport at least 1200px wide');
   const canvas = document.getElementById('desktop-workflow-canvas');
-  document.querySelector('.desktop-focus-toggle').click();
+  window.DesktopWorkbench.setMode('focus');
   const collapse = document.querySelector('.desktop-nav-collapse');
   const wasCollapsed = collapse.getAttribute('aria-expanded') === 'false';
   if (!wasCollapsed) collapse.click();

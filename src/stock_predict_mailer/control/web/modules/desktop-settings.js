@@ -16,6 +16,18 @@ window.DesktopSettings = (() => {
   for(const [id,title] of [['model','默认模型'],['tools','外部能力'],['mail','邮件通道']]) { const row=make('div'); row.append(make('dt',title)); const value=make('dd'); value.id='desktop-saved-'+id; row.append(value); summary.append(row); }
   overview.append(summary); pane.querySelector('.page-head').after(overview);
 
+  const modeChoice=make('section',null,'desktop-mode-choice');
+  modeChoice.setAttribute('aria-label','界面模式');
+  modeChoice.append(make('h2','界面模式'),make('p','普通保留大厅与行情墙；专业打开可编辑的分析画布。选择会记住，并立即切换。','hint'));
+  const modeGroup=make('div',null,'desktop-view-switch'); modeGroup.setAttribute('role','group'); modeGroup.setAttribute('aria-label','界面模式');
+  for(const [value,text] of [['hall','普通'],['focus','专业']]) {
+    const node=button(text,()=>{window.DesktopWorkbench?.setMode(value);window.showView?.('analysis');});
+    node.dataset.desktopMode=value; node.setAttribute('aria-pressed','false'); modeGroup.append(node);
+  }
+  modeChoice.append(modeGroup); overview.after(modeChoice);
+  const syncMode=()=>{const active=document.body.classList.contains('desktop-focus-view')?'focus':'hall';for(const node of modeGroup.children)node.setAttribute('aria-pressed',String(node.dataset.desktopMode===active));};
+  new MutationObserver(syncMode).observe(document.body,{attributes:true,attributeFilter:['class']}); syncMode();
+
   const form=$('model-form'), basic=make('div',null,'grid-3 desktop-model-basic'), remote=make('div',null,'grid-2 desktop-model-remote');
   const advanced=make('details',null,'input-editor desktop-model-advanced'); advanced.append(make('summary','高级参数 · 超时、温度与生成设置'));
   const advancedGrid=make('div',null,'grid-2 desktop-model-advanced-fields'); advanced.append(advancedGrid);

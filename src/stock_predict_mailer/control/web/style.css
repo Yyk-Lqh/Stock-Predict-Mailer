@@ -1361,7 +1361,6 @@ body[data-view="analysis"].inspector-visible #analysis-composer { left: var(--do
   body.desktop-focus-view .wrap { margin-left: 232px; }
   body.desktop-focus-view[data-view="analysis"] .pony-office { inset: 0 0 0 232px; }
   body.desktop-focus-view[data-view="analysis"] #analysis-composer { left: calc(232px + max(24px, (100vw - 1100px) / 2)); }
-  .desktop-focus-toggle[aria-pressed="true"], .desktop-hall-toggle[aria-pressed="true"] { color: var(--ink); background: var(--surface-3); }
   #desktop-workflow { position: absolute; inset: 0 0 auto; z-index: 8; padding: 19px 32px 15px; background: var(--surface); border-bottom: 1px solid var(--rule) !important; }
   .desktop-workflow-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
   .desktop-workflow-heading > div:first-child { min-width: 0; }
@@ -1567,6 +1566,9 @@ body[data-view="analysis"].inspector-visible #analysis-composer { left: var(--do
   .desktop-record-feedback[data-state="failed"] p, .desktop-record-feedback[data-state="partial"] p { color: var(--danger); }
   .desktop-settings-overview { margin: 0 0 26px; padding-block: 18px 22px; border-block: 1px solid var(--rule) !important; }
   .desktop-settings-overview > h2 { font-size: 16px; margin-bottom: 7px; }
+  .desktop-mode-choice { margin: 0 0 26px; padding-block: 18px 22px; border-bottom: 1px solid var(--rule); }
+  .desktop-mode-choice > h2 { font-size: 16px; margin-bottom: 7px; }
+  .desktop-mode-choice .desktop-view-switch { margin-top: 10px; }
   .desktop-config-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 24px; margin: 20px 0 0; }
   .desktop-config-summary > div { min-width: 0; }
   .desktop-config-summary dt { color: var(--ink-3); font-size: 11px; margin-bottom: 8px; }

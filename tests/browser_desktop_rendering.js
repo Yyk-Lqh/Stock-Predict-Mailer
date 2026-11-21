@@ -3,7 +3,7 @@
   const $=id=>document.getElementById(id),checks=[],sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   const assert=(ok,message)=>{if(!ok)throw Error(message);};
   const wait=async(fn,label)=>{for(let i=0;i<180;i++){if(fn())return;await sleep(100);}throw Error('Timeout: '+label);};
-  const mode=value=>document.querySelector(`[data-desktop-mode="${value}"]`).click();
+  const mode=value=>window.DesktopWorkbench.setMode(value);
   async function mutations(){await sleep(160);let count=0;const observer=new MutationObserver(items=>count+=items.length);observer.observe(document.querySelector('.office-stage'),{attributes:true,childList:true,subtree:true});await sleep(400);observer.disconnect();return count;}
   try{
     assert(location.port==='8768'&&innerWidth>760,'Use disposable desktop console');showView('analysis');mode('focus');assert(await mutations()===0,'Hidden focus scene kept drawing');

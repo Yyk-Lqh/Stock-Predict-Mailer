@@ -16,7 +16,7 @@
   };
   assert(innerWidth > 760, 'Use desktop viewport');
   await wait(() => $('desktop-workflow') && $('workspace-health').textContent !== '正在连接', 'boot');
-  document.querySelector('.desktop-focus-toggle').click();
+  window.DesktopWorkbench.setMode('focus');
   assert(document.querySelectorAll('[data-workflow-node]').length >= 9, 'Professional canvas must expose the real analysis stages');
   assert(document.querySelector('#desktop-workflow-inspector').textContent.includes('当前状态'), 'Canvas must expose node runtime details');
   assert(document.querySelector('#desktop-workflow-validation').textContent.includes('流程校验通过'), 'Default workflow must pass DAG validation');
@@ -39,10 +39,10 @@
   document.querySelector('[data-view="analysis"]').click();
   checks.push('missing model leads to configuration; no fabricated report');
 
-  document.querySelector('.desktop-hall-toggle').click();
+  window.DesktopWorkbench.setMode('hall');
   assert(!document.querySelector('.office-stage').inert && getComputedStyle(document.querySelector('.market-wall')).display !== 'none', 'Hall must remain interactive');
   assert(localStorage.getItem('stock_predict_mailer.desktop.view.v1') === 'hall', 'Hall preference not saved');
-  document.querySelector('.desktop-focus-toggle').click();
+  window.DesktopWorkbench.setMode('focus');
   assert(document.querySelector('.office-stage').inert && getComputedStyle(document.querySelector('.market-wall')).display === 'none', 'Hidden hall must not remain interactive');
   checks.push('view choice persists and hidden scene has no interactive targets');
 

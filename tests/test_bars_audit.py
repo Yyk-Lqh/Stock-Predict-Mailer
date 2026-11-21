@@ -1,8 +1,9 @@
 import csv
+import importlib.util
 import io
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from stock_predict_mailer.bars_audit import audit
@@ -100,11 +101,67 @@ class AuditTests(unittest.TestCase):
         with_action = audit(self.cfg, path)
         self.assertTrue(with_action["large_moves"][0]["action_registered"])
 
+    def test_available_at_is_compared_as_an_instant(self):
+        same_moment = self.write([bar("2026-11-18", available="2026-11-18T07:30:00+00:00")])
+        self.assertTrue(audit(self.cfg, same_moment)["ok"])
+        too_early = self.write([bar("2026-11-18", available="2026-11-18T06:30:00+00:00")])
+        report = audit(self.cfg, too_early)
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["timezone"], "Asia/Shanghai")
+
     def test_a_file_without_the_contract_columns_is_refused(self):
         path = Path(self.folder.name) / "bad.csv"
         path.write_text("date,security_id\n2026-11-17,sh.600519\n", encoding="utf-8")
         with self.assertRaises(ValueError):
             audit(self.cfg, path)
+
+
+@unittest.skipUnless(importlib.util.find_spec("pyarrow"), "需要 research 额外依赖（pyarrow）")
+class IngestGateTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        base = Path(self.temp.name)
+        (base / "ws").mkdir()
+        self.root = base / "ws"
+        self.config = base / "config.toml"
+        self.config.write_text('workspace = "./ws"\ntimezone = "Asia/Shanghai"\n', encoding="utf-8")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def write(self, name, rows):
+        path = Path(self.temp.name) / name
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=FIELDS, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+        path.write_text(buffer.getvalue(), encoding="utf-8")
+        return path
+
+    def run_cli(self, *args):
+        with redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()) as err:
+            code = main(["legacy", "--config", str(self.config), *args])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_import_refuses_a_bar_known_before_the_close(self):
+        path = self.write("bad.csv", [bar("2026-11-18", available="2026-11-18T10:00:00+08:00")])
+        code, out, err = self.run_cli("import-csv", str(path))
+        self.assertEqual(code, 2)
+        self.assertIn("核对未通过", err)
+        self.assertIn("available_at_before_close", out)
+        self.assertFalse((self.root / "snapshots").exists())
+
+    def test_the_flag_lets_a_known_bad_file_through(self):
+        path = self.write("bad.csv", [bar("2026-11-18", available="2026-11-18T10:00:00+08:00")])
+        code, _, _ = self.run_cli("import-csv", str(path), "--allow-audit-problems")
+        self.assertEqual(code, 0)
+        self.assertTrue(list((self.root / "snapshots").iterdir()))
+
+    def test_a_clean_file_imports_normally(self):
+        path = self.write("good.csv", [bar("2026-11-17"), bar("2026-11-18")])
+        code, out, _ = self.run_cli("import-csv", str(path))
+        self.assertEqual(code, 0)
+        self.assertIn('"row_count": 2', out)
 
 
 class CliTests(unittest.TestCase):

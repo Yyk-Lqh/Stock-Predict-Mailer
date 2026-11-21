@@ -13,6 +13,7 @@ import io
 from collections import defaultdict
 from datetime import date, datetime, time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .calendar import action_map, certified_sessions
 from .core import Config, timestamp
@@ -71,10 +72,11 @@ def audit(cfg: Config, path, *, market=None, threshold=DEFAULT_THRESHOLD, limit=
     panel_dates = sorted({row["date"] for row in rows})
     outside = [day.isoformat() for day in panel_dates if calendar_set and day.isoformat() not in calendar_set]
 
+    zone = ZoneInfo(cfg.timezone)
     early = [{"security_id": row["security_id"], "date": row["date"].isoformat(),
               "available_at": row["available_at"].isoformat()}
              for row in rows
-             if row["available_at"] < datetime.combine(row["date"], CLOSE, row["available_at"].tzinfo)]
+             if row["available_at"] < datetime.combine(row["date"], CLOSE, zone)]
 
     missing = {}
     for symbol, items in sorted(by_symbol.items()):
@@ -109,6 +111,7 @@ def audit(cfg: Config, path, *, market=None, threshold=DEFAULT_THRESHOLD, limit=
         "ok": not (bad or duplicates or outside or early),
         "file": str(path), "rows": len(rows), "symbols": sorted(by_symbol),
         "range": [panel_dates[0].isoformat(), panel_dates[-1].isoformat()],
+        "timezone": cfg.timezone,
         "calendar": ({"market": market, "certified": True, "sessions": len(sessions)} if sessions else
                      {"market": market, "certified": False}),
         "threshold": threshold,

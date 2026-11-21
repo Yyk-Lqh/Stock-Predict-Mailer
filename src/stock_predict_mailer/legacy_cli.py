@@ -2,10 +2,31 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from . import __version__
 from .core import connect, load_config, tracked_run
+
+
+def _audit_refusal(cfg, paths, market):
+    """Refuse a file whose bars could not have been known when the file claims.
+
+    Only hard problems stop the ingest; a gap or a large move is reported by
+    ``bars-audit`` on demand, not enforced here.
+    """
+    from .bars_audit import audit
+
+    for path in paths:
+        report = audit(cfg, path, market=None if market in (None, "unknown") else market)
+        if not report["ok"]:
+            return report
+    return None
+
+
+def _report_refusal(report):
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    print("核对未通过：先修正采集文件，或显式 --allow-audit-problems 继续", file=sys.stderr)
 
 
 def main(argv=None) -> int:
@@ -21,6 +42,7 @@ def main(argv=None) -> int:
     ingest = sub.add_parser("import-csv", help="Import licensed daily bars from CSV")
     ingest.add_argument("path", type=Path)
     ingest.add_argument("--synthetic", action="store_true")
+    ingest.add_argument("--allow-audit-problems", action="store_true", help="核对发现硬问题仍继续导入")
     summary = sub.add_parser("snapshot", help="Validate and summarize an immutable snapshot")
     summary.add_argument("snapshot_id")
     cal_import = sub.add_parser("calendar-import", help="Certify a trading-session list for one market")
@@ -40,6 +62,7 @@ def main(argv=None) -> int:
     update.add_argument("--allow-stale", action="store_true", help="Record a stale update instead of refusing it")
     update.add_argument("--synthetic", action="store_true")
     update.add_argument("--market", default="unknown", help="Recorded in provenance for later review")
+    update.add_argument("--allow-audit-problems", action="store_true", help="核对发现硬问题仍继续合并")
     audit = sub.add_parser("bars-audit", help="核对已采集日线：重复、可用时间、缺失与跳空；只报告事实")
     audit.add_argument("path", type=Path)
     audit.add_argument("--market", help="对照认证日历的市场，如 CN；不填则按文件内日期计算缺失")
@@ -167,6 +190,11 @@ def main(argv=None) -> int:
             if args.command == "update-history":
                 print(json.dumps(update_history(cfg), ensure_ascii=False, indent=2))
                 return 0
+            if not args.allow_audit_problems:
+                refusal = _audit_refusal(cfg, args.paths, args.market)
+                if refusal is not None:
+                    _report_refusal(refusal)
+                    return 2
             print(json.dumps(update_bars(cfg, args.paths, base=args.base, cutoff=args.cutoff,
                                          max_staleness_days=args.max_staleness_days, allow_stale=args.allow_stale,
                                          synthetic=args.synthetic, market=args.market),
@@ -179,6 +207,11 @@ def main(argv=None) -> int:
                 path = demo_csv(cfg.workspace / "demo.csv", args.days, args.stocks)
                 result = import_csv(cfg, path, synthetic=True)
             elif args.command == "import-csv":
+                if not args.allow_audit_problems:
+                    refusal = _audit_refusal(cfg, [args.path], None)
+                    if refusal is not None:
+                        _report_refusal(refusal)
+                        return 2
                 result = import_csv(cfg, args.path, synthetic=args.synthetic)
             else:
                 result = snapshot_summary(cfg, args.snapshot_id)

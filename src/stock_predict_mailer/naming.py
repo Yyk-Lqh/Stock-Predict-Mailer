@@ -32,7 +32,7 @@ PACKAGE_NAME = "stock_predict_mailer"
 COMMAND = "stock-predict-mailer"
 CRAWLER_COMMAND = f"{COMMAND}-crawler"
 CRAWLER_VERIFY_COMMAND = f"{CRAWLER_COMMAND}-verify"
-
+DATAMART_COMMAND = f"{COMMAND}-datamart"
 ENV_PREFIX = "STOCK_PREDICT_MAILER"
 LEGACY_ENV_PREFIX = "SPM"
 

@@ -26,6 +26,7 @@ class NamingTest(unittest.TestCase):
         project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
         self.assertEqual(project["name"], naming.DISTRIBUTION_NAME)
         self.assertEqual(project["scripts"], {
+            naming.DATAMART_COMMAND: "mcp_server.datamart_servers:main",
             naming.COMMAND: f"{naming.PACKAGE_NAME}.cli:main",
             naming.CRAWLER_COMMAND: "mcp_server.server:main",
             naming.CRAWLER_VERIFY_COMMAND: "mcp_server.verify:main",

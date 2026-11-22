@@ -1,3 +1,47 @@
+#[build-system]
+#requires = ["hatchling"]
+#build-backend = "hatchling.build"
+#
+#[project]
+## Canonical identity lives in src/stock_predict_mailer/naming.py; the values here
+## follow rule, not taste: index names are lowercase-hyphen, import paths are
+## snake_case, and prose is "Stock-Predict-Mailer".
+#name = "stock-predict-mailer"
+#dynamic = ["version"]
+#description = "Prediction analysis agent and reliable email notification service"
+#readme = "README.md"
+#requires-python = ">=3.11"
+#dependencies = ["tzdata>=2024.1", "cryptography>=43,<50", "mcp>=1.30,<2", "jsonschema>=4.23,<5"]
+#
+#[project.optional-dependencies]
+#crawler = ["pandas>=2.2,<3", "requests>=2.32,<3", "baostock>=0.8.9,<0.9"]
+#knowledge = ["pypdf>=5", "openpyxl>=3.1,<4"]
+#research = ["numpy>=1.26,<3", "scikit-learn>=1.4,<2", "duckdb>=1.1,<2", "pyarrow>=15,<24", "openpyxl>=3.1,<4"]
+#trees = ["lightgbm>=4,<5"]
+#dev = ["ruff==0.17.2"]
+#
+#[project.scripts]
+#stock-predict-mailer = "stock_predict_mailer.cli:main"
+#stock-predict-mailer-crawler = "mcp_server.server:main"
+#stock-predict-mailer-crawler-verify = "mcp_server.verify:main"
+#
+#[tool.hatch.version]
+#path = "src/stock_predict_mailer/__init__.py"
+#
+#[tool.hatch.build.targets.wheel]
+#packages = ["src/stock_predict_mailer", "src/mcp_server"]
+#
+#[tool.ruff]
+#line-length = 160
+#target-version = "py311"
+#src = ["src", "tests"]
+#extend-exclude = ["data", "artifacts"]
+#
+#[tool.ruff.lint]
+## Deliberately narrow: correctness and import hygiene only, so a new
+## contributor's stylistic preferences never block a pull request.
+#select = ["E", "F", "W", "I", "B"]
+#ignore = ["E501"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -15,6 +59,7 @@ dependencies = ["tzdata>=2024.1", "cryptography>=43,<50", "mcp>=1.30,<2", "jsons
 
 [project.optional-dependencies]
 crawler = ["pandas>=2.2,<3", "requests>=2.32,<3", "baostock>=0.8.9,<0.9"]
+datamart = ["pandas>=2.2,<3", "baostock>=0.8.9,<0.9", "akshare>=1.16", "scikit-learn>=1.4,<2"]
 knowledge = ["pypdf>=5", "openpyxl>=3.1,<4"]
 research = ["numpy>=1.26,<3", "scikit-learn>=1.4,<2", "duckdb>=1.1,<2", "pyarrow>=15,<24", "openpyxl>=3.1,<4"]
 trees = ["lightgbm>=4,<5"]
@@ -24,6 +69,7 @@ dev = ["ruff==0.17.2"]
 stock-predict-mailer = "stock_predict_mailer.cli:main"
 stock-predict-mailer-crawler = "mcp_server.server:main"
 stock-predict-mailer-crawler-verify = "mcp_server.verify:main"
+stock-predict-mailer-datamart = "mcp_server.datamart_servers:main"
 
 [tool.hatch.version]
 path = "src/stock_predict_mailer/__init__.py"

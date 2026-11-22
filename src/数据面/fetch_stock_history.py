@@ -1,13 +1,20 @@
 import time
 import random
+import os
+import sys
 import baostock as bs
 import baostock.common.context as bs_context
 import akshare as ak
 import csv
 import pandas as pd
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from data_paths import HISTORY_RAW, UNIVERSE, artifact
+
 COLUMNS = ["日期", "股票代码", "开盘", "最高", "最低", "收盘", "成交量", "市盈率", "市净率", "市销率"]
 
+START_DATE = os.environ.get("STOCK_PREDICT_MAILER_BARS_START", "2009-10-23")
+END_DATE = os.environ.get("STOCK_PREDICT_MAILER_BARS_END", "2026-10-23")
 bs.login()
 if getattr(bs_context, "default_socket", None):
     bs_context.default_socket.settimeout(30)
@@ -41,8 +48,8 @@ for codes in stock_codes:
             rs = bs.query_history_k_data_plus(
                 f"{prefix}.{codes}",
                 "date,code,open,high,low,close,volume,peTTM,pbMRQ,psTTM",
-                start_date="2009-10-23",
-                end_date="2026-10-23",
+                start_date=START_DATE,
+                end_date=END_DATE,
                 frequency="d",
                 adjustflag="2"
             )

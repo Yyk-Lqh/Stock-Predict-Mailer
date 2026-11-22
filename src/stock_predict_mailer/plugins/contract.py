@@ -14,11 +14,12 @@ from typing import Protocol
 from .errors import PluginIncompatible
 
 API_VERSION = 1
-KINDS = ("market_source", "report_renderer", "notifier")
+KINDS = ("market_source", "report_renderer", "notifier", "exporter")
 KIND_CAPABILITIES = {
     "market_source": ("quotes", "candles", "bars"),
     "report_renderer": ("html", "text"),
     "notifier": ("send",),
+    "exporter": ("csv", "json", "parquet"),
 }
 PLUGIN_ID = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 MODULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
@@ -102,3 +103,16 @@ class Notifier(Protocol):
     manifest: PluginManifest
 
     def send(self, message: Mapping[str, object]) -> Mapping[str, object]: ...
+
+
+class Exporter(Protocol):
+    """Write already-validated snapshot rows to one file.
+
+    The format decides the encoding, never the meaning: column names, order and
+    values come from the snapshot, and an exporter that would rewrite them is not
+    an exporter.
+    """
+
+    manifest: PluginManifest
+
+    def export(self, rows: Sequence[Mapping[str, object]], path) -> Mapping[str, object]: ...

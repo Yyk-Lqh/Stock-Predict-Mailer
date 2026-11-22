@@ -666,7 +666,8 @@ class ConsoleAPITests(unittest.TestCase):
         self.assertEqual(body["source_chain"], ["market_tencent", "market_sina"])
         self.assertEqual(body["candles_from"], "market_tencent")
         self.assertEqual([plugin["id"] for plugin in body["plugins"]],
-                         ["market_tencent", "market_sina", "market_eastmoney", "report_text", "report_html"])
+                         ["market_tencent", "market_sina", "market_eastmoney", "export_csv", "export_jsonl",
+                          "export_parquet", "report_text", "report_html"])
         self.assertTrue(all(len(plugin["module_digest"]) == 64 for plugin in body["plugins"]))
         self.assertEqual(self.client.post("/api/plugins", json={}).status_code, 404)
 

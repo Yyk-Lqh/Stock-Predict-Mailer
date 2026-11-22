@@ -1,4 +1,5 @@
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -150,7 +151,8 @@ class RegistryTests(unittest.TestCase):
         described = registry.describe()
         self.assertEqual(described["api_version"], API_VERSION)
         self.assertEqual([item["id"] for item in described["plugins"]],
-                         ["market_tencent", "market_sina", "market_eastmoney", "report_text", "report_html"])
+                         ["market_tencent", "market_sina", "market_eastmoney", "export_csv", "export_jsonl",
+                          "export_parquet", "report_text", "report_html"])
         self.assertTrue(all(item["available"] for item in described["plugins"]))
 
     def test_error_payload_matches_the_cli_envelope(self):
@@ -298,6 +300,77 @@ class TencentBarsTests(unittest.TestCase):
         self.assertEqual(len(calls), 3)
         self.assertTrue(all("param=sh600519,day," in url for url in calls))
         self.assertEqual(len(rows), 3)
+
+
+class ExporterTests(unittest.TestCase):
+    ROWS = [{"date": "2026-11-18", "security_id": "sh.600519", "open": 1.0, "high": 2.0, "low": 0.5,
+             "close": 1.5, "volume": 100.0, "available_at": "2026-11-18T18:00:00+08:00", "source": "test"},
+            {"date": "2026-11-19", "security_id": "sz.000001", "open": 2.0, "high": 3.0, "low": 1.5,
+             "close": 2.5, "volume": 200.0, "available_at": "2026-11-19T18:00:00+08:00", "source": "test"}]
+
+    def test_each_format_is_declared_by_exactly_one_exporter(self):
+        declared = {adapter.manifest.id: adapter.manifest.capabilities for adapter in registry.select("exporter")}
+        self.assertEqual(declared, {"export_csv": ("csv",), "export_jsonl": ("json",), "export_parquet": ("parquet",)})
+        self.assertIn("exporter", registry.describe()["kinds"])
+
+    def test_csv_keeps_the_contract_column_order(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "bars.csv"
+            result = registry.exporter("csv").export(self.ROWS, path)
+            lines = path.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(lines[0], "date,security_id,open,high,low,close,volume,available_at,source")
+        self.assertEqual(len(lines), 3)
+        self.assertEqual((result["format"], result["rows"]), ("csv", 2))
+
+    def test_json_lines_export_writes_one_object_per_row(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "bars.jsonl"
+            registry.exporter("json").export(self.ROWS, path)
+            rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([row["security_id"] for row in rows], ["sh.600519", "sz.000001"])
+        self.assertEqual(rows[0]["close"], 1.5)
+
+    def test_an_undeclared_format_is_refused(self):
+        with self.assertRaises(PluginNotFound):
+            registry.exporter("xlsx")
+
+    @unittest.skipUnless(importlib.util.find_spec("pyarrow"), "需要 research 额外依赖（pyarrow）")
+    def test_the_command_resolves_the_declared_exporter(self):
+        import csv as csv_module
+
+        from stock_predict_mailer.core import Config
+        from stock_predict_mailer.data import FIELDS, import_csv
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "ws"
+            root.mkdir()
+            config = Path(folder) / "config.toml"
+            config.write_text('workspace = "./ws"\ntimezone = "Asia/Shanghai"\n', encoding="utf-8")
+            raw = Path(folder) / "bars.csv"
+            buffer = io.StringIO()
+            writer = csv_module.DictWriter(buffer, fieldnames=FIELDS, lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(self.ROWS)
+            raw.write_text(buffer.getvalue(), encoding="utf-8")
+            snapshot = import_csv(Config(root), raw)["snapshot_id"]
+            output = Path(folder) / "out.csv"
+            with redirect_stdout(io.StringIO()):
+                code = main(["legacy", "--config", str(config), "dataset-export", snapshot,
+                             "--format", "csv", "--output", str(output)])
+            self.assertEqual(code, 0)
+            self.assertEqual(len(output.read_text(encoding="utf-8").splitlines()), 3)
+
+    @unittest.skipUnless(importlib.util.find_spec("pyarrow"), "需要 research 额外依赖（pyarrow）")
+    def test_parquet_export_round_trips(self):
+        import pyarrow.parquet as pq
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "bars.parquet"
+            registry.exporter("parquet").export(self.ROWS, path)
+            table = pq.read_table(path)
+        self.assertEqual(table.num_rows, 2)
+        self.assertEqual(table.column_names, ["date", "security_id", "open", "high", "low", "close", "volume",
+                                              "available_at", "source"])
 
 
 class SourceSelectionTests(unittest.TestCase):

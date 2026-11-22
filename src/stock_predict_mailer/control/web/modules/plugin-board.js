@@ -4,7 +4,7 @@
    layout is stored, on this machine. */
 globalThis.PonyPluginBoard=(()=>{
   const KEY='stock_predict_mailer.plugin.board.v1';
-  const KINDS={market_source:'行情源',report_renderer:'报告渲染',notifier:'通知渠道'};
+  const KINDS={market_source:'行情源',report_renderer:'报告渲染',notifier:'通知渠道',exporter:'数据导出'};
   let cache=null,pending=null,observer=null,hallMounted=false,focusMounted=false;
 
   async function load(force){

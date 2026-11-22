@@ -14,12 +14,14 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from .builtin.eastmoney import EastmoneySource
+from .builtin.export import CsvExporter, JsonLinesExporter, ParquetExporter
 from .builtin.market import SinaSource, TencentSource
 from .builtin.report import HtmlReport, TextReport
 from .contract import API_VERSION, KINDS, validate_manifest
 from .errors import PluginError, PluginIncompatible, PluginKindMismatch, PluginMissingDependency, PluginNotFound
 
-_REQUIRED_METHODS = {"market_source": ("quotes",), "report_renderer": ("render",), "notifier": ("send",)}
+_REQUIRED_METHODS = {"market_source": ("quotes",), "report_renderer": ("render",), "notifier": ("send",),
+                     "exporter": ("export",)}
 _OPTIONAL_METHODS = {"market_source": ("candles", "bars")}
 _NOT_FOUND = "未声明的插件：{id}（只接受内置白名单中的 id）"
 
@@ -124,7 +126,8 @@ class Registry:
         return {"id": plugin_id, "module": type(adapter).__module__, "module_digest": _module_digest(adapter)}
 
 
-BUILTIN = Registry((TencentSource(), SinaSource(), EastmoneySource(), TextReport(), HtmlReport()))
+BUILTIN = Registry((TencentSource(), SinaSource(), EastmoneySource(), CsvExporter(), JsonLinesExporter(),
+                     ParquetExporter(), TextReport(), HtmlReport()))
 # Declaring a source does not put it in the display chain: only these ids are
 # contacted unless ``market.json`` names another set explicitly.
 DEFAULT_MARKET_SOURCES = ("market_tencent", "market_sina")
@@ -165,3 +168,11 @@ def market_candles(source_ids: Sequence[str] | None = None) -> Callable:
         if "candles" in adapter.manifest.capabilities:
             return adapter.candles
     raise PluginNotFound("选定的行情源都没有声明 candles 能力，无法绘制概览图")
+
+
+def exporter(fmt: str):
+    """The declared exporter for one output format, refusing an undeclared format."""
+    for adapter in BUILTIN.select("exporter"):
+        if fmt in adapter.manifest.capabilities:
+            return adapter
+    raise PluginNotFound(f"没有声明 {fmt} 导出能力的插件")

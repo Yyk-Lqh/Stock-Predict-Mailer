@@ -68,6 +68,10 @@ def main(argv=None) -> int:
     audit.add_argument("--market", help="对照认证日历的市场，如 CN；不填则按文件内日期计算缺失")
     audit.add_argument("--threshold", type=float, default=0.11, help="列入待核对的单日变动幅度")
     audit.add_argument("--limit", type=int, default=20, help="每类问题最多列多少条")
+    export = sub.add_parser("dataset-export", help="按已声明的导出插件把一个快照写成文件")
+    export.add_argument("snapshot_id")
+    export.add_argument("--format", default="csv", choices=("csv", "json", "parquet"))
+    export.add_argument("--output", type=Path, required=True)
     sub.add_parser("update-history", help="List recorded incremental updates")
     research = sub.add_parser("research", help="Run SYNTHETIC-only purged research")
     research.add_argument("snapshot_id")
@@ -184,6 +188,15 @@ def main(argv=None) -> int:
         report = audit(cfg, args.path, market=args.market, threshold=args.threshold, limit=args.limit)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["ok"] else 2
+    elif args.command == "dataset-export":
+        from .data import load_snapshot
+        from .plugins import registry
+
+        _, rows = load_snapshot(cfg, args.snapshot_id)
+        result = registry.exporter(args.format).export(rows, args.output)
+        result["snapshot_id"] = args.snapshot_id
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
     elif args.command in ("update-bars", "update-history"):
         from .marketdata import update_bars, update_history
         with tracked_run(cfg, args.command):

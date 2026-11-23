@@ -4096,7 +4096,7 @@ window.DesktopWorkbench = (() => {
     }
   }
 
-  function inputState() { let raw; try { raw = JSON.parse($('task-data').value); if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw Error(); } catch (_) { return {state: 'invalid', field: 'task-data', label: '请修正原始 JSON', detail: '原始输入无法解析，请打开资料检查格式。'}; } const prediction = window.AnalysisInput.currentPrediction(); if (typeof prediction?.subject !== 'string' || !prediction.subject.trim()) return {state: 'empty', label: '填写分析资料', detail: '先填写标的和上游预测。'}; const result = {prediction, facts: Array.isArray(raw.context?.facts) ? raw.context.facts.length : 0}; if (typeof prediction.model_version !== 'string' || !prediction.model_version.trim()) return {...result, state: 'invalid', field: 'p-model-version', label: '补充模型版本', detail: '请填写这份预测的上游模型版本。'}; if (!prediction.direction && !Number.isFinite(prediction.value)) return {...result, state: 'invalid', field: 'p-direction-up', label: '补充预测方向', detail: '请按上游预测选择本轮方向。'}; if (!(Number.isFinite(prediction.horizon?.value) && prediction.horizon.value > 0)) return {...result, state: 'invalid', field: 'p-horizon-value', label: '核对预测周期', detail: '预测周期需要大于零。'}; if (!(Date.parse(prediction.valid_until) > Date.now())) return {...result, state: 'expired', field: 'p-valid-until', label: '更新过期预测', detail: '预测已过期或缺少有效期，请核对原始资料后更新。'}; if (prediction.confidence != null && !(Number.isFinite(prediction.confidence) && prediction.confidence >= 0 && prediction.confidence <= 1)) return {...result, state: 'invalid', field: 'p-confidence', label: '核对置信度', detail: '置信度须在 0 到 1 之间；上游未提供时可留空。'}; if (raw.context?.facts && (!Array.isArray(raw.context.facts) || raw.context.facts.some(fact => typeof fact?.source !== 'string' || !fact.source.trim() || !Number.isFinite(Date.parse(fact.observed_at))))) return {...result, state: 'invalid', label: '补充事实来源', detail: '每条客观事实都需要来源和有效的观测时间。'}; return {...result, state: 'ready', label: prediction.subject, detail: '主要资料已填写；发送时会再次校验资料、归档和授权。'}; }
+  function inputState() { let raw; try { raw = JSON.parse($('task-data').value); if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw Error(); } catch (_) { return {state: 'invalid', field: 'task-data', label: '请修正原始 JSON', detail: '原始输入无法解析，请打开资料检查格式。'}; } const prediction = window.AnalysisInput.currentPrediction(); if (typeof prediction?.subject !== 'string' || !prediction.subject.trim()) return {state: 'empty', label: '填写分析资料', detail: ''}; const result = {prediction, facts: Array.isArray(raw.context?.facts) ? raw.context.facts.length : 0}; if (typeof prediction.model_version !== 'string' || !prediction.model_version.trim()) return {...result, state: 'invalid', field: 'p-model-version', label: '补充模型版本', detail: '请填写这份预测的上游模型版本。'}; if (!prediction.direction && !Number.isFinite(prediction.value)) return {...result, state: 'invalid', field: 'p-direction-up', label: '补充预测方向', detail: '请按上游预测选择本轮方向。'}; if (!(Number.isFinite(prediction.horizon?.value) && prediction.horizon.value > 0)) return {...result, state: 'invalid', field: 'p-horizon-value', label: '核对预测周期', detail: '预测周期需要大于零。'}; if (!(Date.parse(prediction.valid_until) > Date.now())) return {...result, state: 'expired', field: 'p-valid-until', label: '更新过期预测', detail: '预测已过期或缺少有效期，请核对原始资料后更新。'}; if (prediction.confidence != null && !(Number.isFinite(prediction.confidence) && prediction.confidence >= 0 && prediction.confidence <= 1)) return {...result, state: 'invalid', field: 'p-confidence', label: '核对置信度', detail: '置信度须在 0 到 1 之间；上游未提供时可留空。'}; if (raw.context?.facts && (!Array.isArray(raw.context.facts) || raw.context.facts.some(fact => typeof fact?.source !== 'string' || !fact.source.trim() || !Number.isFinite(Date.parse(fact.observed_at))))) return {...result, state: 'invalid', label: '补充事实来源', detail: '每条客观事实都需要来源和有效的观测时间。'}; return {...result, state: 'ready', label: prediction.subject, detail: '主要资料已填写；发送时会再次校验资料、归档和授权。'}; }
   function openData() { origin = document.activeElement?.getClientRects?.().length ? document.activeElement : $('analysis-data-open'); $('prediction-editor').open = true; window.AnalysisInput.open('input'); const target = $('task-form').querySelector('[aria-invalid="true"]') || $(inputState().field || 'p-subject'); for (let parent = target.parentElement; parent && parent !== $('task-form'); parent = parent.parentElement) if (parent.tagName === 'DETAILS') parent.open = true; target.focus(); target.scrollIntoView({block: 'nearest'}); }
   function openResult() { if (!task) return; origin = document.activeElement; window.AnalysisInput.open(['submitted', 'working'].includes(task.status.state) ? 'progress' : 'report'); $('analysis-tab-' + pane).focus(); }
   function chooseModel() { origin = document.activeElement; if (safeProfiles().some(item => item.enabled && item.id === safeSettings()?.default_model_id)) $('composer-model').click(); else { showView('settings'); showPanel('models'); $('model-name').focus(); } }
@@ -4715,10 +4715,6 @@ window.DesktopReport = (() => {
     if (analysis()) renderOverview();
     setOverview(overview); syncExpand();
   }
-  function recordsScope() {
-    if (!scope) return;
-    scope.textContent = `筛选仅作用于已载入的任务记录${$('record-query').value.trim() ? '，不会搜索尚未载入的历史' : ''}；有更多记录时可继续载入。`;
-  }
   function install() {
     if (!desktop.matches) {
       setReading(false); restoreOriginal(); overview = false;
@@ -4739,10 +4735,10 @@ window.DesktopReport = (() => {
     }
     if (!header.isConnected) { inspector.prepend(header); header.append(heading, tabs); }
     if (!scope) {
-      scope = make('p', null, 'hint desktop-record-scope'); scope.id = 'desktop-record-scope';
-      $('record-list').before(scope); $('record-query').addEventListener('input', recordsScope);
+      scope = make('p', '仅筛选已载入的任务。', 'hint desktop-record-scope'); scope.id = 'desktop-record-scope';
+      $('record-list').before(scope);
     }
-    scope.hidden = false; recordsScope();
+    scope.hidden = false;
     if (task) render(task);
   }
   $('record-list').addEventListener('click', event => {
@@ -5006,7 +5002,7 @@ window.DesktopSettings = (() => {
   const label = id => $(id).closest('label');
   const signature = p => JSON.stringify([p.name,p.provider,p.base_url,p.model,p.parameters,p.supported_parameters,p.temperature_min,p.temperature_max,p.reasoning_effort_map,p.timeout_seconds,p.retries,p.has_secret,p.enabled,p.input_usd_per_million,p.output_usd_per_million]);
   const overview=make('section',null,'desktop-settings-overview'); overview.setAttribute('aria-label','已保存配置');
-  overview.append(make('h2','已保存的工作区配置'),make('p','保存、测试连接和设为默认分别生效。下面的摘要只显示已保存状态。','hint'));
+  overview.append(make('h2','已保存配置'));
   const summary=make('dl',null,'desktop-config-summary');
   for(const [id,title] of [['model','默认模型'],['tools','外部能力'],['mail','邮件通道']]) { const row=make('div'); row.append(make('dt',title)); const value=make('dd'); value.id='desktop-saved-'+id; row.append(value); summary.append(row); }
   overview.append(summary); pane.querySelector('.page-head').after(overview);
@@ -5168,8 +5164,8 @@ window.DesktopRecords = (() => {
     const nodes=[],usedHeadings=new Set();let prior='',index=0;
     for(const row of shown){const label=dateLabel(row.dataset.recordedAt);if(label&&label!==prior){const key=index+++'|'+label;usedHeadings.add(key);if(!headings.has(key)){const heading=document.createElement('h3');heading.className='desktop-record-date';heading.textContent=label+' · 状态记录时间';headings.set(key,heading);}nodes.push(headings.get(key));}nodes.push(row);prior=label;}
     for(const[key]of headings)if(!usedHeadings.has(key))headings.delete(key);
-    if(!shown.length){const empty=document.createElement('p');empty.className='empty';empty.textContent=items.length?`已载入的 ${items.length} 条里没有匹配。${cursor?'可以继续载入更早的记录，或':''}清空筛选再看。`:stage==='loading'?'正在读取任务记录…':stage==='failed'?'本次记录尚未读取成功，请重试。':cursor?'本页尚无主任务记录，可以继续载入更早的记录。':'这里还没有任务记录。跑一次分析，这里就会留下它的标的、方向与投递结果。';nodes.push(empty);
-      if(!items.length&&!cursor&&!['loading','failed'].includes(stage)){const go=document.createElement('button');go.type='button';go.className='btn tiny mt-12';go.textContent='去跑第一次分析';go.onclick=()=>showView('analysis');nodes.push(go);}}
+    if(!shown.length){const empty=document.createElement('p');empty.className='empty';empty.textContent=items.length?`已载入的 ${items.length} 条里没有匹配。${cursor?'可以继续载入更早的记录，或':''}清空筛选再看。`:stage==='loading'?'正在读取任务记录…':stage==='failed'?'本次记录尚未读取成功，请重试。':cursor?'本页尚无主任务记录，可以继续载入更早的记录。':'暂无任务记录。';nodes.push(empty);
+      if(!items.length&&!cursor&&!['loading','failed'].includes(stage)){const go=document.createElement('button');go.type='button';go.className='btn tiny mt-12';go.textContent='开始分析';go.onclick=()=>showView('analysis');nodes.push(go);}}
     reconcile(nodes);
     put($('record-count'),!items.length?'还没有已加载任务':shown.length===items.length?`已载入 ${items.length} 条${cursor?' · 还有更早的':''}`:`筛出 ${shown.length} 条 · 已载入 ${items.length} 条`);
     $('record-more-wrap').hidden=!cursor;return true;
@@ -5187,7 +5183,7 @@ window.DesktopRecords = (() => {
   function identityChanged(){++epoch;clearTimeout(recordTimer);recordBusy=false;recordLoaded=false;recordCursor=null;records=[];recordFilter='all';recordQuery='';$('record-query').value='';cache.clear();dates.clear();headings.clear();host.replaceChildren();$('record-count').textContent='尚未读取';$('record-more-wrap').hidden=true;receipt('idle');$('record-refresh').disabled=$('record-more').disabled=false;}
   return {active:()=>desktop.matches,revision:()=>epoch,identityChanged,render,page,
     loading(){receipt('loading',records.length?`正在更新记录，保留当前已加载的 ${records.length} 条…`:'正在读取任务记录…');$('record-refresh').disabled=$('record-more').disabled=true;},
-    loaded(warning){receipt(warning?'partial':'ready',warning||'记录已更新；筛选仅作用于已加载范围。');},
+    loaded(warning){receipt(warning?'partial':'ready',warning||'记录已更新。');},
     failed(error){receipt('failed','记录读取失败：'+error+'。当前记录和筛选已保留。');render({items:records,filter:recordFilter,query:recordQuery,cursor:recordCursor});},
     finished(){$('record-refresh').disabled=$('record-more').disabled=false;}
   };

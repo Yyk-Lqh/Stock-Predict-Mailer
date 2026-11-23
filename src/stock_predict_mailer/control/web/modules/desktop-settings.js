@@ -11,7 +11,7 @@ window.DesktopSettings = (() => {
   const label = id => $(id).closest('label');
   const signature = p => JSON.stringify([p.name,p.provider,p.base_url,p.model,p.parameters,p.supported_parameters,p.temperature_min,p.temperature_max,p.reasoning_effort_map,p.timeout_seconds,p.retries,p.has_secret,p.enabled,p.input_usd_per_million,p.output_usd_per_million]);
   const overview=make('section',null,'desktop-settings-overview'); overview.setAttribute('aria-label','已保存配置');
-  overview.append(make('h2','已保存的工作区配置'),make('p','保存、测试连接和设为默认分别生效。下面的摘要只显示已保存状态。','hint'));
+  overview.append(make('h2','已保存配置'));
   const summary=make('dl',null,'desktop-config-summary');
   for(const [id,title] of [['model','默认模型'],['tools','外部能力'],['mail','邮件通道']]) { const row=make('div'); row.append(make('dt',title)); const value=make('dd'); value.id='desktop-saved-'+id; row.append(value); summary.append(row); }
   overview.append(summary); pane.querySelector('.page-head').after(overview);

@@ -33,14 +33,9 @@
   <div id="notice" role="status" aria-live="polite" hidden></div>
 
   <section class="view" data-view-pane="overview">
-    <div class="hero">
-      <p class="eyebrow">本机分析工具</p>
-      <h1>把上游的预测，变成一份能核对、能发出的报告。</h1>
-      <p class="lede">
-        数据与模型团队把预测结果和客观事实交给这里，它逐项校验后写出分层报告：哪些是上游给的事实、哪些是 Agent 的推断、哪里缺信息、哪里有风险。
-        报告可以按你预先授权的地址发出去。它不训练模型、不采集行情，也不保证收益。
-      </p>
-      <div class="hero-actions">
+    <div class="page-head">
+      <h1>使用引导</h1>
+      <div class="actions">
         <button type="button" class="btn primary" id="start-analysis">开始一次分析</button>
         <button type="button" class="btn" id="try-sample">用示例预测试一遍</button>
       </div>
@@ -48,42 +43,21 @@
 
     <div class="mt-32">
       <div class="steps-head">
-        <p class="eyebrow">三步走完一轮</p>
+        <h2>分析步骤</h2>
         <span class="steps-count" id="steps-count">正在读取进度</span>
       </div>
       <ol class="steps" id="steps"></ol>
     </div>
 
-    <div class="split mt-32">
-      <div>
-        <p class="eyebrow">它做什么</p>
-        <ul class="check-list yes">
-          <li><span><b>先校验再分析。</b>对象、周期、有效期、事实来源不合规，直接拒绝，不会拿错数据编一份报告出来。</span></li>
-          <li><span><b>分层写清楚。</b>事实带来源与观测时间，推断标注引用了哪几条事实，限制和风险单独成段。</span></li>
-          <li><span><b>投递留痕。</b>谁授权、发到哪、结果是模拟还是已提交，都记在报告里。</span></li>
-        </ul>
-      </div>
-      <div>
-        <p class="eyebrow">它不做什么</p>
-        <ul class="check-list no">
-          <li><span><b>不训练、不加载上游模型权重。</b>预测值来自上游，这里只做解读。</span></li>
-          <li><span><b>不采集行情、不承诺收益。</b>没有 K 线，也没有买卖点。</span></li>
-          <li><span><b>不替你扩大权限。</b>没授权的收件人一律拒绝，状态不确定的邮件也不会自动重发。</span></li>
-        </ul>
-      </div>
-    </div>
-
     <div class="mt-44">
       <div class="steps-head">
-        <p class="eyebrow">当前环境</p>
-        <span class="hint" id="vitals-hint">配置现状，随时可改</span>
+        <h2>当前配置</h2>
       </div>
       <div class="vitals" id="vitals"></div>
     </div>
 
     <footer>
       预测结果来自上游模型，本系统只提供解读与风险提示，不作收益保证。
-      默认使用 Mock 模型与本地文件投递，可完全离线跑通；真实模型与真实邮箱需在「设置」中另行配置。
     </footer>
   </section>
 
@@ -311,14 +285,8 @@
   </section>
 
   <section class="view" data-view-pane="records" hidden>
-    <div class="page-head">
-      <p class="eyebrow">记录</p>
-      <h1>跑过的任务，都留在这里。</h1>
-      <p class="lede">按提交时间倒序。点任意一行，就把那份报告调回分析页；运行中的任务会继续刷新。</p>
-    </div>
-
-    <div class="section-head">
-      <h2>任务</h2>
+    <div class="page-head section-head">
+      <h1>任务记录</h1>
       <span class="hint" id="record-count">尚未读取</span>
       <button type="button" id="record-refresh" class="btn quiet">刷新</button>
     </div>
@@ -339,7 +307,7 @@
     </div>
     <section id="forecast-records" class="forecast-records" aria-labelledby="forecast-records-title">
       <div class="section-head"><h2 id="forecast-records-title">预测归档</h2><button id="forecast-refresh" type="button" class="btn quiet">刷新预测</button></div>
-      <p class="hint">展示当前可访问任务的预测。到期后仍需提供匹配观测才能评估。</p>
+      <p class="hint">到期后提交匹配的观测数据即可评估。</p>
       <label class="field forecast-filter"><span>评价状态</span><select id="forecast-state"><option value="all">全部状态</option><option value="pending">待到期</option><option value="due">已到期，待观测</option><option value="evaluated">已评估</option></select></label>
       <p id="forecast-list-status" class="hint" role="status">尚未读取</p>
       <div id="forecast-list" class="task-list"></div>
@@ -350,9 +318,7 @@
 
   <section class="view" data-view-pane="settings" hidden>
     <div class="page-head">
-      <p class="eyebrow">设置</p>
-      <h1>接什么服务，给多少权限。</h1>
-      <p class="lede">这些配置只在需要时改。默认的 Mock 模型与本地文件投递可以完全离线跑通一次完整流程。</p>
+      <h1>设置</h1>
     </div>
 
     <div class="subnav" role="tablist">
@@ -572,7 +538,6 @@
         <div class="submit-bar">
           <button type="submit" class="btn primary">保存全部设置</button>
           <span id="settings-dirty" class="dirty-flag" hidden>有未保存的修改</span>
-          <span class="hint grow">保存时会提交完整设置对象，页面未展示的字段（如环境变量名）会原样保留。</span>
         </div>
       </form>
     </section>
@@ -580,19 +545,19 @@
     <section id="appearance" class="panel" hidden>
       <div class="setting-group">
         <h2>界面主题</h2>
-        <p class="hint">只影响当前浏览器，不写入服务端配置。选择后立即生效，刷新或重新打开仍保持。</p>
+        <p class="hint">主题设置保存在当前浏览器。</p>
         <div class="theme-options" role="radiogroup" aria-label="界面主题">
           <label class="theme-option">
             <input type="radio" name="theme-mode" value="light" data-theme-choice="light">
-            <span class="theme-option-body"><strong>浅色</strong><small>白底深字，适合明亮环境</small></span>
+            <span class="theme-option-body"><strong>浅色</strong></span>
           </label>
           <label class="theme-option">
             <input type="radio" name="theme-mode" value="dark" data-theme-choice="dark">
-            <span class="theme-option-body"><strong>深色</strong><small>深底浅字，控制台默认外观</small></span>
+            <span class="theme-option-body"><strong>深色</strong></span>
           </label>
           <label class="theme-option">
             <input type="radio" name="theme-mode" value="system" data-theme-choice="system">
-            <span class="theme-option-body"><strong>跟随系统</strong><small>随操作系统的浅色/深色自动切换</small></span>
+            <span class="theme-option-body"><strong>跟随系统</strong></span>
           </label>
         </div>
         <p id="theme-effective" class="hint mt-14" role="status" aria-live="polite"></p>
@@ -603,13 +568,12 @@
   <section class="view" data-view-pane="memory" hidden>
     <div id="memory" class="panel">
       <div class="page-head">
-        <p class="eyebrow">记忆</p>
-        <h1>接着上一轮说下去。</h1>
-        <p class="lede">用访问密钥恢复自己的会话、长期记忆与知识资料。页面仅在当前标签页保留密钥，关闭后需要重新输入原密钥。</p>
+        <h1>记忆与访问</h1>
       </div>
 
       <div class="card">
         <label class="field"><span>记忆访问密钥</span><input id="memory-key" type="password" autocomplete="new-password"></label>
+        <p class="hint mt-10">用原密钥恢复会话、长期记忆和旧版私有资料。密钥仅保留在当前标签页。</p>
         <div id="memory-access-actions" class="actions mt-12"></div>
       </div>
 

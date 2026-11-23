@@ -1959,11 +1959,11 @@ function renderRecords() {
     chip.classList.toggle('is-empty', counts[key] === 0);
   }
   if (!records.length) {
-    const hint = recordsPlaceholder('这里还没有任务记录。跑一次分析，这里就会留下它的标的、方向与投递结果。');
+    const hint = recordsPlaceholder('暂无任务记录。');
     const go = document.createElement('button');
     go.type = 'button';
     go.className = 'btn tiny mt-12';
-    go.textContent = '去跑第一次分析';
+    go.textContent = '开始分析';
     go.onclick = () => showView('analysis');
     hint.after(go);
     $('record-count').textContent = '还没有任务';

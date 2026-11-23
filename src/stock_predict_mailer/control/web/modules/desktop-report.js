@@ -190,10 +190,6 @@ window.DesktopReport = (() => {
     if (analysis()) renderOverview();
     setOverview(overview); syncExpand();
   }
-  function recordsScope() {
-    if (!scope) return;
-    scope.textContent = `筛选仅作用于已载入的任务记录${$('record-query').value.trim() ? '，不会搜索尚未载入的历史' : ''}；有更多记录时可继续载入。`;
-  }
   function install() {
     if (!desktop.matches) {
       setReading(false); restoreOriginal(); overview = false;
@@ -214,10 +210,10 @@ window.DesktopReport = (() => {
     }
     if (!header.isConnected) { inspector.prepend(header); header.append(heading, tabs); }
     if (!scope) {
-      scope = make('p', null, 'hint desktop-record-scope'); scope.id = 'desktop-record-scope';
-      $('record-list').before(scope); $('record-query').addEventListener('input', recordsScope);
+      scope = make('p', '仅筛选已载入的任务。', 'hint desktop-record-scope'); scope.id = 'desktop-record-scope';
+      $('record-list').before(scope);
     }
-    scope.hidden = false; recordsScope();
+    scope.hidden = false;
     if (task) render(task);
   }
   $('record-list').addEventListener('click', event => {

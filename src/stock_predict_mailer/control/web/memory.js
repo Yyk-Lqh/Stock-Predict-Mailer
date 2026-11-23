@@ -3335,6 +3335,7 @@ window.DesktopWorkbench = (() => {
   const nodeDrafts = new Map();
   let workflowCatalog = null, workSurface = 'edit', archived = null, archivedEvents = [], submitKey = null, submitBody = null;
   let systemTemplate = null, debugDialog = null, selectingPort = null;
+  let selectedEdge = null, edgeDrag = null;
 
   const systemPosition = index => {
     const row=Math.floor(index/4), column=index%4;
@@ -3487,11 +3488,12 @@ window.DesktopWorkbench = (() => {
     return run;
   }
 
-  function canConnect(source, target) {
+  function canConnect(source, target, ignoredEdge) {
     if (!source || !target || source === target || !nodeById(source) || !nodeById(target)) return false;
-    if (graph.edges.some(edge => edge.source === source && edge.target === target)) return false;
+    const edges=graph.edges.filter(edge=>edge.id!==ignoredEdge);
+    if (edges.some(edge => edge.source === source && edge.target === target)) return false;
     const visited = new Set();
-    const reaches = id => { if (id === source) return true; if (visited.has(id)) return false; visited.add(id); return graph.edges.filter(edge => edge.source === id).some(edge => reaches(edge.target)); };
+    const reaches = id => { if (id === source) return true; if (visited.has(id)) return false; visited.add(id); return edges.filter(edge => edge.source === id).some(edge => reaches(edge.target)); };
     return !reaches(target);
   }
   function setMessage(value) { message = value; const node = $('desktop-workflow-message'); if (node) node.textContent = value; }
@@ -3559,11 +3561,16 @@ window.DesktopWorkbench = (() => {
     document.activeElement?.blur();
     commit({...graph,nodes:graph.nodes.map(item=>item.id===node.id?{...item,data}:item)}, '节点配置已更新');
   }
-  function linkNodes(source,target,condition='always') {
-    if (!canConnect(source,target)) {setMessage('请选择不同节点并避免重复连线与环路');return;}
+  function linkNodes(source,target,condition='always',existing=null) {
+    if (existing && existing.source===source && existing.target===target) return;
+    if (!canConnect(source,target,existing?.id)) {setMessage('请选择不同节点并避免重复连线与环路');return;}
     const ports=workflowCatalog?.nodes, from=ports?.[nodeById(source).data.type], to=ports?.[nodeById(target).data.type];
     if (from && to && from.output!==to.input) {setMessage(`${target} · 端口不匹配 ${from.output} → ${to.input}`);return;}
     document.activeElement?.blur();
+    if (existing) {
+      commit({edges:graph.edges.map(edge=>edge.id===existing.id?{...edge,source,target}:edge)},'连线已改接，可点击「撤销」恢复');
+      return;
+    }
     commit({...graph,edges:[...graph.edges,{id:crypto.randomUUID(),source,target,condition}]},'连线已创建');
   }
   function connectNodes(event) {event.preventDefault();const form=event.currentTarget;linkNodes(form.elements.source.value,form.elements.target.value,form.elements.condition.value);}
@@ -3742,20 +3749,87 @@ window.DesktopWorkbench = (() => {
       if (!source || !target) continue;
       const geometry = edgePath(source, target);
       if (movedId) {
-        layer.querySelector(`[data-edge-id="${CSS.escape(edge.id)}"]`)?.setAttribute('d', geometry);
+        const path=layer.querySelector(`[data-edge-id="${CSS.escape(edge.id)}"]`);
+        path?.setAttribute('d',geometry);
         continue;
       }
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', geometry);
-      path.setAttribute('class', 'desktop-flow-edge');
+      path.setAttribute('class', edge.id===selectedEdge&&!showingRun()?'desktop-flow-edge selected':'desktop-flow-edge');
       path.dataset.edgeId = edge.id;
       path.setAttribute('marker-end', 'url(#desktop-flow-arrow)');
       path.setAttribute('tabindex', '0');
       path.setAttribute('aria-label', `${source.data.label} → ${target.data.label}`);
-      path.addEventListener('click', () => selectNode(edge.source));
+      const selectEdge=()=>{
+        selectedEdge=showingRun()?null:edge.id;
+        selectNode(edge.source);
+        if(selectedEdge) setMessage('拖动圆形手柄可更换起点或终点');
+      };
+      path.addEventListener('click',selectEdge);
+      path.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();selectEdge();}});
       paths.push(path);
     }
     if (!movedId) layer.replaceChildren(...paths);
+    renderEdgeHandles(layer);
+  }
+
+  function renderEdgeHandles(layer) {
+    layer.querySelectorAll('[data-edge-end]').forEach(handle=>handle.remove());
+    if (!selectedEdge || showingRun()) return;
+    const path=layer.querySelector(`[data-edge-id="${CSS.escape(selectedEdge)}"]`);
+    if (!path) return;
+    const length=path.getTotalLength(), inset=Math.min(length*.27,15/canvasZoom);
+    for(const end of ['source','target']) {
+      const point=path.getPointAtLength(end==='source'?inset:length-inset);
+      const handle=document.createElementNS(path.namespaceURI,'circle');
+      handle.dataset.edgeEnd=end;
+      handle.setAttribute('class','desktop-flow-edge-handle');
+      handle.setAttribute('cx',point.x);
+      handle.setAttribute('cy',point.y);
+      handle.setAttribute('r',6/canvasZoom);
+      const title=document.createElementNS(path.namespaceURI,'title');
+      title.textContent=end==='source'?'拖动改接起点':'拖动改接终点';
+      handle.append(title);
+      layer.append(handle);
+    }
+  }
+
+  function installEdgeDragging(canvas) {
+    const svg=$('desktop-workflow-edges');
+    const line=document.createElementNS(svg.namespaceURI,'path');
+    line.setAttribute('class','desktop-flow-edge-preview');
+    svg.append(line);
+    canvas.addEventListener('pointerdown',event=>{
+      const end=event.target.closest('[data-edge-end]')?.dataset.edgeEnd;
+      const edge=end&&graph.edges.find(item=>item.id===selectedEdge);
+      if(!edge || showingRun() || event.button!==0 || edgeDrag || canvasDrag) return;
+      const path=svg.querySelector(`[data-edge-id="${CSS.escape(edge.id)}"]`);
+      if(!path)return;
+      const fixed=path.getPointAtLength(end==='source'?path.getTotalLength():0).matrixTransform(path.getCTM());
+      edgeDrag={edge,end,fixed,pointer:event.pointerId};
+      canvas.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    });
+    canvas.addEventListener('pointermove',event=>{
+      if(event.pointerId!==edgeDrag?.pointer) return;
+      const point=canvasPoint(canvas,event), {fixed}=edgeDrag;
+      line.setAttribute('d',`M ${fixed.x} ${fixed.y} L ${point.x} ${point.y}`);
+    });
+    const finish=event=>{
+      if(event.pointerId!==edgeDrag?.pointer) return;
+      const {edge,end}=edgeDrag;
+      edgeDrag=null;
+      line.removeAttribute('d');
+      if(event.type!=='pointerup' || showingRun() || !graph.edges.includes(edge)) return;
+      const hit=document.elementFromPoint(event.clientX,event.clientY);
+      const port=hit?.closest('.desktop-flow-port');
+      const node=hit?.closest('[data-workflow-node]')?.dataset.workflowNode;
+      if(!node || (port && !port.classList.contains(end==='source'?'out':'in'))) {
+        setMessage('请将手柄拖到对应的节点端口');return;
+      }
+      linkNodes(end==='source'?node:edge.source,end==='target'?node:edge.target,edge.condition,edge);
+    };
+    for(const event of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(event,finish);
   }
 
   function renderCanvas() {
@@ -4317,6 +4391,7 @@ window.DesktopWorkbench = (() => {
 
   function installCanvasInteractions() {
     const canvas = $('desktop-workflow-canvas');
+    installEdgeDragging(canvas);
     const edgeSpeed = (position, size) => {
       const margin = 36;
       if (position < margin) return Math.min(1, (margin - position) / margin) * 14;
@@ -4348,7 +4423,7 @@ window.DesktopWorkbench = (() => {
       canvasDrag.frame = requestAnimationFrame(panAtEdge);
     };
     canvas.addEventListener('pointerdown', event => {
-      if (event.button !== 0 || canvasDrag || event.target.closest('.desktop-flow-edge')) return;
+      if (event.button !== 0 || canvasDrag || edgeDrag || event.target.closest('.desktop-flow-edge, [data-edge-end]')) return;
       const element = event.target.closest('.desktop-flow-node');
       if (element && showingRun()) {selectNode(element.dataset.workflowNode,true);return;}
       const node = element && nodeById(element.dataset.workflowNode);
@@ -4391,7 +4466,7 @@ window.DesktopWorkbench = (() => {
     canvas.addEventListener('wheel', event => {
       if (!event.deltaY) return;
       event.preventDefault();
-      if (!canvasDrag) canvasZoomBy(event.deltaY < 0 ? 1.12 : 1 / 1.12, canvasPoint(canvas, event));
+      if (!canvasDrag && !edgeDrag) canvasZoomBy(event.deltaY < 0 ? 1.12 : 1 / 1.12, canvasPoint(canvas, event));
     }, {passive: false});
   }
   function moveComposer(inCanvas) {

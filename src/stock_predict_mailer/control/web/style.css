@@ -1635,6 +1635,10 @@ body[data-view="analysis"].inspector-visible #analysis-composer { left: var(--do
   #desktop-workflow-edges { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; color: var(--accent); pointer-events: none; }
   .desktop-flow-edge { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; opacity: .7; pointer-events: stroke; cursor: pointer; }
   .desktop-flow-edge:hover, .desktop-flow-edge:focus { stroke-width: 4; opacity: 1; outline: none; }
+  .desktop-flow-edge.selected { stroke-width: 3; opacity: 1; }
+  .desktop-flow-edge-handle { fill: var(--surface); stroke: currentColor; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: all; cursor: grab; }
+  .desktop-flow-edge-handle:hover { fill: currentColor; }
+  .desktop-flow-edge-preview { fill: none; stroke: currentColor; stroke-width: 2; stroke-dasharray: 5 4; }
   #desktop-workflow-nodes { position: absolute; inset: 0; z-index: 2; }
   .desktop-flow-node { position: absolute; width: 208px; min-height: 126px; padding: 0; border: 1px solid var(--rule-strong); border-radius: 9px; color: var(--ink); background: var(--surface); box-shadow: 0 10px 26px rgba(0,0,0,.11); cursor: grab; pointer-events: auto; user-select: none; transition: border-color .15s ease, box-shadow .15s ease; }
   .desktop-flow-node:hover { border-color: var(--accent); }

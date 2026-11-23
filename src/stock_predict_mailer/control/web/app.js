@@ -1684,7 +1684,8 @@ function renderRunviz(state) {
 /* ---------- progress events ---------- */
 let eventCursor = 0;
 const stepRows = new Map();
-const progressStates = {pending: '待执行', running: '运行中', completed: '已完成', failed: '失败'};
+const progressStates = {pending: '待执行', running: '运行中', completed: '已完成', failed: '失败',
+  skipped:'已跳过', degraded:'降级', canceled:'已取消'};
 function addPlanStep(step) {
   if (stepRows.has(step.id)) return;
   const row = document.createElement('li');
@@ -1716,7 +1717,7 @@ function showEvent(event) {
   time.textContent = localTime;
   row.append(time);
   const body = document.createElement('span');
-  body.textContent = `${event.label}${event.code ? ' · ' + event.code : ''}`;
+  body.textContent = `${event.label || event.step || event.kind}${event.code ? ' · ' + event.code : ''}`;
   row.append(body);
   if (event.summary?.length) text(body, 'small', event.summary.join(' / '));
   if (event.kind === 'model') text(body, 'small', `温度 ${event.temperature ?? '由服务决定'} · 原生推理 ${event.native_reasoning_effort || '未配置'}`);
@@ -1793,7 +1794,15 @@ $('task-form').onsubmit = async event => {
     }
     if (window.KnowledgeUI) Object.assign(request, window.KnowledgeUI.selection());
     const recipients=window.MailRecipients?.values();
-    const task = await api('tasks', 'POST', {...request, notify: $('task-notify').checked, recipient: recipients?.[0] || $('task-recipient').value || null, ...(recipients?.length>1?{recipients}:{})});
+    const payload = {...request, notify: $('task-notify').checked, recipient: recipients?.[0] || $('task-recipient').value || null, ...(recipients?.length>1?{recipients}:{})};
+    const extension = window.DesktopWorkbench?.workflowPayload(payload);
+    let task;
+    try {
+      task = await api('tasks', 'POST', {...payload,...extension});
+    } catch (error) {
+      if (extension?.workflow) window.DesktopWorkbench.explainError(error);
+      throw error;
+    }
     if (conversationId !== $('conversation-id').value) { notice('任务已提交，可从对应会话查看。'); return; }
     currentTask = task.id;
     window.ForecastUI?.reset();
@@ -1814,6 +1823,7 @@ $('task-form').onsubmit = async event => {
     $('report').replaceChildren();
     runvizReset(true);
     showTask(task);
+    window.DesktopWorkbench?.acceptWorkflow(task);
     poll(task.id);
     setTimeout(() => $('task-status').scrollIntoView({block: 'start', behavior: 'smooth'}), 120);
   } catch (error) {

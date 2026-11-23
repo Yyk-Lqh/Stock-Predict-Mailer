@@ -149,6 +149,24 @@ globalThis.PonyPluginBoard=(()=>{
     node.addEventListener('pointercancel',stop);
   }
 
+  async function fillWorkflowTools(host,dialog){
+    try {
+      const catalog=await api('workflows/catalog');
+      host.replaceChildren();
+      for (const [id,spec] of Object.entries(catalog.nodes.tool?.options||{})) {
+        const button=document.createElement('button');
+        button.type='button';
+        button.textContent=`添加${spec.label}节点`;
+        button.title=spec.detail;
+        button.onclick=()=>{
+          if (window.DesktopWorkbench?.addBuiltinTool?.(id)) dialog.close();
+          else button.title='请确认画布已加载且节点数未达上限';
+        };
+        host.append(button);
+      }
+    } catch(error) {host.textContent=error.message;}
+  }
+
   function mountDialog(toolbar,draggable){
     const button=document.createElement('button');
     button.type='button';
@@ -160,7 +178,8 @@ globalThis.PonyPluginBoard=(()=>{
     dialog.className='plugin-dialog';
     dialog.setAttribute('aria-labelledby',draggable?'plugin-title-focus':'plugin-title-hall');
     dialog.innerHTML='<div class="plugin-dialog-head"><strong></strong><button type="button" data-close>关闭</button></div>'+
-      (draggable?'<p class="hint">拖动卡片可调整本机画布布局。</p>':'')+
+      (draggable?'<details><summary>可调用的工作流工具</summary><div class="workflow-run-list" data-workflow-tools></div></details>'+
+        '<p class="hint">拖动卡片可调整本机画布布局。</p>':'')+
       '<div class="plugin-board"></div>';
     const title=dialog.querySelector('strong');
     title.id=dialog.getAttribute('aria-labelledby');
@@ -170,6 +189,8 @@ globalThis.PonyPluginBoard=(()=>{
     document.body.append(dialog);
     const close=dialog.querySelector('[data-close]');
     close.onclick=()=>dialog.close();
+    const tools=dialog.querySelector('[data-workflow-tools]');
+    tools?.parentElement.addEventListener('toggle',()=>{if(tools.parentElement.open) fillWorkflowTools(tools,dialog);});
     dialog.addEventListener('click',event=>{if(event.target===dialog)dialog.close();});
     button.onclick=()=>{
       dialog.showModal();

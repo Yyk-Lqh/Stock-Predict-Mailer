@@ -1790,3 +1790,23 @@ body.desktop-focus-view .desktop-flow-palette { position: absolute; z-index: 7; 
 .desktop-flow-port { position: absolute; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border: 1px solid var(--rule-strong); border-radius: 50%; background: var(--surface); }
 .desktop-flow-port.in { left: -4px; }
 .desktop-flow-port.out { right: -4px; }
+
+@media (min-width: 761px) {
+  #desktop-focus .desktop-flow-port { padding: 0; width: 12px; height: 12px; margin-top: -6px; cursor: crosshair; }
+  #desktop-focus .desktop-flow-port.in { left: -6px; }
+  #desktop-focus .desktop-flow-port.out { right: -6px; }
+  #desktop-focus [data-workflow-surface][aria-pressed="true"] { border-color: var(--ink-2); color: var(--ink); }
+  .desktop-flow-palette input[type="search"] { width: 100%; min-width: 0; margin: 0 0 8px; }
+  .desktop-flow-connection { flex-wrap: wrap; }
+  .desktop-flow-connection select { max-width: 100%; }
+  .desktop-flow-runtime dd { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .desktop-flow-issue { display: block; margin-block: 6px; text-align: left; }
+  .workflow-run-dialog form { display: grid; gap: 8px; }
+  .workflow-run-dialog textarea { width: 100%; }
+  .workflow-run-list { display: grid; gap: 6px; margin-bottom: 12px; }
+  .workflow-run-list button { text-align: left; }
+  @media (max-width: 1000px) {
+    body.desktop-focus-view .desktop-flow-palette { width: 116px; left: 8px; }
+    body.desktop-focus-view .desktop-flow-inspector { width: 210px; right: 8px; }
+  }
+}

@@ -24,6 +24,7 @@ window.DesktopPoll=(()=>{
         if(!same(value)||!visible()||control.signal.aborted)return;
         const progress=await api(`tasks/${id}/events?after=${eventCursor}`,'GET',undefined,control.signal);
         if(!same(value)||!visible()||control.signal.aborted)return;
+        window.DesktopWorkbench?.observeProgressTask?.(task);
         for(const event of progress.events){if(event.seq<=eventCursor)continue;showEvent(event);eventCursor=event.seq;}
         runvizSample();PonyOffice.sync(task,progress.events);const terminal=showTask(task);
         feedback.hidden=true;window.DesktopWorkbench?.connectionLost(false);

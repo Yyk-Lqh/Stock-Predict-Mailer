@@ -21,8 +21,8 @@
   const surface = document.getElementById('desktop-workflow-surface');
   const svg = document.getElementById('desktop-workflow-edges');
   const fit = () => document.querySelector('[data-viewport-action="fit"]').click();
-  const model = () => canvas.querySelector('[data-workflow-node="model"]');
-  const edge = () => svg.querySelector('[data-edge-id="model-prediction"]');
+  const model = () => canvas.querySelector('[data-workflow-node="prediction"]');
+  const edge = () => svg.querySelector('[data-edge-id="prediction-evidence"]');
   const camera = () => new DOMMatrix(surface.style.transform);
   const pointer = (target, type, x, y) => {
     target.dispatchEvent(new PointerEvent(type, {pointerId: 1, button: 0, clientX: x, clientY: y, bubbles: true, cancelable: true}));

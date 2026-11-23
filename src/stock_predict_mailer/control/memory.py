@@ -18,6 +18,7 @@ from .schemas import Closed
 
 Kind = Literal["user_statement", "preference", "watchlist", "constraint", "prediction", "inference"]
 ReportFormat = Literal["brief", "standard"]
+LOCAL_KNOWLEDGE_OWNER = "local-knowledge"
 
 
 class MemoryEntry(Closed):
@@ -143,6 +144,14 @@ class Memory:
         if row is None:
             raise ServiceError("FORBIDDEN", "需要有效的记忆访问密钥")
         return row[0]
+
+    def local_knowledge_owner(self):
+        with self.store.db() as con:
+            if con.execute("SELECT 1 FROM memory_owners WHERE id=?", (LOCAL_KNOWLEDGE_OWNER,)).fetchone() is None:
+                # The shared local workspace has no retrievable access token.
+                con.execute("INSERT INTO memory_owners VALUES (?,?,?)",
+                            (LOCAL_KNOWLEDGE_OWNER, secrets.token_hex(32), MemorySettings().model_dump_json()))
+        return LOCAL_KNOWLEDGE_OWNER
 
     def settings(self, owner, value=None):
         with self.store.db() as con:

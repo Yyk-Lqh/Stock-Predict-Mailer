@@ -80,6 +80,15 @@ def make_server(root, port=8767, master_key=None, market=None):
             if mutation and not hmac.compare_digest(self.headers.get("X-CSRF-Token", ""), csrf):
                 raise ServiceError("FORBIDDEN", "缺少有效 CSRF token")
 
+        def knowledge_owner(self):
+            scope = self.headers.get("X-Knowledge-Scope", "")
+            token = self.headers.get("X-Memory-Key", "")
+            if scope not in ("", "local", "private"):
+                raise ServiceError("INVALID_INPUT", "无效的知识库范围")
+            if scope == "private" or (not scope and token):
+                return engine.memory.owner(token)
+            return engine.memory.local_knowledge_owner()
+
         def body(self):
             try:
                 size = int(self.headers.get("Content-Length", "-1"))
@@ -166,8 +175,11 @@ def make_server(root, port=8767, master_key=None, market=None):
                         settings = store.settings()
                         spec = freeze(body.get("workflow"), engine, settings)
                         raw = body.get("request")
-                        owner = engine.memory.owner(self.headers["X-Memory-Key"]) if self.headers.get("X-Memory-Key") else None
-                        request = engine.prepare(raw, owner) if isinstance(raw, dict) else None
+                        if isinstance(raw, dict):
+                            owner = engine.memory.owner(self.headers.get("X-Memory-Key", "")) if raw.get("conversation_id") is not None else None
+                            request = engine.prepare(raw, owner, knowledge_owner=self.knowledge_owner() if raw.get("knowledge_query") else None)
+                        else:
+                            request = None
                         self.output(preview(spec, request, settings))
                     elif method == "GET" and parts[2:] == ["runs"]:
                         query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
@@ -211,7 +223,7 @@ def make_server(root, port=8767, master_key=None, market=None):
                     self.output(forecast_listing(store, owner, before=before, limit=limit, state=query.get("state", ["all"])[0]))
                     return
                 if kind == "knowledge":
-                    owner = engine.memory.owner(self.headers.get("X-Memory-Key", ""))
+                    owner = self.knowledge_owner()
                     kb, route = engine.knowledge, parts[2:]
                     if route == ["queue"] and method == "GET":
                         self.output(kb.queue(owner))
@@ -362,7 +374,8 @@ def make_server(root, port=8767, master_key=None, market=None):
                     elif method == "POST" and len(parts) == 2:
                         payload = self.body()
                         owner = engine.memory.owner(self.headers.get("X-Memory-Key", "")) if payload.get("conversation_id") is not None else None
-                        self.output(engine.submit(payload, owner), 202)
+                        knowledge_owner = self.knowledge_owner() if payload.get("knowledge_query") else None
+                        self.output(engine.submit(payload, owner, knowledge_owner=knowledge_owner), 202)
                     elif method == "GET" and len(parts) == 2:
                         query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
                         order = query.get("order", ["asc"])[0]

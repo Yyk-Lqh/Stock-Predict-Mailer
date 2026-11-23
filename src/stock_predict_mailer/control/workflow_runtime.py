@@ -83,7 +83,7 @@ async def _node(engine, key, data, upstream, settings, budget, progress, spec):
     elif kind == "knowledge":
         import asyncio
 
-        state["knowledge"] = await asyncio.to_thread(engine.knowledge.answer, request["_owner"], request["knowledge_query"],
+        state["knowledge"] = await asyncio.to_thread(engine.knowledge.answer, request["_knowledge_owner"], request["knowledge_query"],
                                                      as_of=p["generated_at"][:10])
     elif kind == "retrieval":
         current = engine.store.settings()
@@ -141,7 +141,7 @@ async def _analysis(engine, data, state, settings, budget, progress):
     kind = data["type"]
     main_data = {"prediction": p, "facts": facts, "goal": request["goal"], "user_constraints": request["constraints"],
                  "report_format": request["report_format"]}
-    evidence = engine.workflow_evidence(request.get("_owner"), state.get("knowledge"), main_data, notes)
+    evidence = engine.workflow_evidence(request.get("_knowledge_owner"), state.get("knowledge"), main_data, notes)
     if evidence and request["knowledge_to_model"]:
         main_data["source_material"] = {"trust": "untrusted_source_material", "as_of": state["knowledge"]["as_of"], "results": evidence}
     if kind == "merge":

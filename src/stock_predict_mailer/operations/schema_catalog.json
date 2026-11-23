@@ -57,7 +57,7 @@
     },
     "control.memory": {
       "source": "stock_predict_mailer/control/memory.py",
-      "source_id": "9befdc971f2494210b563109cec6d62ad4bbe04736ee0520177c1b596965d265",
+      "source_id": "4448d5d3bb38ed9e3ec6d3b3926eddb28b3c170e3992ab025198d47cf83dbb4a",
       "ddl": [
         "CREATE TABLE IF NOT EXISTS memory_owners (id TEXT PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, settings TEXT NOT NULL);",
         "CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, owner TEXT NOT NULL, state BLOB NOT NULL, updated TEXT NOT NULL);",

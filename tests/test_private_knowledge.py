@@ -7,6 +7,7 @@ import io
 import json
 import tempfile
 import threading
+import time
 import unittest
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -417,6 +418,71 @@ class EmbeddingTests(unittest.TestCase):
 
 
 class HTTPTests(unittest.TestCase):
+    def test_local_knowledge_needs_no_access_key_and_can_feed_analysis(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server = make_server(Path(tmp), 0, Fernet.generate_key())
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with httpx.Client(base_url=f"http://127.0.0.1:{server.server_port}") as client:
+                    self.assertEqual(client.get("/api/knowledge/documents").status_code, 403)
+                    client.get("/")
+                    self.assertEqual(client.post("/api/knowledge/search", json={"query": "供应链风险"}).status_code, 403)
+                    client.headers["X-CSRF-Token"] = client.get("/api/session").json()["csrf_token"]
+                    body = {"filename": "local.txt", "data": base64.b64encode("甲公司供应链风险。".encode()).decode(), "metadata": META}
+                    upload = client.post("/api/knowledge/documents", json=body)
+                    self.assertEqual(upload.status_code, 202)
+                    did = upload.json()["id"]
+                    self.assertEqual(server.engine.knowledge.process_one()["status"], "ready")
+                    search = client.post("/api/knowledge/answer", json={"query": "供应链风险"}).json()
+                    self.assertEqual(search["results"][0]["document_id"], did)
+                    self.assertEqual(client.get(search["results"][0]["citation_path"]).status_code, 200)
+                    task = client.post("/api/tasks", json={"prediction": MockPredictionAdapter().fetch(), "knowledge_query": "供应链风险"})
+                    self.assertEqual(task.status_code, 202, task.text)
+                    tid = task.json()["id"]
+                    for _ in range(150):
+                        result = client.get(f"/api/tasks/{tid}").json()
+                        if result["status"]["state"] not in ("submitted", "working"):
+                            break
+                        time.sleep(.05)
+                    self.assertEqual(result["status"]["state"], "completed", result.get("metadata"))
+                    data = result["artifacts"][0]["parts"][0]["data"]
+                    self.assertEqual(data["analysis"]["knowledge_evidence"]["results"][0]["document_id"], did)
+                    graph = {"version": 2, "nodes": [{"id": kind, "data": {"type": kind, "label": kind}}
+                                                     for kind in ("input", "validation", "knowledge")],
+                             "edges": [{"source": "input", "target": "validation"}, {"source": "validation", "target": "knowledge"}]}
+                    debug = client.post("/api/tasks", json={"prediction": MockPredictionAdapter().fetch(),
+                        "knowledge_query": "供应链风险", "workflow": {"mode": "custom", "key": "local-kb-debug", "graph": graph,
+                                                                   "debug": "knowledge"}})
+                    self.assertEqual(debug.status_code, 202, debug.text)
+                    debug_tid = debug.json()["id"]
+                    for _ in range(150):
+                        result = client.get(f"/api/tasks/{debug_tid}").json()
+                        if result["status"]["state"] not in ("submitted", "working"):
+                            break
+                        time.sleep(.05)
+                    self.assertEqual(result["status"]["state"], "completed", result.get("metadata"))
+                    summary = result["artifacts"][0]["parts"][0]["data"]["summary"]
+                    self.assertEqual(summary["citations"][0]["document_id"], did)
+                    self.assertEqual(client.get("/api/conversations").status_code, 403)
+
+                    key = client.post("/api/memory/access", json={}).json()["key"]
+                    client.headers["X-Memory-Key"] = key
+                    self.assertEqual(client.get(f"/api/knowledge/documents/{did}").status_code, 404)
+                    private = client.post("/api/knowledge/documents", json=body).json()["id"]
+                    denied = client.post("/api/tasks", json={"prediction": MockPredictionAdapter().fetch(), "knowledge_query": "供应链风险"})
+                    self.assertEqual(denied.status_code, 403)
+                    client.headers["X-Knowledge-Scope"] = "local"
+                    self.assertEqual(client.get(f"/api/knowledge/documents/{did}").status_code, 200)
+                    self.assertEqual(client.get(f"/api/knowledge/documents/{private}").status_code, 404)
+                    del client.headers["X-Memory-Key"]
+                    client.headers["X-Knowledge-Scope"] = "private"
+                    self.assertEqual(client.get("/api/knowledge/documents").status_code, 403)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join()
+
     def test_owner_csrf_upload_search_citation_and_delete(self):
         with tempfile.TemporaryDirectory() as tmp:
             server = make_server(Path(tmp), 0, Fernet.generate_key())

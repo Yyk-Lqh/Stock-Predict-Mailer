@@ -840,7 +840,7 @@ window.DesktopWorkbench = (() => {
   }
   function workflowPayload(request) {
     if(mode!=='focus'||!desktop.matches) return {};
-    const serialized=JSON.stringify([request,graph]);
+    const serialized=JSON.stringify([request,graph,request.knowledge_query && window.KnowledgeUI?.scope()]);
     if(submitBody!==serialized){submitBody=serialized;submitKey=crypto.randomUUID();}
     return {workflow:graphSubmission(submitKey)};
   }

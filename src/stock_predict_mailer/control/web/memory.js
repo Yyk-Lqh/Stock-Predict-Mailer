@@ -540,6 +540,10 @@ window.Workbench = (() => {
 window.KnowledgeUI = (() => {
   let timer = null, epoch = 0, documents = [], catalog = {total: 0, review: 0}, queueTimer = null, waiting = null;
   const PAGE = 50;
+  const scopeKey = 'spm_knowledge_scope';
+  let scope = memoryKey && sessionStorage.getItem(scopeKey) !== 'local' ? 'private' : 'local';
+  const identity = () => scope === 'local' ? 'local' : (memoryKey ? 'private:' + memoryKey : '');
+  sessionStorage.setItem(scopeKey, scope);
   let desktopStatus = '', detailRequest = 0, searchRequest = 0;
   const STATE = {pending: '已排队', processing: '处理中', ready: '已发布', review: '待审阅', failed: '处理失败', rejected: '已拒绝', deleting: '等待删除'};
   const STEP = {received: '已接收', parsed: '已解析', chunked: '已切分', extracted: '已提取', reviewed: '已审阅', published: '已发布'};
@@ -557,8 +561,9 @@ window.KnowledgeUI = (() => {
   const section = document.createElement('section');
   section.className = 'view'; section.dataset.viewPane = 'knowledge'; section.hidden = true;
   section.innerHTML = `
-    <div class="page-head"><p class="eyebrow">私有资料</p><h1>知识库</h1><p class="lede">整理来源，核对提取结果，让每条分析都有据可查。</p></div>
-    <div id="knowledge-access" class="note"><p>知识库使用你的私有访问密钥，与会话共享访问身份。</p><button type="button" data-goto="memory" class="btn">创建或恢复访问密钥</button></div>
+    <div class="page-head"><h1>知识库</h1></div>
+    <label class="field"><span>资料库</span><select id="knowledge-scope"><option value="local">本机资料库</option><option value="private">旧版私有资料</option></select></label>
+    <div id="knowledge-access" class="note" hidden><p>恢复原访问密钥后即可查看旧版私有资料。</p><button type="button" data-goto="memory" class="btn">恢复原访问密钥</button></div>
     <div id="knowledge-body" hidden>
       <div class="subnav"><button type="button" data-kb-tab="documents" class="active">资料与版本</button><button type="button" data-kb-tab="search">检索证据</button><button type="button" data-kb-tab="processing">处理与索引设置</button></div>
       <div data-kb-pane="documents">
@@ -580,8 +585,16 @@ window.KnowledgeUI = (() => {
     </div>`;
   document.querySelector('main').append(section);
   const selectionEditor = document.createElement('details'); selectionEditor.className = 'input-editor';
-  selectionEditor.innerHTML = `<summary>知识资料 · 为本轮检索证据</summary><div class="card stack"><label class="field"><span>检索问题</span><input id="task-knowledge-query" maxlength="4000" placeholder="留空时不使用知识库"></label><label class="check"><input type="checkbox" id="task-knowledge-consent"> 允许将本轮检索资料发送给已配置的分析模型</label><p class="hint">从当前私有空间的已发布资料检索，截止时间采用预测生成日期。只有明确勾选后，证据才会进入模型输入。</p><button type="button" class="btn tiny" data-goto="knowledge">管理资料与版本</button></div>`;
+  selectionEditor.innerHTML = `<summary>知识资料 · 为本轮检索证据</summary><div class="card stack"><label class="field"><span>检索问题</span><input id="task-knowledge-query" maxlength="4000" placeholder="留空时不使用知识库"></label><label class="check"><input type="checkbox" id="task-knowledge-consent"> 允许将本轮检索资料发送给已配置的分析模型</label><p class="hint">从当前选择的资料库检索已发布资料，截止时间采用预测生成日期。只有明确勾选后，证据才会进入模型输入。</p><button type="button" class="btn tiny" data-goto="knowledge">管理资料与版本</button></div>`;
   $('facts-editor').after(selectionEditor);
+  $('knowledge-scope').value = scope;
+  $('knowledge-scope').onchange = safe(async event => {
+    scope = event.currentTarget.value;
+    sessionStorage.setItem(scopeKey, scope);
+    identityReset();
+    tab('documents');
+    await load();
+  });
   function tab(name) {
     section.querySelectorAll('[data-kb-pane]').forEach(el => { el.hidden = el.dataset.kbPane !== name; });
     section.querySelectorAll('[data-kb-tab]').forEach(el => el.classList.toggle('active', el.dataset.kbTab === name));
@@ -660,12 +673,12 @@ window.KnowledgeUI = (() => {
   }
   async function queueStatus(reload = true) {
     clearTimeout(queueTimer);
-    const key = memoryKey;
+    const key = identity();
     if (!key) { $('knowledge-queue').replaceChildren(); waiting = null; return; }
     let busy = waiting;
     try {
       const data = await api('knowledge/queue');
-      if (key !== memoryKey) return;
+      if (key !== identity()) return;
       renderQueue(data);
       busy = data.waiting || 0;
       // 队列从有到空：列表里的状态已经过期，补一次重载。load() 内部以 reload=false
@@ -679,7 +692,7 @@ window.KnowledgeUI = (() => {
     clearTimeout(timer);
     const extend = append === true;
     const requestEpoch = ++epoch;
-    const key = memoryKey;
+    const key = identity();
     $('knowledge-access').hidden = Boolean(key); $('knowledge-body').hidden = !key;
     if (!key) { documents = []; $('knowledge-list').replaceChildren(); $('knowledge-detail').hidden = true; $('knowledge-queue').replaceChildren(); clearTimeout(queueTimer); waiting = null; window.DesktopLibrary?.resetKnowledge(); return; }
     window.DesktopLibrary?.knowledgeLoading(desktopStatus);
@@ -689,7 +702,7 @@ window.KnowledgeUI = (() => {
       const limit = extend ? PAGE : Math.min(500, Math.max(PAGE, documents.length));
       const status = matchMedia('(min-width: 761px)').matches ? desktopStatus : '';
       const data = await api(`knowledge/documents?limit=${limit}&offset=${offset}${status ? '&status=' + status : ''}`);
-      if (requestEpoch !== epoch || key !== memoryKey) return;
+      if (requestEpoch !== epoch || key !== identity()) return;
       if (!extend) { documents = []; $('knowledge-list').replaceChildren(); }
       documents = documents.concat(data.items); catalog = data;
       renderDocuments(data.items);
@@ -715,9 +728,9 @@ window.KnowledgeUI = (() => {
     }
   }
   async function detail(id) {
-    const key = memoryKey;
+    const key = identity();
     const desktop = matchMedia('(min-width: 761px)').matches, request = ++detailRequest;
-    const current = () => key === memoryKey && (!desktop || request === detailRequest);
+    const current = () => key === identity() && (!desktop || request === detailRequest);
     const [item, versions] = await Promise.all([api('knowledge/documents/' + id), api(`knowledge/documents/${id}/versions`)]);
     if (!current()) return;
     const host = $('knowledge-detail'); host.replaceChildren(); host.hidden = false;
@@ -765,9 +778,9 @@ window.KnowledgeUI = (() => {
     host.scrollIntoView({block: 'start', behavior: 'smooth'});
   }
   async function review(id, host, sourceDocument, current = () => true) {
-    const key = memoryKey;
+    const key = identity();
     const batch = await api(`knowledge/documents/${id}/review`);
-    if (key !== memoryKey || !current()) return;
+    if (key !== identity() || !current()) return;
     if (!batch.extraction?.complete) { text(host, 'p', '当前资料需要人工处理原件或补充字段，尚无完整的模型候选可批准。请核对警告，修正后上传新版本。', 'note warn'); return; }
     const group = document.createElement('section'); group.className = 'review-group';
     text(group, 'h3', '逐项核对模型候选');
@@ -951,9 +964,9 @@ window.KnowledgeUI = (() => {
   }
   const CONFIG_LABELS = {provider: '服务类型', base_url: '服务地址', model: '模型名称', version: '模型版本', timeout_seconds: '单次超时（秒）', allow_external: '允许向远程服务发送资料与查询', mode: '处理范围', document_timeout_seconds: '每份资料总超时（秒）', max_calls: '每份资料最大调用次数', max_input_chars: '单次输入字符上限', max_output_tokens: '单次输出 Token 上限', budget_usd: '每份资料预算（美元）', input_usd_per_million: '每百万输入 Token 单价（美元）', output_usd_per_million: '每百万输出 Token 单价（美元）'};
   async function configs() {
-    const key = memoryKey;
+    const key = identity();
     const [embedding, cleaner, indexes] = await Promise.all([api('knowledge/config'), api('knowledge/cleaner/config'), api('knowledge/indexes')]);
-    if (key !== memoryKey) return;
+    if (key !== identity()) return;
     const host = $('knowledge-configs'); host.replaceChildren();
     for (const [title, path, cfg] of [['语义检索 · Embedding', 'knowledge/config', embedding], ['语义清洗 · 候选提取', 'knowledge/cleaner/config', cleaner]]) {
       const details = document.createElement('details'); details.className = 'input-editor'; text(details, 'summary', title);
@@ -1021,14 +1034,14 @@ window.KnowledgeUI = (() => {
   }
   $('knowledge-search').onsubmit = safe(async event => {
     event.preventDefault(); const button = event.currentTarget.querySelector('[type=submit]'); button.disabled = true;
-    const key = memoryKey, request = ++searchRequest, filters = searchFilters(), signature = JSON.stringify(filters);
+    const key = identity(), request = ++searchRequest, filters = searchFilters(), signature = JSON.stringify(filters);
     window.DesktopLibrary?.searchLoading('检索');
     try {
       const data = await api('knowledge/search', 'POST', filters);
-      if (key === memoryKey && (!matchMedia('(min-width: 761px)').matches || request === searchRequest && signature === JSON.stringify(searchFilters()))) renderEvidence($('knowledge-results'), data);
-      else if (key === memoryKey && request === searchRequest) window.DesktopLibrary?.searchDiscarded();
+      if (key === identity() && (!matchMedia('(min-width: 761px)').matches || request === searchRequest && signature === JSON.stringify(searchFilters()))) renderEvidence($('knowledge-results'), data);
+      else if (key === identity() && request === searchRequest) window.DesktopLibrary?.searchDiscarded();
     } catch (error) {
-      if (key === memoryKey && request === searchRequest) window.DesktopLibrary?.searchError(error.message);
+      if (key === identity() && request === searchRequest) window.DesktopLibrary?.searchError(error.message);
       throw error;
     } finally { button.disabled = false; }
   });
@@ -1036,14 +1049,14 @@ window.KnowledgeUI = (() => {
     const button = $('knowledge-answer'), host = $('knowledge-answer-result');
     if (!$('knowledge-query').value.trim()) { notice('先填写要查的问题。', true); $('knowledge-query').focus(); return; }
     button.disabled = true;
-    const key = memoryKey, request = ++searchRequest, filters = searchFilters(), signature = JSON.stringify(filters);
+    const key = identity(), request = ++searchRequest, filters = searchFilters(), signature = JSON.stringify(filters);
     window.DesktopLibrary?.searchLoading('规则汇总');
     try {
       const data = await api('knowledge/answer', 'POST', filters);
-      if (key === memoryKey && (!matchMedia('(min-width: 761px)').matches || request === searchRequest && signature === JSON.stringify(searchFilters()))) renderAnswer(host, data);
-      else if (key === memoryKey && request === searchRequest) window.DesktopLibrary?.searchDiscarded();
+      if (key === identity() && (!matchMedia('(min-width: 761px)').matches || request === searchRequest && signature === JSON.stringify(searchFilters()))) renderAnswer(host, data);
+      else if (key === identity() && request === searchRequest) window.DesktopLibrary?.searchDiscarded();
     } catch (error) {
-      if (key === memoryKey && request === searchRequest) window.DesktopLibrary?.searchError(error.message);
+      if (key === identity() && request === searchRequest) window.DesktopLibrary?.searchError(error.message);
       throw error;
     } finally { button.disabled = false; }
   });
@@ -1052,7 +1065,7 @@ window.KnowledgeUI = (() => {
     const button = $('knowledge-rebuild'); button.disabled = true;
     try { await api('knowledge/rebuild', 'POST', {}); notice('索引重建完成。'); await configs(); } finally { button.disabled = false; }
   });
-  return {init, load, reset, identityReset, restore, selection, evidence, open:detail, close:() => { ++detailRequest; $('knowledge-detail').hidden = true; }, filter:filterStatus, filterStatus:() => desktopStatus, processing: () => { tab('processing'); configs().catch(error => notice(error.message, true)); }};
+  return {init, load, reset, identityReset, scope: () => scope, restore, selection, evidence, open:detail, close:() => { ++detailRequest; $('knowledge-detail').hidden = true; }, filter:filterStatus, filterStatus:() => desktopStatus, processing: () => { tab('processing'); configs().catch(error => notice(error.message, true)); }};
 })();
 
 /* Shared projected door geometry and contact timing, independent of the DOM. */
@@ -4143,7 +4156,7 @@ window.DesktopWorkbench = (() => {
   }
   function workflowPayload(request) {
     if(mode!=='focus'||!desktop.matches) return {};
-    const serialized=JSON.stringify([request,graph]);
+    const serialized=JSON.stringify([request,graph,request.knowledge_query && window.KnowledgeUI?.scope()]);
     if(submitBody!==serialized){submitBody=serialized;submitKey=crypto.randomUUID();}
     return {workflow:graphSubmission(submitKey)};
   }

@@ -24,7 +24,7 @@ from ..private_knowledge.service import Knowledge
 from .a2a import A2AClient
 from .execution import DEFAULT_EFFORT, LABELS, Effort, Progress, envelope
 from .mcp_layer import MCPLayer
-from .memory import Memory, MemoryEntry, ReportFormat, explicit_memory
+from .memory import LOCAL_KNOWLEDGE_OWNER, Memory, MemoryEntry, ReportFormat, explicit_memory
 from .models import Budget, ModelAdapter
 from .schemas import Closed
 from .workflow import freeze
@@ -120,7 +120,7 @@ class Orchestrator:
                 self.store.task(tid, a2a_task(tid, "failed", brief=meta.get("request"), workflow=meta.get("workflow"),
                                              error={"code": "INTERRUPTED", "message": "进程重启，中断任务未自动重跑"}))
 
-    def prepare(self, raw, owner=None):
+    def prepare(self, raw, owner=None, *, knowledge_owner=None):
         cid = raw.get("conversation_id")
         state = {}
         if cid is not None:
@@ -149,8 +149,10 @@ class Orchestrator:
             request = TaskRequest.model_validate(raw).model_dump()
         except ValidationError:
             raise ServiceError("INVALID_INPUT", "任务字段无效") from None
-        if request["knowledge_query"] and not cid:
-            raise ServiceError("FORBIDDEN", "资料分析任务需要私有会话；独立检索可使用知识库回答接口")
+        if request["knowledge_query"]:
+            if not cid and knowledge_owner != LOCAL_KNOWLEDGE_OWNER:
+                raise ServiceError("FORBIDDEN", "引用私有资料需要所属会话")
+            request["_knowledge_owner"] = knowledge_owner or owner
         if request["prediction"] is None:
             raise ServiceError("INVALID_INPUT", "请先提供该会话的预测结果")
         request["prediction"] = prediction(request["prediction"])
@@ -196,7 +198,7 @@ class Orchestrator:
             self.accepting = False
             return list(self.active)
 
-    def submit(self, raw, owner=None):
+    def submit(self, raw, owner=None, *, knowledge_owner=None):
         tid, event = uuid.uuid4().hex, threading.Event()
         raw = dict(raw)
         graph = raw.pop("workflow", None)
@@ -205,7 +207,7 @@ class Orchestrator:
             if graph is not None:
                 key = graph.get("key") if isinstance(graph, dict) else None
                 scope = identity([owner, raw.get("conversation_id"), key])
-                fingerprint = identity([raw, graph])
+                fingerprint = identity([raw, graph, knowledge_owner] if knowledge_owner else [raw, graph])
                 if isinstance(key, str):
                     with self.store.db() as con:
                         prior = con.execute("SELECT body FROM tasks WHERE json_extract(body,'$.metadata.workflow.submission')=?",
@@ -222,7 +224,7 @@ class Orchestrator:
                 raise ServiceError("SERVICE_STOPPING", "控制台正在停止，不再接收新的分析任务", True)
             if len(self.active) >= 4:
                 raise ServiceError("BUSY", "最多同时运行 4 个主任务，请稍后再试", True)
-            request = self.prepare(raw, owner)
+            request = self.prepare(raw, owner, knowledge_owner=knowledge_owner)
             brief = task_brief(request)
             if (cid := request["conversation_id"]) and not (workflow and workflow["debug"]):
                 previous = self.memory.state(owner, cid)
@@ -493,7 +495,7 @@ class Orchestrator:
         knowledge_result = None
         if request.get("knowledge_query"):
             with progress.step("knowledge", "检索已授权的知识资料", count=False):
-                knowledge_result = await asyncio.to_thread(self.knowledge.answer, request["_owner"], request["knowledge_query"],
+                knowledge_result = await asyncio.to_thread(self.knowledge.answer, request["_knowledge_owner"], request["knowledge_query"],
                                                             as_of=p["generated_at"][:10])
             progress.emit("node_result", step="knowledge", label="知识检索来源", status="completed",
                           summary=summary({"request": request, "facts": facts, "series": series, "knowledge": knowledge_result}))
@@ -518,7 +520,7 @@ class Orchestrator:
         data = {"prediction": p, "facts": facts}
         main_data = {**data, "goal": goal, "user_constraints": request.get("constraints", []),
                      "report_format": request.get("report_format")}
-        evidence = self.workflow_evidence(owner, knowledge_result, main_data, notes)
+        evidence = self.workflow_evidence(request.get("_knowledge_owner"), knowledge_result, main_data, notes)
         if evidence and request.get("knowledge_to_model"):
             main_data["source_material"] = {"trust": "untrusted_source_material", "as_of": knowledge_result["as_of"], "results": evidence}
         try:

@@ -2,7 +2,7 @@
 
 ## 选型与边界
 
-已确认首期：SQLite 元数据/FTS5、可选本地或外部 Embedding、带原文证据与时间的关系表。与对话记忆分库，仅复用 X-Memory-Key 身份。保持单机 loopback 服务边界；本地操作者拥有磁盘权限，不是互联网多租户托管服务。
+知识库使用 SQLite 元数据与 FTS5、可选本地或外部 Embedding，以及带原文证据与时间的关系表。打开本机控制台即可使用本机资料库。旧资料保留在原私有空间，恢复原访问密钥后可在知识库选择「旧版私有资料」。本机资料库由当前控制台工作区共享，服务继续只监听回环地址。
 
 向量擅长同义语义召回，但依赖模型且容易漏掉代码、精确数字。关键词/FTS 适合股票代码、财务指标和原文定位，中文单字/双字分词不依赖额外搜索服务。图谱适合供应链和事件关联，但自动抽取易产生无依据的边，需要来源和有效期。推荐将关键词与模型向量按排名融合，再做有限跳数关系扩展。原始资料、日期、权限先过滤，不能让模型猜权限。
 
@@ -59,7 +59,7 @@ uv run stock-predict-mailer --config config/local.toml knowledge-worker --once
 
 ## HTTP 接口
 
-先从同源本机控制台建立 session，读取 `GET /api/session` 的 csrf_token。创建身份：`POST /api/memory/access`（JSON `{}`），妥善保存返回 key。所有知识库接口都必须携带 `X-Memory-Key`；所有写操作还须携带 `X-CSRF-Token` 和同源 session cookie。不得在 query URL 中传访问密钥。以下路径均以 `/api/knowledge` 为前缀。
+先从同源本机控制台建立 session，读取 `GET /api/session` 的 csrf_token。无 `X-Memory-Key` 时默认使用本机资料库。带原访问密钥的客户端仍可访问原私有资料。可用 `X-Knowledge-Scope: local` 显式选择本机资料库，或同时使用 `X-Knowledge-Scope: private` 和 `X-Memory-Key` 选择私有资料。分析任务和专业工作流使用同样的资料库选择，引用私有资料时仍须使用所属会话。写操作须带 `X-CSRF-Token` 和同源 session cookie。以下路径均以 `/api/knowledge` 为前缀。
 
 - `GET /queue`：队列总览，返回 `{counts,total,waiting,attention,worker}`。`counts` 覆盖全部状态且缺省为 0，`waiting` 为 pending+processing；`attention` 是最近的失败与待审阅条目，合计上限 `limit`（1–20，缺省 5）。`worker` 取自心跳表：`seen` 区分「从未启动」与「已退出」，`online` 为 `state != stopped` 且心跳在 90 秒内，`age` 是距上次心跳的秒数，`processed` 是本次进程处理的份数（重启归零）。`busy` 时 `current_logical` 仅在该资料属于本用户时给出，否则为 null。
 - `POST /documents`：`{"filename":"report.csv","data":"<base64>","logical":"财报","metadata":{...}}`。原文件上限 10 MiB，JSON 请求上限 15 MiB；响应 202 只表示 pending。logical 省略时用文件名；更新时保持 logical，上传新字节或新元数据。原格式 `.doc/.xls` 不支持。

@@ -439,7 +439,7 @@ class OrchestrationTests(unittest.IsolatedAsyncioTestCase):
         events = self.f.store.events("test-task")
         final_plan = next(event for event in events if event["kind"] == "plan" and event.get("finalized"))
         self.assertEqual([step["id"] for step in final_plan["steps"]],
-                         ["validate", "main", "charts", "report", "prediction", "risk", "advice", "merge"])
+                         ["validate", "main", "prediction", "risk", "advice", "merge", "charts", "report"])
         first_child = next(event for event in events if event.get("step") == "prediction" and event.get("status") == "running")
         self.assertLess(final_plan["seq"], first_child["seq"], "final denominator is published before any child starts")
 

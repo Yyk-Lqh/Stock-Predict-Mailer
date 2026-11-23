@@ -1,6 +1,8 @@
 """Execution envelopes and persisted, user-facing operation events."""
 from __future__ import annotations
 
+import asyncio
+import time
 from contextlib import contextmanager
 from typing import Literal
 
@@ -30,6 +32,7 @@ class Progress:
         self.store, self.tid, self.budget = store, tid, budget
         self.steps = 0
         self.tools = 0
+        self.retries = {}
 
     def tool_attempt(self):
         if self.tools >= self.budget.limits["max_tool_calls"]:
@@ -41,17 +44,20 @@ class Progress:
         self.store.append_event(self.tid, {"kind": kind, "timestamp": utcnow().isoformat(), **data})
 
     @contextmanager
-    def step(self, key, label, **details):
+    def step(self, key, label, *, count=True, **details):
         self.budget.check()
-        if self.steps >= self.budget.limits["max_steps"]:
+        if count and self.steps >= self.budget.limits["max_steps"]:
             raise ServiceError("STEP_LIMIT", "执行步骤额度已用完")
-        self.steps += 1
+        self.steps += int(count)
+        started = time.monotonic()
         self.emit("step", step=key, status="running", label=label, **details)
         try:
             yield
         except BaseException as exc:
             code = exc.code if isinstance(exc, ServiceError) else type(exc).__name__
-            self.emit("step", step=key, status="failed", label=label, code=code)
+            canceled = isinstance(exc, asyncio.CancelledError) or code == "CANCELLED"
+            self.emit("step", step=key, status="canceled" if canceled else "failed", label=label, code=code,
+                      duration_ms=round((time.monotonic() - started) * 1000))
             raise
         else:
-            self.emit("step", step=key, status="completed", label=label)
+            self.emit("step", step=key, status="completed", label=label, duration_ms=round((time.monotonic() - started) * 1000))

@@ -138,6 +138,64 @@ def make_server(root, port=8767, master_key=None, market=None):
                 if len(parts) < 2 or parts[0] != "api":
                     raise ServiceError("NOT_FOUND", "接口不存在")
                 kind = parts[1]
+                if kind == "workflows":
+                    from .workflow import catalog, freeze
+                    from .workflow_runtime import preview
+
+                    if method == "GET" and parts[2:] == ["catalog"]:
+                        self.output(catalog())
+                    elif method == "GET" and parts[2:] == ["tools", "mcp"]:
+                        from .workflow_tools import authorized_mcp
+
+                        self.output({"bindings": authorized_mcp(store)})
+                    elif method == "GET" and parts[2:] == ["database", "discover"]:
+                        from .workflow_database import discover
+
+                        self.output(discover(store))
+                    elif method == "POST" and parts[2:] == ["database", "discover"]:
+                        from .workflow_database import discover
+
+                        body = self.body()
+                        self.output(discover(store, scope=body.get("scope"), directory=body.get("directory")))
+                    elif method == "POST" and parts[2:] == ["database", "inspect"]:
+                        from .workflow_database import inspect
+
+                        self.output(inspect(store, self.body().get("path")))
+                    elif method == "POST" and parts[2:] == ["preview"]:
+                        body = self.body()
+                        settings = store.settings()
+                        spec = freeze(body.get("workflow"), engine, settings)
+                        raw = body.get("request")
+                        owner = engine.memory.owner(self.headers["X-Memory-Key"]) if self.headers.get("X-Memory-Key") else None
+                        request = engine.prepare(raw, owner) if isinstance(raw, dict) else None
+                        self.output(preview(spec, request, settings))
+                    elif method == "GET" and parts[2:] == ["runs"]:
+                        query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                        try:
+                            before = int(query.get("before", [str(2**63 - 1)])[0])
+                            if not 1 <= before <= 2**63 - 1:
+                                raise ValueError()
+                        except ValueError:
+                            raise ServiceError("INVALID_INPUT", "运行记录游标无效") from None
+                        owner = engine.memory.owner(self.headers["X-Memory-Key"]) if self.headers.get("X-Memory-Key") else None
+                        with store.db() as con:
+                            rows = con.execute(
+                                "SELECT t.rowid,t.body FROM tasks t LEFT JOIN memory_tasks m ON m.task=t.id "
+                                "WHERE t.rowid<? AND (m.owner IS NULL OR m.owner=?) "
+                                "AND json_extract(t.body,'$.contextId')=t.id ORDER BY t.rowid DESC LIMIT 31",
+                                (before, owner),
+                            ).fetchall()
+                        items = []
+                        for _, raw in rows[:30]:
+                            task = json.loads(raw)
+                            meta = task.get("metadata", {})
+                            workflow = meta.get("workflow") or {}
+                            items.append({"id": task["id"], "status": task["status"], "subject": meta.get("request", {}).get("subject"),
+                                          "version": workflow.get("version"), "debug": workflow.get("debug")})
+                        self.output({"items": items, "next_before": rows[29][0] if len(rows) > 30 else None})
+                    else:
+                        raise ServiceError("NOT_FOUND", "工作流接口不存在")
+                    return
                 if kind == "forecasts":
                     if method != "GET" or len(parts) != 2:
                         raise ServiceError("NOT_FOUND", "预测列表仅支持只读查询")
@@ -322,11 +380,13 @@ def make_server(root, port=8767, master_key=None, market=None):
                         with store.db() as con:
                             if order == "desc":
                                 rows = con.execute("SELECT t.rowid,t.body FROM tasks t LEFT JOIN memory_tasks m ON m.task=t.id "
-                                                   "WHERE t.rowid<? AND (m.owner IS NULL OR m.owner=?) ORDER BY t.rowid DESC LIMIT ?",
+                                                   "WHERE t.rowid<? AND (m.owner IS NULL OR m.owner=?) "
+                                                   "AND json_extract(t.body,'$.metadata.workflow.debug') IS NULL ORDER BY t.rowid DESC LIMIT ?",
                                                    (cursor, owner, limit + 1)).fetchall()
                             else:
                                 rows = con.execute("SELECT t.rowid,t.body FROM tasks t LEFT JOIN memory_tasks m ON m.task=t.id "
-                                                   "WHERE t.rowid>? AND (m.owner IS NULL OR m.owner=?) ORDER BY t.rowid LIMIT ?",
+                                                   "WHERE t.rowid>? AND (m.owner IS NULL OR m.owner=?) "
+                                                   "AND json_extract(t.body,'$.metadata.workflow.debug') IS NULL ORDER BY t.rowid LIMIT ?",
                                                    (cursor, owner, limit + 1)).fetchall()
                         body = {"items": [json.loads(r[1]) for r in rows[:limit]]}
                         body["next_before" if order == "desc" else "next_after"] = rows[limit - 1][0] if len(rows) > limit else None
@@ -336,6 +396,8 @@ def make_server(root, port=8767, master_key=None, market=None):
                         if task["status"]["state"] != "completed" or not task["artifacts"]:
                             raise ServiceError("NOT_READY", "任务尚无正式报告")
                         result = task["artifacts"][0]["parts"][0]["data"]
+                        if result.get("workflow_debug"):
+                            raise ServiceError("NOT_READY", "单节点调试只提供运行记录")
                         if parts[3] == "report":
                             self.output(render(result["analysis"])[1].encode(), content_type="text/html; charset=utf-8")
                         elif parts[3] == "analysis":

@@ -27,6 +27,7 @@ from .mcp_layer import MCPLayer
 from .memory import Memory, MemoryEntry, ReportFormat, explicit_memory
 from .models import Budget, ModelAdapter
 from .schemas import Closed
+from .workflow import freeze
 
 RISK_TEXT = {"DATA_LIMITED": "现有事实不足以验证模型可靠性，应补充独立资料。", "MARKET_RISK": "市场波动、模型偏差及分布漂移可能导致损失。"}
 UNCERTAINTY = {"NO_CONFIDENCE": "上游未提供置信度。", "NO_CONTEXT": "未提供可验证上下文。", "MODEL_UNVERIFIED": "模型输出尚未独立验证。"}
@@ -75,7 +76,7 @@ def validate_result(raw, role, p, facts, knowledge_ids=()):
             "uncertainty": raw["uncertainty_codes"], "delegate_roles": list(dict.fromkeys(raw["delegate_roles"]))}
 
 
-def a2a_task(tid, state, *, context_id=None, result=None, error=None, brief=None):
+def a2a_task(tid, state, *, context_id=None, result=None, error=None, brief=None, workflow=None):
     value = {"kind": "task", "id": tid, "contextId": context_id or tid,
              "status": {"state": state, "timestamp": utcnow().isoformat()}, "artifacts": []}
     if result is not None:
@@ -86,6 +87,8 @@ def a2a_task(tid, state, *, context_id=None, result=None, error=None, brief=None
         metadata["request"] = brief
     if error:
         metadata["error"] = error
+    if workflow:
+        metadata["workflow"] = workflow
     if metadata:
         value["metadata"] = metadata
     return value
@@ -113,7 +116,9 @@ class Orchestrator:
         for tid, body in previous_tasks:
             previous = json.loads(body)
             if previous["status"]["state"] in ("working", "submitted"):
-                self.store.task(tid, a2a_task(tid, "failed", error={"code": "INTERRUPTED", "message": "进程重启，中断任务未自动重跑"}))
+                meta = previous.get("metadata", {})
+                self.store.task(tid, a2a_task(tid, "failed", brief=meta.get("request"), workflow=meta.get("workflow"),
+                                             error={"code": "INTERRUPTED", "message": "进程重启，中断任务未自动重跑"}))
 
     def prepare(self, raw, owner=None):
         cid = raw.get("conversation_id")
@@ -193,24 +198,45 @@ class Orchestrator:
 
     def submit(self, raw, owner=None):
         tid, event = uuid.uuid4().hex, threading.Event()
+        raw = dict(raw)
+        graph = raw.pop("workflow", None)
+        workflow = settings = None
         with self.lock:
+            if graph is not None:
+                key = graph.get("key") if isinstance(graph, dict) else None
+                scope = identity([owner, raw.get("conversation_id"), key])
+                fingerprint = identity([raw, graph])
+                if isinstance(key, str):
+                    with self.store.db() as con:
+                        prior = con.execute("SELECT body FROM tasks WHERE json_extract(body,'$.metadata.workflow.submission')=?",
+                                            (scope,)).fetchone()
+                    if prior:
+                        saved = json.loads(prior[0])
+                        if saved["metadata"]["workflow"]["fingerprint"] != fingerprint:
+                            raise ServiceError("WORKFLOW_CONFLICT", "此提交标识已用于其他输入或流程版本")
+                        return saved
+                settings = self.store.settings()
+                workflow = freeze(graph, self, settings)
+                workflow.update(submission=scope, fingerprint=fingerprint)
             if not self.accepting:
                 raise ServiceError("SERVICE_STOPPING", "控制台正在停止，不再接收新的分析任务", True)
             if len(self.active) >= 4:
                 raise ServiceError("BUSY", "最多同时运行 4 个主任务，请稍后再试", True)
             request = self.prepare(raw, owner)
             brief = task_brief(request)
-            if cid := request["conversation_id"]:
+            if (cid := request["conversation_id"]) and not (workflow and workflow["debug"]):
                 previous = self.memory.state(owner, cid)
                 if previous.get("task") in self.active:
                     raise ServiceError("BUSY", "会话任务正在收尾", True)
-                self.memory.begin(owner, cid, tid, request, a2a_task(tid, "submitted", brief=brief))
+                self.memory.begin(owner, cid, tid, request, a2a_task(tid, "submitted", brief=brief, workflow=workflow))
             else:
-                self.store.task(tid, a2a_task(tid, "submitted", brief=brief))
+                if cid:
+                    self.memory.bind_child(owner, cid, tid)
+                self.store.task(tid, a2a_task(tid, "submitted", brief=brief, workflow=workflow))
             self.active[tid] = {"event": event}
         def worker():
             try:
-                asyncio.run(self.execute(tid, request, event))
+                asyncio.run(self.execute(tid, request, event, workflow=workflow, frozen_settings=settings))
             finally:
                 with self.lock:
                     self.active.pop(tid, None)
@@ -231,8 +257,8 @@ class Orchestrator:
             self.store.task(tid, task)
             return task
 
-    async def execute(self, tid, request, event=None):
-        settings = self.store.settings()
+    async def execute(self, tid, request, event=None, *, workflow=None, frozen_settings=None):
+        settings = frozen_settings or self.store.settings()
         brief = task_brief(request)
         level = request.get("reasoning_effort") or settings.get("default_reasoning_effort", DEFAULT_EFFORT)
         limits = envelope(level, settings["limits"])
@@ -245,22 +271,28 @@ class Orchestrator:
             budget.memory_context = lambda size: self.memory.context(owner, cid, request, size, progress)
         if tid in self.active:
             self.active[tid].update(loop=asyncio.get_running_loop(), task=asyncio.current_task())
-        self.store.task(tid, a2a_task(tid, "working", brief=brief))
+        def persist(state, **details):
+            self.store.task(tid, a2a_task(tid, state, brief=brief, workflow=workflow, **details))
+
         try:
+            budget.check()
+            persist("working")
             async with asyncio.timeout(settings["limits"]["timeout_seconds"]):
-                output = await self.analyze(tid, request, settings, budget, progress)
+                if workflow and workflow["mode"] == "custom":
+                    from .workflow_runtime import run
+
+                    output = await run(self, workflow, request, settings, budget, progress)
+                else:
+                    output = await self.analyze(tid, request, settings, budget, progress)
                 budget.check()
-                self.store.task(tid, a2a_task(tid, "completed", result=output, brief=brief))
+                persist("completed", result=output)
         except (ServiceError, TimeoutError) as exc:
             error = exc.as_dict()["error"] if isinstance(exc, ServiceError) else {"code": "TASK_TIMEOUT", "message": "任务超时", "retryable": True}
-            if isinstance(exc, ServiceError) and exc.code == "CANCELLED":
-                self.store.task(tid, a2a_task(tid, "canceled", brief=brief))
-            else:
-                self.store.task(tid, a2a_task(tid, "failed", error=error, brief=brief))
+            persist("canceled" if error["code"] == "CANCELLED" else "failed", **({} if error["code"] == "CANCELLED" else {"error": error}))
         except asyncio.CancelledError:
-            self.store.task(tid, a2a_task(tid, "canceled", brief=brief))
+            persist("canceled")
         except Exception:
-            self.store.task(tid, a2a_task(tid, "failed", error={"code": "INTERNAL_ERROR", "message": "任务执行失败", "retryable": False}, brief=brief))
+            persist("failed", error={"code": "INTERNAL_ERROR", "message": "任务执行失败", "retryable": False})
         return self.store.task(tid)
 
     async def role(self, role, data, settings, budget, *, local_only=False):
@@ -330,7 +362,7 @@ class Orchestrator:
                 with self.lock:
                     self.active.pop(tid, None)
 
-    async def collect(self, p, facts, series, tools, progress, notes):
+    async def collect(self, p, facts, series, tools, progress, notes, *, step="tools"):
         for index, binding in enumerate(tools):
             sid, name = binding.split(":", 1)
             safe_name = name if re.fullmatch(r"[\w.-]{1,80}", name) else "已授权行情工具"
@@ -339,9 +371,9 @@ class Orchestrator:
                     progress.tool_attempt()
                 except ServiceError as exc:
                     notes.append(f"{exc.code}：停止补查，报告使用已校验的数据。")
-                    progress.emit("adjustment", label=notes[-1], step="tools", code=exc.code)
+                    progress.emit("adjustment", label=notes[-1], step=step, code=exc.code)
                     return facts, series
-                progress.emit("tool", step="tools", status="running", label=f"调用 {safe_name} 补充上下文", attempt=attempt)
+                progress.emit("tool", step=step, status="running", label=f"调用 {safe_name} 补充上下文", attempt=attempt)
                 try:
                     raw = await self.mcp.call(sid, name, {"subject": p["subject"]}, role_tools=tools)
                     extra = chart_data(raw.get("chart_data"), p)
@@ -350,13 +382,14 @@ class Orchestrator:
                     if {f["id"] for f in facts} & {f["id"] for f in incoming}:
                         raise ServiceError("INVALID_TOOL_DATA", "外部事实 ID 与已有事实冲突")
                 except ServiceError as exc:
-                    progress.emit("tool", step="tools", status="failed", label=f"{safe_name} 调用失败", code=exc.code, attempt=attempt)
+                    progress.emit("tool", step=step, status="failed", label=f"{safe_name} 调用失败", code=exc.code, attempt=attempt)
                     retry = exc.retryable and attempt == 1 and progress.tools < progress.budget.limits["max_tool_calls"]
                     if retry:
-                        progress.emit("adjustment", step="tools", label=f"{exc.code}：在预算内重试 {safe_name}。")
+                        progress.retries[step] = progress.retries.get(step, 0) + 1
+                        progress.emit("adjustment", step=step, label=f"{exc.code}：在预算内重试 {safe_name}。")
                         continue
                     notes.append(f"{exc.code}：{safe_name} 未补充数据，后续结论仅使用已有事实。")
-                    progress.emit("adjustment", step="tools", label=notes[-1])
+                    progress.emit("adjustment", step=step, label=notes[-1])
                     break
                 facts = [*facts, *incoming]
                 if extra and series and extra["unit"] == series["unit"]:
@@ -365,21 +398,61 @@ class Orchestrator:
                     series = series or extra
                 dates = sorted(point["at"] for s in (extra or {}).get("series", {}).values() for point in s["points"])
                 detail = f"，覆盖 {dates[0][:10]} 至 {dates[-1][:10]} UTC" if dates else ""
-                progress.emit("tool", step="tools", status="completed",
+                progress.emit("tool", step=step, status="completed",
                               label=f"{safe_name} 返回 {len(incoming)} 条事实、{len(dates)} 个图表点{detail}")
                 if index + 1 < len(tools):
                     if facts and {"observed", "forecast", "backtest"} <= (series or {}).get("series", {}).keys():
-                        progress.emit("adjustment", step="tools", label="事实与三类时间序列已齐备，跳过剩余补查。")
+                        progress.emit("adjustment", step=step, label="事实与三类时间序列已齐备，跳过剩余补查。")
                         return facts, series
-                    progress.emit("adjustment", step="tools", label="事实或图表序列仍有缺项，继续查询下一项获准工具。")
+                    progress.emit("adjustment", step=step, label="事实或图表序列仍有缺项，继续查询下一项获准工具。")
                 break
         return facts, series
 
+    def workflow_evidence(self, owner, knowledge_result, main_data, notes):
+        evidence = []
+        if knowledge_result:
+            # Keep whole excerpts: never silently truncate financial statements.
+            for item in knowledge_result["results"]:
+                current = self.knowledge.citation(owner, item["citation_id"])
+                if current["document"]["status"] != "ready" or current["document"]["hash"] != item["source_hash"] or current["document"]["metadata"] != {k: v for k, v in item["metadata"].items() if k in current["document"]["metadata"]}:
+                    continue
+                entry = {k: item[k] for k in ("citation_id", "document_id", "source_hash", "filename", "location", "text", "metadata", "warnings", "trust")}
+                if len(json.dumps(evidence + [entry], ensure_ascii=False).encode()) <= min(4000, max(0, 8000 - len(json.dumps(main_data, ensure_ascii=False).encode()))):
+                    evidence.append(entry)
+        if knowledge_result and len(evidence) < len(knowledge_result["results"]):
+            notes.append("KNOWLEDGE_BUDGET：部分资料未进入模型证据包；请在知识检索中查看完整来源。")
+        return evidence
+
+    @staticmethod
+    def integrate_analysis(p, c, forecast, results, notes, progress):
+        conflicts = []
+        analysis = AnalysisAgent().analyze(p, c, forecast_record=forecast["record"] if forecast else None)
+        expected = "MODEL_" + p["direction"].upper() if "direction" in p else None
+        accepted = set()
+        for result in results:
+            for code in result["conclusions"]:
+                if code.startswith("MODEL_") and code != expected:
+                    conflicts.append({"role": result["role"], "code": code, "reason": "与上游预测方向冲突"})
+                else:
+                    accepted.add(code)
+        if conflicts:
+            notes.append("RESULT_CONFLICT：存在与上游方向冲突的 Agent 结论，已排除；保留不确定性。")
+            progress.emit("adjustment", label=notes[-1], step="report")
+        if accepted & set(RECOMMENDATIONS):
+            analysis["recommendations"] = [RECOMMENDATIONS[k] for k in sorted(accepted & set(RECOMMENDATIONS))]
+        analysis["risks"] += [RISK_TEXT[k] for k in sorted(accepted & set(RISK_TEXT))]
+        for code in sorted({u for result in results for u in result["uncertainty"]}):
+            if UNCERTAINTY[code] not in analysis["limitations"]:
+                analysis["limitations"].append(UNCERTAINTY[code])
+        return analysis, conflicts
+
     async def analyze(self, tid, request, settings, budget, progress):
+        from .workflow_runtime import summary
+
         p, c = request["prediction"], request["context"]
         forecast = None
         facts = c["facts"] if c else []
-        notes, children, results, conflicts = [], [], [], []
+        notes, children, results = [], [], []
         tools = settings["agents"]["main"]["tools"]
         series = request.get("chart_data")
         cid, owner = request.get("conversation_id"), request.get("_owner")
@@ -390,6 +463,8 @@ class Orchestrator:
         plan = [("validate", "校验预测与数据"), ("main", "主 Agent 分析"), ("charts", "生成分析图表"), ("report", "汇总并保存报告")]
         if tools:
             plan.insert(1, ("tools", "通过 MCP 补充数据"))
+        if request.get("knowledge_query"):
+            plan.insert(1, ("knowledge", "检索已授权的知识资料"))
         if request.get("evaluation_definition") is not None:
             plan.insert(1, ("forecast", "固定预测与评价定义"))
         if request["notify"]:
@@ -402,9 +477,13 @@ class Orchestrator:
                      "model": profile.get("model"), "native_reasoning_effort": native}
         progress.emit("plan", label=f"{subject} · {focus}计划", execution=execution,
                       steps=[{"id": key, "label": label} for key, label in plan])
+        progress.emit("step", step="input", status="completed", label="已读取预测资料",
+                      summary={"synthetic": p["synthetic"], "confidence": p["confidence"], "source": p["model_version"]})
         with progress.step("validate", f"校验 {subject} 未来 {p['horizon']['value']} {p['horizon']['unit']} 的预测结果"):
             prediction(p)
             context(c, p["subject"])
+        progress.emit("node_result", step="validate", label="资料校验输出摘要", status="completed",
+                      summary=summary({"request": request, "facts": facts, "series": series}))
         if request.get("evaluation_definition") is not None:
             with progress.step("forecast", "归档本次预测与事前评价定义"):
                 forecast = ForecastArchive(self.store.root).register(p, request["evaluation_definition"])
@@ -413,8 +492,11 @@ class Orchestrator:
         budget.check()
         knowledge_result = None
         if request.get("knowledge_query"):
-            knowledge_result = await asyncio.to_thread(self.knowledge.answer, request["_owner"], request["knowledge_query"],
-                                                        as_of=p["generated_at"][:10])
+            with progress.step("knowledge", "检索已授权的知识资料", count=False):
+                knowledge_result = await asyncio.to_thread(self.knowledge.answer, request["_owner"], request["knowledge_query"],
+                                                            as_of=p["generated_at"][:10])
+            progress.emit("node_result", step="knowledge", label="知识检索来源", status="completed",
+                          summary=summary({"request": request, "facts": facts, "series": series, "knowledge": knowledge_result}))
         if tools:
             with progress.step("tools", f"为 {subject} 补充行情与事实"):
                 if checkpoint.get("tools") == tools and "facts" in checkpoint:
@@ -430,22 +512,13 @@ class Orchestrator:
                     facts, series = await self.collect(p, facts, series, tools, progress, notes)
                 if cid and not notes:
                     self.memory.checkpoint(owner, cid, facts=facts, chart_data=series, tools=tools, completed_step="tools")
+            progress.emit("node_result", step="tools", label="MCP 上下文输出摘要", status="degraded" if notes else "completed", attempts=progress.tools,
+                          retries=progress.retries.get("tools", 0), summary=summary({"request": request, "facts": facts, "series": series}))
         c = {"schema_version": "1", "context_id": "task-" + tid, "subject": p["subject"], "facts": facts} if facts else None
         data = {"prediction": p, "facts": facts}
         main_data = {**data, "goal": goal, "user_constraints": request.get("constraints", []),
                      "report_format": request.get("report_format")}
-        evidence = []
-        if knowledge_result:
-            # Keep whole excerpts: never silently truncate financial statements.
-            for item in knowledge_result["results"]:
-                current = self.knowledge.citation(owner, item["citation_id"])
-                if current["document"]["status"] != "ready" or current["document"]["hash"] != item["source_hash"] or current["document"]["metadata"] != {k: v for k, v in item["metadata"].items() if k in current["document"]["metadata"]}:
-                    continue
-                entry = {k: item[k] for k in ("citation_id", "document_id", "source_hash", "filename", "location", "text", "metadata", "warnings", "trust")}
-                if len(json.dumps(evidence + [entry], ensure_ascii=False).encode()) <= min(4000, max(0, 8000 - len(json.dumps(main_data, ensure_ascii=False).encode()))):
-                    evidence.append(entry)
-        if knowledge_result and len(evidence) < len(knowledge_result["results"]):
-            notes.append("KNOWLEDGE_BUDGET：部分资料未进入模型证据包；请在知识检索中查看完整来源。")
+        evidence = self.workflow_evidence(owner, knowledge_result, main_data, notes)
         if evidence and request.get("knowledge_to_model"):
             main_data["source_material"] = {"trust": "untrusted_source_material", "as_of": knowledge_result["as_of"], "results": evidence}
         try:
@@ -470,13 +543,15 @@ class Orchestrator:
         if planned_roles:
             progress.emit("adjustment", label="复杂任务需要分工，加入 A2A 子步骤。",
                           steps=[{"id": role, "label": role} for role in planned_roles])
-        final_plan = list(plan) + [(role, role) for role in planned_roles]
+        final_plan = list(plan)
         if planned_roles:
-            final_plan.append(("merge", "复核子 Agent 结果"))
+            after_main = next(i + 1 for i, (key, _) in enumerate(plan) if key == "main")
+            final_plan[after_main:after_main] = [(role, role) for role in planned_roles] + [("merge", "复核子 Agent 结果")]
         progress.emit("plan", label=f"{subject} · {focus}最终执行计划", execution=execution, finalized=True,
                       steps=[{"id": key, "label": label} for key, label in final_plan])
         for role in planned_roles:
             budget.check()
+            started = time.monotonic()
             child_id = uuid.uuid4().hex
             if cid:
                 self.memory.bind_child(owner, cid, child_id)
@@ -502,15 +577,19 @@ class Orchestrator:
                 results.append(result)
                 child.update(status="completed", result=result)
                 self.store.task(child_id, a2a_task(child_id, "completed", context_id=tid, result=result))
-                progress.emit("step", step=role, status="completed", label=f"{role} 子 Agent 已完成", summary=result["conclusions"])
+                progress.emit("step", step=role, status="completed", label=f"{role} 子 Agent 已完成", summary=result["conclusions"],
+                              duration_ms=round((time.monotonic() - started) * 1000))
             except (ServiceError, TimeoutError) as exc:
                 code = exc.code if isinstance(exc, ServiceError) else "CHILD_TIMEOUT"
                 child.update(status="degraded", error=code)
                 notes.append(f"{role}/{code}：子 Agent 失败，未采纳其结论。")
                 self.store.task(child_id, a2a_task(child_id, "failed", context_id=tid, error={"code": code}))
-                progress.emit("step", step=role, status="failed", label=notes[-1], code=code)
+                progress.emit("step", step=role, status="degraded", label=notes[-1], code=code,
+                              duration_ms=round((time.monotonic() - started) * 1000))
             except asyncio.CancelledError:
                 self.store.task(child_id, a2a_task(child_id, "canceled", context_id=tid))
+                progress.emit("step", step=role, status="canceled", label=f"{role} 子 Agent 已取消",
+                              duration_ms=round((time.monotonic() - started) * 1000))
                 raise
             children.append(child)
         if children and results:
@@ -522,24 +601,7 @@ class Orchestrator:
                 results.append(merged)
             except ServiceError as exc:
                 notes.append(exc.code + "：汇总调用失败，采用经过校验的已有结论。")
-        analysis = AnalysisAgent().analyze(p, c, forecast_record=forecast["record"] if forecast else None)
-        expected = "MODEL_" + p["direction"].upper() if "direction" in p else None
-        accepted = set()
-        for result in results:
-            for code in result["conclusions"]:
-                if code.startswith("MODEL_") and code != expected:
-                    conflicts.append({"role": result["role"], "code": code, "reason": "与上游预测方向冲突"})
-                else:
-                    accepted.add(code)
-        if conflicts:
-            notes.append("RESULT_CONFLICT：存在与上游方向冲突的 Agent 结论，已排除；保留不确定性。")
-            progress.emit("adjustment", label=notes[-1], step="report")
-        if accepted & set(RECOMMENDATIONS):
-            analysis["recommendations"] = [RECOMMENDATIONS[k] for k in sorted(accepted & set(RECOMMENDATIONS))]
-        analysis["risks"] += [RISK_TEXT[k] for k in sorted(accepted & set(RISK_TEXT))]
-        for code in sorted({u for result in results for u in result["uncertainty"]}):
-            if UNCERTAINTY[code] not in analysis["limitations"]:
-                analysis["limitations"].append(UNCERTAINTY[code])
+        analysis, conflicts = self.integrate_analysis(p, c, forecast, results, notes, progress)
         progress.emit("analysis", label="已有分析可预览", preview={"inferences": analysis["inferences"], "risks": analysis["risks"]})
         with progress.step("charts", "根据已校验数据生成图表"):
             figures, chart_notes = build_charts(series)
@@ -551,6 +613,8 @@ class Orchestrator:
                 progress.emit("chart", label=chart["title"] + "已生成", svg=chart_svg(chart), caption=chart["caption"])
             if chart_notes:
                 progress.emit("adjustment", step="charts", label=" ".join(chart_notes))
+        progress.emit("node_result", step="charts", label="图表输出摘要", status="completed", reason=None if figures else "暂无可绘制的序列",
+                      summary=summary({"request": request, "facts": facts, "series": series, "analysis": analysis}))
         analysis["limitations"] += notes + chart_notes
         if cid:
             preference = next((item["report_format"] for item in budget.recalled if item.get("report_format")), None)

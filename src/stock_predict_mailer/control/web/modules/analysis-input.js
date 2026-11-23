@@ -38,7 +38,11 @@ window.AnalysisInput = (() => {
   const hiddenSubmit = document.createElement('button'); hiddenSubmit.type = 'submit'; hiddenSubmit.hidden = true; form.append(hiddenSubmit);
   message.setAttribute('form', form.id); message.rows = 2; message.placeholder = '输入你的分析问题，例如：这份预测有哪些风险？';
   message.closest('label').querySelector('span').textContent = '分析问题';
-  const autoSize = () => { message.style.height = 'auto'; message.style.height = Math.min(160, Math.max(52, message.scrollHeight)) + 'px'; layout(); };
+  const autoSize = () => {
+    message.style.height = dock.classList.contains('desktop-canvas-composer') ? '0px' : 'auto';
+    message.style.height = `${message.scrollHeight}px`;
+    layout();
+  };
   message.addEventListener('input', () => { autoSize(); draftSchedule(); });
   message.addEventListener('compositionstart', () => { composing = true; }); message.addEventListener('compositionend', () => { composing = false; });
   message.addEventListener('keydown', event => {
@@ -132,7 +136,7 @@ window.AnalysisInput = (() => {
   $('inspector-actions').hidden = true;
   const layoutObserver=new ResizeObserver(layout);
   layoutObserver.observe(dock);layoutObserver.observe($('tasks'));
-  window.addEventListener('resize', layout);
+  window.addEventListener('resize', autoSize);
   document.body.classList.toggle('analysis-composer-visible', document.body.dataset.view === 'analysis');
   update();
   const currentPrediction = () => {

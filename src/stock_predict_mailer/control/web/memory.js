@@ -2383,6 +2383,7 @@ globalThis.PonyPluginBoard=(()=>{
   function mountDialog(toolbar,draggable){
     const button=document.createElement('button');
     button.type='button';
+    if(!draggable)button.id='hall-plugins-open';
     button.textContent='插件';
     button.setAttribute('aria-haspopup','dialog');
     button.setAttribute('aria-label',draggable?'打开插件画布':'打开插件面板');
@@ -2795,7 +2796,11 @@ window.AnalysisInput = (() => {
   const hiddenSubmit = document.createElement('button'); hiddenSubmit.type = 'submit'; hiddenSubmit.hidden = true; form.append(hiddenSubmit);
   message.setAttribute('form', form.id); message.rows = 2; message.placeholder = '输入你的分析问题，例如：这份预测有哪些风险？';
   message.closest('label').querySelector('span').textContent = '分析问题';
-  const autoSize = () => { message.style.height = 'auto'; message.style.height = Math.min(160, Math.max(52, message.scrollHeight)) + 'px'; layout(); };
+  const autoSize = () => {
+    message.style.height = dock.classList.contains('desktop-canvas-composer') ? '0px' : 'auto';
+    message.style.height = `${message.scrollHeight}px`;
+    layout();
+  };
   message.addEventListener('input', () => { autoSize(); draftSchedule(); });
   message.addEventListener('compositionstart', () => { composing = true; }); message.addEventListener('compositionend', () => { composing = false; });
   message.addEventListener('keydown', event => {
@@ -2889,7 +2894,7 @@ window.AnalysisInput = (() => {
   $('inspector-actions').hidden = true;
   const layoutObserver=new ResizeObserver(layout);
   layoutObserver.observe(dock);layoutObserver.observe($('tasks'));
-  window.addEventListener('resize', layout);
+  window.addEventListener('resize', autoSize);
   document.body.classList.toggle('analysis-composer-visible', document.body.dataset.view === 'analysis');
   update();
   const currentPrediction = () => {
@@ -2947,37 +2952,200 @@ window.MailRecipients=(()=>{
 /* Composer tools use existing model, execution and mail authorization contracts. */
 window.ComposerControls = (() => {
   const dock=$('analysis-composer'),toolbar=dock.querySelector('.analysis-composer-controls'),send=$('analysis-send'),message=$('conversation-message');
-  const icons={plus:'M12 5v14M5 12h14',shield:'M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6ZM9 12l2 2 4-4',mic:'M9 5a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0ZM5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8',arrow:'M12 19V5m-6 6 6-6 6 6',stop:'M6 6h12v12H6Z',chevron:'m8 10 4 4 4-4'};
+  const icons={plus:'M12 5v14M5 12h14',shield:'M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6ZM9 12l2 2 4-4',mic:'M9 5a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0ZM5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8',arrow:'M12 19V5m-6 6 6-6 6 6',stop:'M6 6h12v12H6Z',next:'m10 6 6 6-6 6',files:'M6 3h8l4 4v14H6zM14 3v5h4M9 13h6m-6 4h6',mode:'M4 7h6m4 0h6M4 17h10m4 0h2M10 4v6m4 4v6',expert:'M16 8a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM4 20a8 6 0 0 1 16 0',skills:'M12 3v18M3 12h18M6 6l12 12M6 18 18 6',connectors:'m10 13 4-4m-7 1-3 3a4 4 0 0 0 6 6l3-3m-2-8 3-3a4 4 0 0 1 6 6l-3 3'};
   const icon=name=>`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${icons[name]}"/></svg>`;
+  icons.bolt='M13 2 5 13h6l-1 9 9-12h-6z';
+  icons.reset='M4 10a8 8 0 1 1 2 8M4 5v5h5';
   const button=(id,label,markup)=>{const b=document.createElement('button');b.id=id;b.type='button';b.className='composer-tool';b.setAttribute('aria-label',label);b.title=label;b.innerHTML=markup;return b;};
   const left=document.createElement('div'),right=document.createElement('div');left.className='composer-tools-left';right.className='composer-tools-right';
   const plus=$('analysis-data-open');plus.className='composer-tool composer-add';plus.onclick=null;
   const permission=button('composer-permission','操作权限',icon('shield')+'<span></span>');
-  const model=button('composer-model','选择工作台默认模型','<span></span>'+icon('chevron'));
-  const effort=button('composer-effort','调整推理强度','<span></span>');
+  const effort=button('composer-effort','选择模型与推理强度','<span class="composer-model-name"></span><span class="composer-effort-label"></span>');
+  const modelName=effort.querySelector('.composer-model-name'), effortLabel=effort.querySelector('.composer-effort-label');
+  const options=document.createElement('div');options.className='composer-analysis-options';options.append(effort);
+  const effortTip=text(options,'span','选择推理强度','composer-effort-tip');
+  effortTip.id='composer-effort-tip';effortTip.setAttribute('role','tooltip');
+  text(effortTip,'kbd','Ctrl+Shift+M');
+  effort.removeAttribute('title');effort.setAttribute('aria-describedby',effortTip.id);
+  effort.setAttribute('aria-keyshortcuts','Control+Shift+M');
   const voice=button('composer-voice','语音输入',icon('mic'));
   voice.setAttribute('aria-pressed','false');
   send.innerHTML=icon('arrow');send.className='composer-send';send.setAttribute('aria-label','发送消息');send.title='发送消息 · Enter';
   const cancel=$('task-cancel');cancel.innerHTML=icon('stop');cancel.className='composer-tool';cancel.setAttribute('aria-label','停止任务');cancel.title='停止任务';
   $('analysis-session-label').hidden=true;
-  left.append(plus,permission);right.append(model,effort,voice,cancel,send);toolbar.prepend(left);toolbar.append(right);
+  left.append(plus,permission);right.append(options,voice,cancel,send);toolbar.prepend(left);toolbar.append(right);
   let active=null,trigger=null,saving=false,recognition=null,listening=false,flushEffort=null;
   const panel=document.createElement('div');panel.className='composer-popover';panel.hidden=true;panel.id='composer-popover';panel.setAttribute('role','dialog');dock.append(panel);
+  const desktop=matchMedia('(min-width: 761px)');
+  const useCategories=()=>desktop.matches&&!dock.classList.contains('desktop-canvas-composer');
   const levels=['light','medium','high','extreme','ultra'],labels=['轻度','中','高','极高','Ultra'];
   const effective=()=>$('task-effort').value||settings?.default_reasoning_effort||'high';
   function close(focus=false){flushEffort?.();flushEffort=null;panel.hidden=true;trigger?.setAttribute('aria-expanded','false');if(focus)trigger?.focus();active=null;}
-  function row(label,callback,selected=false){const b=document.createElement('button');b.type='button';b.className='composer-menu-row';b.textContent=label;b.onclick=callback;if(selected){b.classList.add('selected');b.setAttribute('aria-current','true');}panel.append(b);return b;}
+  function row(label,callback,selected=false,host=panel){const b=document.createElement('button');b.type='button';b.className='composer-menu-row';b.textContent=label;b.onclick=callback;if(selected){b.classList.add('selected');b.setAttribute('aria-current','true');}host.append(b);return b;}
   function title(text){const h=document.createElement('h3');h.textContent=text;panel.append(h);panel.setAttribute('aria-label',text);}
   function note(text){const p=document.createElement('p');p.className='hint';p.textContent=text;panel.append(p);}
+  function files(host) {
+    row('填写预测与客观事实',()=>{close();AnalysisInput.open('input');},false,host);
+    row('导入预测 JSON',()=>{close();AnalysisInput.open('input');$('prediction-import').click();},false,host);
+  }
+  function settingsPage(tab) {
+    close();
+    showView('settings');
+    showPanel(tab);
+  }
+  function modelChoices(host,actions=host) {
+    const enabled=profiles.filter(profile=>profile.enabled);
+    for (const profile of enabled) row(profile.name,()=>pickModel(profile.id),profile.id===settings?.default_model_id,host);
+    if (!enabled.length) text(host,'p','尚无已启用模型。','hint');
+    row('管理模型…',()=>settingsPage('models'),false,actions);
+  }
+  function fieldChoices(host,id) {
+    const field=$(id);
+    for (const option of field.options) {
+      row(option.textContent,()=>{field.value=option.value;changed(field);close(true);},option.selected,host);
+    }
+  }
+  function connectors(host) {
+    const search=document.createElement('input');
+    search.type='search';search.placeholder='搜索连接器';search.setAttribute('aria-label',search.placeholder);
+    const list=document.createElement('div');list.className='composer-connector-list';
+    const entries=[
+      ['知识库',$('knowledge-scope').value==='private'?'旧版私有资料':'本机资料',()=>{
+        close();AnalysisInput.open('input');
+        const query=$('task-knowledge-query');query.closest('details').open=true;query.focus();
+      }],
+      ['邮件投递',$('task-notify').checked?'本轮启用':'本轮关闭',()=>{
+        close();
+        if(window.MailRecipients)window.MailRecipients.open();
+        else show('permission',permission);
+      }],
+      ...servers.map(server=>[server.name,server.enabled?'已启用':'已停用',()=>{settingsPage('mcp');editServer(server);}]),
+    ];
+    function filter() {
+      const query=search.value.trim().toLocaleLowerCase();
+      list.replaceChildren();
+      for (const [name,status,open] of entries) {
+        if (!name.toLocaleLowerCase().includes(query)) continue;
+        text(row(name,open,false,list),'small',status);
+      }
+      if (!list.childElementCount) text(list,'p','没有找到匹配的连接器。','hint');
+    }
+    search.oninput=filter;host.append(search,list);filter();
+    row('管理外部工具…',()=>settingsPage('mcp'),false,host);
+  }
+  function categories() {
+    panel.setAttribute('aria-label','对话工具');
+    const nav=document.createElement('div');nav.className='composer-categories';nav.setAttribute('role','group');nav.setAttribute('aria-label','工具分类');
+    const detail=document.createElement('section');detail.className='composer-category-detail';detail.id='composer-category-detail';
+    const groups=[
+      ['files','添加资料',host=>{
+        files(host);
+        row('上传知识资料',()=>{
+          close();showView('knowledge');document.querySelector('[data-kb-tab="documents"]').click();
+          $('knowledge-file').closest('details').open=true;
+        },false,host);
+      }],
+      ['mode','分析模式',host=>fieldChoices(host,'task-complexity')],
+      ['expert','模型与专家',host=>{
+        modelChoices(host);
+        row('专家协作设置',()=>settingsPage('settings'),false,host);
+      }],
+      ['skills','分析技能',host=>{
+        fieldChoices(host,'task-goal');
+        const plugins=$('hall-plugins-open');
+        if(plugins)row('打开插件面板',()=>{close();plugins.click();},false,host);
+      }],
+      ['connectors','连接器',connectors],
+    ];
+    const buttons=[];
+    function select(index) {
+      const [,label,render]=groups[index];
+      buttons.forEach((button,i)=>button.setAttribute('aria-pressed',String(i===index)));
+      detail.setAttribute('aria-label',label);detail.replaceChildren();
+      text(detail,'h3',label);render(detail);
+    }
+    groups.forEach(([glyph,label],index)=>{
+      const category=button('composer-category-'+glyph,label,icon(glyph)+'<span></span>'+icon('next'));
+      category.className='composer-category';category.querySelector('span').textContent=label;
+      category.setAttribute('aria-controls',detail.id);
+      category.onclick=()=>select(index);
+      category.onkeydown=event=>{
+        if(event.key==='ArrowRight'){event.preventDefault();select(index);detail.querySelector('button, input')?.focus();}
+        if(event.key==='ArrowUp'||event.key==='ArrowDown'){
+          event.preventDefault();buttons[(index+(event.key==='ArrowDown'?1:buttons.length-1))%buttons.length].focus();
+        }
+      };
+      nav.append(category);buttons.push(category);
+    });
+    detail.onkeydown=event=>{
+      if(event.key!=='ArrowLeft'||event.target.tagName!=='BUTTON')return;
+      event.preventDefault();nav.querySelector('[aria-pressed="true"]').focus();
+    };
+    panel.append(nav,detail);select(0);
+  }
+  function positionOptions() {
+    if(active!=='effort'&&active!=='models')return;
+    const anchor=effort.getBoundingClientRect(), composer=dock.getBoundingClientRect();
+    const right=Math.min(Math.max(anchor.right,panel.offsetWidth+8),document.documentElement.clientWidth-8);
+    panel.style.setProperty('--options-right',`${composer.right-right}px`);
+    panel.style.setProperty('--options-bottom',`${composer.bottom-anchor.top+5}px`);
+    panel.style.setProperty('--options-room',`${Math.max(0,anchor.top-13)}px`);
+  }
+  function showEffort() {
+    panel.setAttribute('aria-label','选择推理强度');
+    const header=document.createElement('div');header.className='composer-effort-head';header.innerHTML=icon('bolt');
+    const value=text(header,'output','','composer-effort-value');
+    const reset=button('composer-effort-reset','恢复默认档位',icon('reset'));
+    header.append(reset);
+    const modelChoice=button('composer-effort-model','选择工作台默认模型','<span></span>'+icon('next'));
+    modelChoice.querySelector('span').textContent=modelName.textContent;
+    modelChoice.onclick=openModels;
+    const slider=document.createElement('input');
+    slider.type='range';slider.min='0';slider.max='4';slider.step='.001';slider.value=String(Math.max(0,levels.indexOf(effective())));
+    slider.setAttribute('aria-label','推理强度');
+    let frame=0,dirty=false;
+    const index=()=>Math.round(Number(slider.value));
+    const paint=()=>{frame=0;value.textContent=labels[index()];slider.setAttribute('aria-valuetext',value.textContent);slider.style.setProperty('--effort-fill',Number(slider.value)*25+'%');};
+    const commit=()=>{
+      if(!dirty)return;dirty=false;
+      if(frame)cancelAnimationFrame(frame);
+      slider.value=String(index());paint();
+      const field=$('task-effort'),next=levels[index()];
+      if(field.value!==next){field.value=next;changed(field);}
+    };
+    // Drag previews the continuous position. Release commits one semantic level.
+    slider.oninput=()=>{dirty=true;if(!frame)frame=requestAnimationFrame(paint);};
+    slider.onchange=commit;flushEffort=commit;
+    slider.onkeydown=event=>{
+      const direction={ArrowLeft:-1,ArrowDown:-1,PageDown:-1,ArrowRight:1,ArrowUp:1,PageUp:1}[event.key];
+      if(!direction&&!['Home','End'].includes(event.key))return;
+      event.preventDefault();slider.value=String(event.key==='Home'?0:event.key==='End'?4:Math.max(0,Math.min(4,index()+direction)));
+      dirty=true;commit();
+    };
+    reset.onclick=()=>{
+      dirty=false;if(frame)cancelAnimationFrame(frame);
+      const field=$('task-effort');
+      if(field.value){field.value='';changed(field);}
+      slider.value=String(Math.max(0,levels.indexOf(effective())));paint();slider.focus();
+    };
+    const scale=document.createElement('div');scale.className='composer-effort-scale';
+    const ticks=document.createElement('div');ticks.className='composer-effort-ticks';ticks.setAttribute('aria-hidden','true');
+    ticks.append(...levels.map(()=>document.createElement('i')));
+    scale.append(slider,ticks);panel.append(header,modelChoice,scale);
+    paint();positionOptions();slider.focus();
+  }
   function show(kind,source){
     if(active===kind){close();return;}
     close();active=kind;trigger=source;panel.replaceChildren();panel.hidden=false;
     panel.classList.toggle('composer-popover-left',kind==='add'||kind==='permission');
+    const cascade=kind==='add'&&useCategories();
+    panel.classList.toggle('composer-cascade',cascade);
+    panel.classList.toggle('composer-options-popover',kind==='effort'||kind==='models');
+    panel.classList.toggle('composer-model-popover',kind==='models');
     source.setAttribute('aria-expanded','true');
     if(kind==='add'){
-      title('添加分析资料');
-      row('填写预测与客观事实',()=>{close();AnalysisInput.open('input');});
-      row('导入预测 JSON',()=>{close();AnalysisInput.open('input');$('prediction-import').click();});
+      if(cascade)categories();
+      else{title('添加分析资料');files(panel);}
     }else if(kind==='permission'){
       title('操作权限');
       row('仅分析与生成报告',()=>{$('task-notify').checked=false;changed($('task-notify'));showPermission();},!$('task-notify').checked);
@@ -2987,55 +3155,42 @@ window.ComposerControls = (() => {
       input.oninput=()=>{$('task-recipient').value=input.value;changed($('task-recipient'));};label.append(input);panel.append(label);
       note('邮件仅向设置中的授权地址投递，未授权地址不会发送。');
     }else if(kind==='models'){
-      title('选择模型');note('更改工作台默认模型，用于后续分析。');
-      for(const p of profiles.filter(p=>p.enabled))row(p.name,()=>pickModel(p.id),p.id===settings?.default_model_id);
-      if(!profiles.some(p=>p.enabled))note('尚无已启用模型，请先配置模型。');
-      row('管理模型…',()=>{close();showView('settings');showPanel('models');});
-    }else{
-      title('推理强度');
-      const value=document.createElement('output');value.className='composer-effort-value';panel.append(value);
-      const slider=document.createElement('input');slider.type='range';slider.min='0';slider.max='4';slider.step='.001';slider.value=String(Math.max(0,levels.indexOf(effective())));slider.setAttribute('aria-label','推理强度');
-      let frame=0,dirty=false;
-      const index=()=>Math.round(Number(slider.value));
-      const paint=()=>{frame=0;value.textContent=labels[index()];slider.setAttribute('aria-valuetext',value.textContent);slider.style.setProperty('--effort-fill',Number(slider.value)*25+'%');};
-      const commit=()=>{
-        if(!dirty)return;dirty=false;
-        if(frame){cancelAnimationFrame(frame);frame=0;}
-        slider.value=String(index());paint();
-        const field=$('task-effort'),next=levels[index()];
-        if(field.value!==next){field.value=next;changed(field);}
-      };
-      // Native thumb movement remains continuous. Avoid form events, draft
-      // serialization and textarea layout while the pointer is moving.
-      slider.oninput=()=>{dirty=true;if(!frame)frame=requestAnimationFrame(paint);};
-      slider.onchange=commit;flushEffort=commit;
-      slider.onkeydown=event=>{
-        const direction={ArrowLeft:-1,ArrowDown:-1,PageDown:-1,ArrowRight:1,ArrowUp:1,PageUp:1}[event.key];
-        if(!direction&&!['Home','End'].includes(event.key))return;
-        event.preventDefault();slider.value=String(event.key==='Home'?0:event.key==='End'?4:Math.max(0,Math.min(4,index()+direction)));
-        dirty=true;commit();
-      };
-      paint();panel.append(slider);
-      const ticks=document.createElement('div');ticks.className='composer-effort-ticks';for(const text of labels){const span=document.createElement('span');span.textContent=text;ticks.append(span);}panel.append(ticks);
-      row('恢复默认档位',()=>{dirty=false;if(frame)cancelAnimationFrame(frame);flushEffort=null;$('task-effort').value='';changed($('task-effort'));close();});
-      note('强度影响分析步骤、调用预算与超时；模型原生推理由已配置映射决定。');
-    }
-    panel.querySelector('button, input')?.focus();
+      title('选择模型');
+      modelChoices(text(panel,'div','','composer-model-list'),panel);
+      positionOptions();
+    }else{showEffort();return;}
+    const selected=kind==='models'?panel.querySelector('.selected'):null;
+    (selected||panel.querySelector('button, input'))?.focus();
   }
+  function openModels(){show('models',effort);}
   function showPermission(){active=null;show('permission',permission);}
   function changed(field){field.dispatchEvent(new Event('input',{bubbles:true}));field.dispatchEvent(new Event('change',{bubbles:true}));update();}
   async function pickModel(id){
     if(saving)return;saving=true;const wasDisabled=send.disabled;send.disabled=true;
     panel.querySelectorAll('button').forEach(b=>{b.disabled=true;});
-    try{const latest=await api('settings');await api('settings','PUT',{...latest,default_model_id:id});await refresh();close();}
+    try{const latest=await api('settings');await api('settings','PUT',{...latest,default_model_id:id});await refresh();close(true);}
     catch(error){notice(error.message,true);panel.querySelectorAll('button').forEach(b=>{b.disabled=false;});}
     finally{saving=false;send.disabled=wasDisabled;update();}
   }
-  for(const [node,kind]of [[plus,'add'],[permission,'permission'],[model,'models'],[effort,'effort']]){
-    node.setAttribute('aria-haspopup','dialog');node.setAttribute('aria-controls',panel.id);node.setAttribute('aria-expanded','false');node.onclick=()=>show(kind,node);
+  for(const [node,kind]of [[plus,'add'],[permission,'permission'],[effort,'effort']]){
+    node.setAttribute('aria-haspopup','dialog');node.setAttribute('aria-controls',panel.id);node.setAttribute('aria-expanded','false');
+    node.onclick=()=>{if(trigger===node&&!panel.hidden)close();else show(kind,node);};
   }
   document.addEventListener('pointerdown',event=>{if(active&&!panel.contains(event.target)&&!trigger?.contains(event.target))close();});
+  document.addEventListener('keydown',event=>{
+    if(event.defaultPrevented||event.repeat||event.isComposing||!event.ctrlKey||!event.shiftKey||event.altKey||event.metaKey||event.key.toLowerCase()!=='m')return;
+    if(!effort.getClientRects().length||getComputedStyle(effort).visibility!=='visible'||dock.inert||toolbar.inert||document.querySelector('dialog[open]'))return;
+    event.preventDefault();show('effort',effort);
+  });
   dock.addEventListener('keydown',event=>{if(event.key==='Escape'&&active){event.preventDefault();close(true);}});
+  panel.addEventListener('keydown',event=>{
+    if(active!=='models'||!['ArrowUp','ArrowDown'].includes(event.key))return;
+    const items=[...panel.querySelectorAll('.composer-menu-row:not(:disabled)')];
+    if(!items.length)return;
+    event.preventDefault();
+    const next=items.indexOf(document.activeElement)+(event.key==='ArrowDown'?1:-1);
+    items[(next+items.length)%items.length].focus();
+  });
   const Speech=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!Speech){voice.disabled=true;voice.title='当前浏览器不支持语音输入';voice.setAttribute('aria-label',voice.title);}
   else voice.onclick=()=>{
@@ -3050,16 +3205,25 @@ window.ComposerControls = (() => {
   $('task-form').addEventListener('submit',()=>recognition?.stop(),true);
   document.addEventListener('visibilitychange',()=>{if(document.hidden)recognition?.stop();});
   function update(){
-    plus.innerHTML=icon('plus');plus.setAttribute('aria-label','添加分析资料');plus.title=$('analysis-data-status').textContent;
+    plus.innerHTML=icon('plus');plus.title=$('analysis-data-status').textContent;
     permission.querySelector('span').textContent=$('task-notify').checked?'授权邮件':'仅分析';
-    const selected=profiles.find(p=>p.id===settings?.default_model_id);
-    model.querySelector('span').textContent=selected?.name||'选择模型';model.title=selected?`默认模型：${selected.name}`:'选择或配置分析模型';
-    effort.querySelector('span').textContent=labels[levels.indexOf(effective())]||'默认';
-    effort.title=`推理强度：${effort.textContent.trim()}`;
+    const selected=profiles.find(p=>p.enabled&&p.id===settings?.default_model_id);
+    modelName.textContent=selected?.name||'选择模型';
+    effortLabel.textContent=labels[levels.indexOf(effective())]||'默认';
+    effort.setAttribute('aria-label',`选择模型与推理强度，${modelName.textContent}，${effortLabel.textContent}`);
+    positionOptions();
     window.DesktopWorkbench?.update();
   }
-  new MutationObserver(()=>{if(!document.body.classList.contains('analysis-composer-visible'))close();}).observe(document.body,{attributes:true,attributeFilter:['class']});
-  update();return {update,close};
+  function syncMenu() {
+    const cascade=useCategories();
+    if(!document.body.classList.contains('analysis-composer-visible') || (active==='add'&&panel.classList.contains('composer-cascade')!==cascade))close();
+    plus.setAttribute('aria-label',cascade?'打开对话工具':'添加分析资料');
+    positionOptions();
+  }
+  new MutationObserver(syncMenu).observe(document.body,{attributes:true,attributeFilter:['class']});
+  desktop.addEventListener('change',syncMenu);
+  new ResizeObserver(positionOptions).observe(dock);
+  syncMenu();update();return {update,close,openModels};
 })();
 
 /* Explicit local imports; preview responses never become archive receipts. */
@@ -4099,7 +4263,7 @@ window.DesktopWorkbench = (() => {
   function inputState() { let raw; try { raw = JSON.parse($('task-data').value); if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw Error(); } catch (_) { return {state: 'invalid', field: 'task-data', label: '请修正原始 JSON', detail: '原始输入无法解析，请打开资料检查格式。'}; } const prediction = window.AnalysisInput.currentPrediction(); if (typeof prediction?.subject !== 'string' || !prediction.subject.trim()) return {state: 'empty', label: '填写分析资料', detail: ''}; const result = {prediction, facts: Array.isArray(raw.context?.facts) ? raw.context.facts.length : 0}; if (typeof prediction.model_version !== 'string' || !prediction.model_version.trim()) return {...result, state: 'invalid', field: 'p-model-version', label: '补充模型版本', detail: '请填写这份预测的上游模型版本。'}; if (!prediction.direction && !Number.isFinite(prediction.value)) return {...result, state: 'invalid', field: 'p-direction-up', label: '补充预测方向', detail: '请按上游预测选择本轮方向。'}; if (!(Number.isFinite(prediction.horizon?.value) && prediction.horizon.value > 0)) return {...result, state: 'invalid', field: 'p-horizon-value', label: '核对预测周期', detail: '预测周期需要大于零。'}; if (!(Date.parse(prediction.valid_until) > Date.now())) return {...result, state: 'expired', field: 'p-valid-until', label: '更新过期预测', detail: '预测已过期或缺少有效期，请核对原始资料后更新。'}; if (prediction.confidence != null && !(Number.isFinite(prediction.confidence) && prediction.confidence >= 0 && prediction.confidence <= 1)) return {...result, state: 'invalid', field: 'p-confidence', label: '核对置信度', detail: '置信度须在 0 到 1 之间；上游未提供时可留空。'}; if (raw.context?.facts && (!Array.isArray(raw.context.facts) || raw.context.facts.some(fact => typeof fact?.source !== 'string' || !fact.source.trim() || !Number.isFinite(Date.parse(fact.observed_at))))) return {...result, state: 'invalid', label: '补充事实来源', detail: '每条客观事实都需要来源和有效的观测时间。'}; return {...result, state: 'ready', label: prediction.subject, detail: '主要资料已填写；发送时会再次校验资料、归档和授权。'}; }
   function openData() { origin = document.activeElement?.getClientRects?.().length ? document.activeElement : $('analysis-data-open'); $('prediction-editor').open = true; window.AnalysisInput.open('input'); const target = $('task-form').querySelector('[aria-invalid="true"]') || $(inputState().field || 'p-subject'); for (let parent = target.parentElement; parent && parent !== $('task-form'); parent = parent.parentElement) if (parent.tagName === 'DETAILS') parent.open = true; target.focus(); target.scrollIntoView({block: 'nearest'}); }
   function openResult() { if (!task) return; origin = document.activeElement; window.AnalysisInput.open(['submitted', 'working'].includes(task.status.state) ? 'progress' : 'report'); $('analysis-tab-' + pane).focus(); }
-  function chooseModel() { origin = document.activeElement; if (safeProfiles().some(item => item.enabled && item.id === safeSettings()?.default_model_id)) $('composer-model').click(); else { showView('settings'); showPanel('models'); $('model-name').focus(); } }
+  function chooseModel() { origin = document.activeElement; if (safeProfiles().some(item => item.enabled && item.id === safeSettings()?.default_model_id)) window.ComposerControls.openModels(); else { showView('settings'); showPanel('models'); $('model-name').focus(); } }
   async function sample(event) { if (sampling) return; const button = event.currentTarget, current = safeProfiles().find(item => item.enabled && item.id === safeSettings()?.default_model_id); if (current?.provider !== 'mock' && current && !confirm('准备示例会将工作台默认模型切换为 Mock，并替换当前预测与事实。不会自动提交分析。继续？')) return; if (window.AnalysisInput.currentPrediction()?.subject && (!current || current.provider === 'mock') && !confirm('用合成示例替换当前预测与事实？当前问题会保留，不会自动提交。')) return; sampling = true; button.disabled = true; try { await $('try-sample').onclick(); if ($('task-data').value.includes('console-mock')) { update(); $('conversation-message').focus(); notice('离线示例已准备：默认模型为 Mock，资料为合成资料。输入问题后点击发送。'); } } finally { sampling = false; button.disabled = false; } }
 
   function runtimeSet(id,status,patch={}) {
@@ -4508,17 +4672,17 @@ window.DesktopWorkbench = (() => {
     navCollapse?.setAttribute('aria-label', value ? '展开导航栏' : '折叠导航栏');
     navCollapse?.setAttribute('title', value ? '展开导航栏' : '折叠导航栏');
     try { localStorage.setItem('stock_predict_mailer.desktop.nav.collapsed.v1', value ? '1' : '0'); } catch (_) {}
-    window.AnalysisInput.layout();
+    window.AnalysisInput.resize();
   }
 
-  function setMode(value) { mode = value; if (!root || !desktop.matches) return; document.body.classList.toggle('desktop-focus-view', mode === 'focus'); if (modeSwitch) for (const node of modeSwitch.children) node.setAttribute('aria-pressed', String(node.dataset.desktopMode === mode)); office.querySelector('.office-stage').inert = mode === 'focus'; if (office.querySelector('.market-wall')) office.querySelector('.market-wall').inert = mode === 'focus'; moveComposer(mode === 'focus'); for (const button of root.querySelectorAll('[data-desktop-mode]')) button.setAttribute('aria-pressed', String(button.dataset.desktopMode === mode)); try { localStorage.setItem(preference, mode); } catch (_) {} window.AnalysisInput.layout(); if (mode === 'focus') applyCanvasViewport(); }
+  function setMode(value) { mode = value; if (!root || !desktop.matches) return; document.body.classList.toggle('desktop-focus-view', mode === 'focus'); if (modeSwitch) for (const node of modeSwitch.children) node.setAttribute('aria-pressed', String(node.dataset.desktopMode === mode)); office.querySelector('.office-stage').inert = mode === 'focus'; if (office.querySelector('.market-wall')) office.querySelector('.market-wall').inert = mode === 'focus'; moveComposer(mode === 'focus'); for (const button of root.querySelectorAll('[data-desktop-mode]')) button.setAttribute('aria-pressed', String(button.dataset.desktopMode === mode)); try { localStorage.setItem(preference, mode); } catch (_) {} window.AnalysisInput.resize(); if (mode === 'focus') applyCanvasViewport(); }
   function panel(value) { pane = value; if (!desktop.matches || !root) return; if (document.activeElement instanceof HTMLElement && !document.activeElement.closest('#report-inspector') && document.activeElement !== document.body) origin = document.activeElement; inspectorTitle.textContent = {input: '分析资料', progress: '工作进度', report: '报告与证据'}[pane]; }
   function returnFocus() { if (!desktop.matches || !root) return; const candidates = [origin, $('analysis-data-open'), $('desktop-data'), $('desktop-focus-data')]; candidates.find(target => target?.isConnected && target.getClientRects().length)?.focus(); }
   function historyPanel(open = $('analysis-composer').classList.contains('desktop-history-open')) { if (!root || !desktop.matches) return; const count = $('conversation-turns').childElementCount, expanded = Boolean(open && count); $('desktop-history').hidden = !count; put('desktop-history', `会话记录 · ${count} 轮`); $('desktop-history').setAttribute('aria-expanded', String(expanded)); $('analysis-composer').classList.toggle('desktop-history-open', expanded); }
 
   function update() { if (!root || !desktop.matches) return; deriveRuntime(task); if (navFocus) { navFocus.hidden = document.body.dataset.view !== 'analysis'; navFocus.setAttribute('aria-pressed', String(mode === 'focus')); } if (navHall) { navHall.hidden = document.body.dataset.view !== 'analysis'; navHall.setAttribute('aria-pressed', String(mode === 'hall')); } const input = inputState(), model = safeProfiles().find(item => item.enabled && item.id === safeSettings()?.default_model_id), prediction = input.prediction, until = Date.parse(prediction?.valid_until) || 0; if (until !== expiresAt) { clearTimeout(expiry); expiresAt = until; if (until > Date.now()) expiry = setTimeout(() => { expiresAt = 0; update(); }, Math.min(until - Date.now() + 50, 2147483647)); } const active = activeTask(), result = task?.artifacts?.[0]?.parts?.[0]?.data, failed = task?.status.state === 'failed', canceled = task?.status.state === 'canceled'; put('desktop-title', prediction?.subject ? `${prediction.subject} · 专业分析` : '专业分析工作流'); put('desktop-subtitle', failed ? '任务失败，画布保留真实失败节点和修正入口。' : active && disconnected ? '进度暂未更新，任务可能仍在服务端执行。' : active ? '正在读取真实任务事件，节点状态会随事件更新。' : '可编辑流程结构，提交时仍使用现有分析任务接口。'); for (const id of ['desktop-model', 'desktop-data', 'desktop-focus-data']) $(id).disabled = false; $('desktop-sample').disabled = sampling; put('desktop-model-value', model?.name || '选择模型'); $('desktop-model').dataset.state = model ? 'ready' : 'empty'; $('desktop-model').title = model ? `工作台默认模型：${model.name}` : '先添加或选择一个默认模型。'; put('desktop-data-value', input.label); $('desktop-data').dataset.state = input.state; $('desktop-data').title = input.detail; $('desktop-result').disabled = !task; put('desktop-result-value', active ? '查看工作进度' : failed ? '查看失败原因' : canceled ? '查看已取消任务' : result ? '查看报告与证据' : '等待分析报告'); $('desktop-result').dataset.state = failed ? 'invalid' : result ? 'ready' : active ? 'working' : 'empty'; put('desktop-focus-title', prediction?.subject || '准备你的第一份分析'); put('desktop-focus-copy', prediction ? input.detail : '导入上游预测，或填写标的与周期。画布会把真实任务链路映射为可核对的节点。'); put('desktop-summary-model', model ? `${model.name}${model.provider === 'mock' ? ' · 离线模拟' : ''}` : '尚未选择默认模型'); put('desktop-summary-prediction', prediction ? `${horizonText(prediction.horizon)} · ${prediction.synthetic ? '合成数据' : '上游声明数据'}` : '尚未提供预测'); put('desktop-summary-facts', input.facts ? `${input.facts} 条来源声明` : '本轮未附新增事实'); put('desktop-summary-mail', $('task-notify').checked ? '本轮启用邮件 · 仍需核对授权收件人' : '仅分析 · 本轮不发送邮件'); $('desktop-sample').hidden = Boolean(task); focus.querySelector('.desktop-sample-note').hidden = Boolean(task); historyPanel(); let feedbackText = active ? '分析进行中，工作流状态来自实际任务事件。' : !model ? '先选择分析模型，或准备一个离线示例。' : input.state !== 'ready' ? input.detail : failed ? '上一轮分析失败，请查看失败节点和任务详情。' : canceled ? '上一轮任务已取消，可核对资料后重新发送。' : result ? `上一轮报告已生成${result.analysis?.status === 'degraded' ? '，分析存在降级' : ''}。` : input.detail; if (!active && input.state === 'ready' && $('task-notify').checked && !$('task-recipient').value.trim()) feedbackText = '本轮启用了邮件，请先填写授权收件地址。'; if (active && disconnected) feedbackText = '进度读取中断，任务可能仍在服务端运行。'; put('desktop-feedback-text', feedbackText); feedback.dataset.state = failed || (active && disconnected) || ['invalid', 'expired'].includes(input.state) ? 'invalid' : active ? 'working' : 'normal'; put('desktop-feedback-action', active ? '查看进度' : failed ? '查看原因' : result ? '查看报告' : !model ? '选择模型' : '检查资料'); $('desktop-feedback-action').disabled = false; $('desktop-feedback-action').onclick = active || failed || result ? openResult : !model ? chooseModel : openData; for (const button of document.querySelectorAll('.nav [data-view]')) { if (button.dataset.view === document.body.dataset.view) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current'); } renderCanvas(); renderInspector(); }
 
-  function install() { if (!desktop.matches) { moveComposer(false); navCollapse?.remove(); navCollapse = null; navFocus?.remove(); navFocus = null; navHall?.remove(); navHall = null; modeSwitch?.remove(); modeSwitch = null; document.body.classList.remove('desktop-nav-collapsed'); if (root) { root.hidden = focus.hidden = feedback.hidden = true; document.body.classList.remove('desktop-workbench', 'desktop-focus-view'); office.querySelector('.office-stage').inert = false; office.querySelector('.market-wall')?.removeAttribute('inert'); clearTimeout(expiry); expiresAt = 0; statusParent.insertBefore($('task-status'), statusNext); $('analysis-composer').classList.remove('desktop-history-open'); inspectorTitle.textContent = originalTitle; document.querySelectorAll('.nav [aria-current]').forEach(button => button.removeAttribute('aria-current')); window.AnalysisInput.layout(); } return; } if (!root) { root = document.createElement('section'); root.id = 'desktop-workflow'; root.setAttribute('aria-label', '分析流程'); root.innerHTML = `<div class="desktop-workflow-heading"><div><h1 id="desktop-title"></h1><p id="desktop-subtitle"></p></div></div><div class="desktop-workflow-actions"><button type="button" id="desktop-model"><span class="desktop-step">1 · 模型</span><strong id="desktop-model-value"></strong></button><button type="button" id="desktop-data"><span class="desktop-step">2 · 资料</span><strong id="desktop-data-value"></strong></button><button type="button" id="desktop-result"><span class="desktop-step">3 · 结果</span><strong id="desktop-result-value"></strong></button></div>`; focus = document.createElement('section'); focus.id = 'desktop-focus'; focus.setAttribute('aria-label', '可编辑分析工作流'); focus.innerHTML = `<div class="desktop-focus-intro"><p class="eyebrow">本轮分析工作流</p><h2 id="desktop-focus-title"></h2><p id="desktop-focus-copy"></p><div class="desktop-focus-actions"><button type="button" id="desktop-focus-data" class="btn primary">填写 / 修改资料</button><button type="button" id="desktop-sample" class="btn">准备离线示例</button></div><p class="hint desktop-sample-note">离线示例会将默认模型设为 Mock 并填入 synthetic 资料，准备后仍需手动发送。</p></div><div class="desktop-flow-toolbar"><div class="desktop-flow-toolbar-status"><strong>可视化流程</strong><span id="desktop-workflow-message" role="status" aria-live="polite">选择节点查看详情。</span></div><div class="desktop-flow-toolbar-actions"><span id="desktop-workflow-validation"></span><button type="button" data-workflow-action="add">新增节点</button><button type="button" data-workflow-action="undo" id="desktop-workflow-undo">撤销</button><button type="button" data-workflow-action="save" id="desktop-workflow-save">保存流程</button><button type="button" data-workflow-action="restore">恢复默认</button><button type="button" data-workflow-action="import">导入</button><button type="button" data-workflow-action="export">导出</button><div class="desktop-flow-viewport-tools" role="group" aria-label="画布视图控制"><button type="button" data-viewport-action="zoom-out" aria-label="缩小画布">−</button><span id="desktop-workflow-zoom">72%</span><button type="button" data-viewport-action="zoom-in" aria-label="放大画布">+</button><button type="button" data-viewport-action="fit" aria-label="适配画布">适配</button></div><input id="desktop-workflow-file" type="file" accept="application/json,.json" hidden></div></div><div class="desktop-flow-layout"><div class="desktop-flow-canvas" id="desktop-workflow-canvas" role="application" aria-label="分析工作流画布"><svg id="desktop-workflow-edges" aria-label="工作流连线"><defs><marker id="desktop-flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/></marker></defs><g id="desktop-workflow-edge-paths"></g></svg><div class="desktop-flow-surface" id="desktop-workflow-surface"><div id="desktop-workflow-nodes"></div></div></div><aside class="desktop-flow-inspector" id="desktop-workflow-inspector" aria-label="节点详情"></aside></div><dl class="desktop-summary"><div><dt>分析模型</dt><dd id="desktop-summary-model"></dd></div><div><dt>预测周期</dt><dd id="desktop-summary-prediction"></dd></div><div><dt>客观事实</dt><dd id="desktop-summary-facts"></dd></div><div><dt>本轮通知</dt><dd id="desktop-summary-mail"></dd></div></dl>`; const intro = focus.querySelector('.desktop-focus-intro'); if (intro) intro.hidden = true; const focusData = focus.querySelector('#desktop-focus-data'); if (focusData) focus.querySelector('.desktop-flow-toolbar')?.prepend(focusData); const summary = focus.querySelector('.desktop-summary'); if (summary) summary.hidden = true; feedback = document.createElement('div'); feedback.id = 'desktop-feedback'; feedback.innerHTML = '<span id="desktop-feedback-text" role="status" aria-live="polite"></span><button type="button" id="desktop-feedback-action"></button><button type="button" id="desktop-history" aria-controls="conversation-thread" aria-expanded="false" hidden></button><span class="desktop-send-hint">Enter 发送 · Shift+Enter 换行</span>'; office.prepend(root, focus); modeSwitch = document.createElement('div'); modeSwitch.className = 'desktop-mode-switch'; modeSwitch.setAttribute('role', 'group'); modeSwitch.setAttribute('aria-label', '界面模式'); for (const [value, text] of [['hall', '普通'], ['focus', '专业']]) { const node = document.createElement('button'); node.type = 'button'; node.textContent = text; node.dataset.desktopMode = value; node.onclick = () => setMode(value); modeSwitch.append(node); } document.querySelector('.nav')?.append(modeSwitch); if (!focus.querySelector('.desktop-flow-palette')) { const palette = document.createElement('aside'); palette.className = 'desktop-flow-palette'; palette.setAttribute('aria-label', '节点库'); const heading = document.createElement('p'); heading.className = 'eyebrow'; heading.textContent = '节点库'; palette.append(heading); for (const [type, [label]] of Object.entries(TYPE_DEFAULTS)) { const item = document.createElement('button'); item.type = 'button'; item.dataset.nodeType = type; item.title = `添加${label}节点`; const dot = document.createElement('i'); dot.setAttribute('aria-hidden', 'true'); dot.style.background = TYPE_COLOR[type] || TYPE_COLOR.custom; item.append(dot, document.createTextNode(label)); item.onclick = () => type === 'trained' ? addTrainedNode() : addNode(type); palette.append(item); } focus.querySelector('.desktop-flow-layout')?.prepend(palette); } navCollapse = document.createElement('button'); navCollapse.type = 'button'; navCollapse.className = 'desktop-nav-collapse'; navCollapse.onclick = () => setNavCollapsed(!document.body.classList.contains('desktop-nav-collapsed')); document.querySelector('.topbar')?.insertBefore(navCollapse, document.querySelector('.nav')); installNavIcons(); setNavCollapsed(navCollapsed()); $('analysis-composer').prepend(feedback); $('desktop-data').onclick = $('desktop-focus-data').onclick = openData; $('desktop-model').onclick = chooseModel; $('desktop-result').onclick = openResult; $('desktop-sample').onclick = sample; $('desktop-history').onclick = () => historyPanel(!$('analysis-composer').classList.contains('desktop-history-open')); root.querySelectorAll('[data-desktop-mode]').forEach(button => { button.onclick = () => setMode(button.dataset.desktopMode); }); focus.querySelectorAll('[data-workflow-action]').forEach(button => { button.onclick = () => ({add: addNode, undo, save: saveWorkflow, restore: restoreDefault, import: () => $('desktop-workflow-file').click(), export: exportWorkflow}[button.dataset.workflowAction])(); }); focus.querySelectorAll('[data-viewport-action]').forEach(button => { button.onclick = () => button.dataset.viewportAction === 'fit' ? fitCanvas() : canvasZoomBy(button.dataset.viewportAction === 'zoom-in' ? 1.15 : 1 / 1.15); }); installCanvasInteractions(); workflowControls(); $('desktop-workflow-file').addEventListener('change', importWorkflow); $('report-close').addEventListener('click', returnFocus); new MutationObserver(() => historyPanel()).observe($('conversation-turns'), {childList: true}); document.addEventListener('pointerdown', event => { if (desktop.matches && !$('analysis-composer').contains(event.target)) historyPanel(false); }); document.addEventListener('keydown', event => { if (window.DesktopInteractions?.active?.()) return; if (desktop.matches && event.key === 'Escape' && $('analysis-composer').classList.contains('desktop-history-open')) { event.preventDefault(); event.stopImmediatePropagation(); historyPanel(false); $('desktop-history').focus(); } }, true); $('task-form').addEventListener('submit', () => historyPanel(false));  const toolbar = focus.querySelector('.desktop-flow-toolbar'); const resize = new ResizeObserver(() => { if (!desktop.matches) return; focus.style.setProperty('--desktop-flow-toolbar-height', toolbar.offsetHeight + 'px'); const height = root.offsetHeight + 'px'; if (office.style.getPropertyValue('--desktop-workflow-height') !== height) { office.style.setProperty('--desktop-workflow-height', height); document.documentElement.style.setProperty('--desktop-workflow-height', height); window.AnalysisInput.layout(); } renderEdges(); }); resize.observe(root); resize.observe(toolbar); window.addEventListener('beforeunload', event => { if (dirty) { event.preventDefault(); event.returnValue = ''; } }); document.addEventListener('click', event => { const target = event.target.closest?.('.nav [data-view], #new-analysis'); if (target && dirty && target.dataset.view !== 'analysis' && !confirm('当前工作流尚未保存，离开后编辑内容会保留在本机草稿中。继续吗？')) { event.preventDefault(); event.stopImmediatePropagation(); } }, true); } root.hidden = focus.hidden = feedback.hidden = false; if (navFocus) { navFocus.hidden = document.body.dataset.view !== 'analysis'; navFocus.setAttribute('aria-pressed', String(mode === 'focus')); } if (navHall) { navHall.hidden = document.body.dataset.view !== 'analysis'; navHall.setAttribute('aria-pressed', String(mode === 'hall')); } $('analysis-pane-progress').prepend($('task-status')); document.body.classList.add('desktop-workbench'); setMode(mode); panel(pane); update(); }
+  function install() { if (!desktop.matches) { moveComposer(false); navCollapse?.remove(); navCollapse = null; navFocus?.remove(); navFocus = null; navHall?.remove(); navHall = null; modeSwitch?.remove(); modeSwitch = null; document.body.classList.remove('desktop-nav-collapsed'); if (root) { root.hidden = focus.hidden = feedback.hidden = true; document.body.classList.remove('desktop-workbench', 'desktop-focus-view'); office.querySelector('.office-stage').inert = false; office.querySelector('.market-wall')?.removeAttribute('inert'); clearTimeout(expiry); expiresAt = 0; statusParent.insertBefore($('task-status'), statusNext); $('analysis-composer').classList.remove('desktop-history-open'); inspectorTitle.textContent = originalTitle; document.querySelectorAll('.nav [aria-current]').forEach(button => button.removeAttribute('aria-current')); window.AnalysisInput.layout(); } return; } if (!root) { root = document.createElement('section'); root.id = 'desktop-workflow'; root.setAttribute('aria-label', '分析流程'); root.innerHTML = `<div class="desktop-workflow-heading"><div><h1 id="desktop-title"></h1><p id="desktop-subtitle"></p></div></div><div class="desktop-workflow-actions"><button type="button" id="desktop-model"><span class="desktop-step">1 · 模型</span><strong id="desktop-model-value"></strong></button><button type="button" id="desktop-data"><span class="desktop-step">2 · 资料</span><strong id="desktop-data-value"></strong></button><button type="button" id="desktop-result"><span class="desktop-step">3 · 结果</span><strong id="desktop-result-value"></strong></button></div>`; focus = document.createElement('section'); focus.id = 'desktop-focus'; focus.setAttribute('aria-label', '可编辑分析工作流'); focus.innerHTML = `<div class="desktop-focus-intro"><p class="eyebrow">本轮分析工作流</p><h2 id="desktop-focus-title"></h2><p id="desktop-focus-copy"></p><div class="desktop-focus-actions"><button type="button" id="desktop-focus-data" class="btn primary">填写 / 修改资料</button><button type="button" id="desktop-sample" class="btn">准备离线示例</button></div><p class="hint desktop-sample-note">离线示例会将默认模型设为 Mock 并填入 synthetic 资料，准备后仍需手动发送。</p></div><div class="desktop-flow-toolbar"><div class="desktop-flow-toolbar-status"><strong>可视化流程</strong><span id="desktop-workflow-message" role="status" aria-live="polite">选择节点查看详情。</span></div><div class="desktop-flow-toolbar-actions"><span id="desktop-workflow-validation"></span><button type="button" data-workflow-action="add">新增节点</button><button type="button" data-workflow-action="undo" id="desktop-workflow-undo">撤销</button><button type="button" data-workflow-action="save" id="desktop-workflow-save">保存流程</button><button type="button" data-workflow-action="restore">恢复默认</button><button type="button" data-workflow-action="import">导入</button><button type="button" data-workflow-action="export">导出</button><div class="desktop-flow-viewport-tools" role="group" aria-label="画布视图控制"><button type="button" data-viewport-action="zoom-out" aria-label="缩小画布">−</button><span id="desktop-workflow-zoom">72%</span><button type="button" data-viewport-action="zoom-in" aria-label="放大画布">+</button><button type="button" data-viewport-action="fit" aria-label="适配画布">适配</button></div><input id="desktop-workflow-file" type="file" accept="application/json,.json" hidden></div></div><div class="desktop-flow-layout"><div class="desktop-flow-canvas" id="desktop-workflow-canvas" role="application" aria-label="分析工作流画布"><svg id="desktop-workflow-edges" aria-label="工作流连线"><defs><marker id="desktop-flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/></marker></defs><g id="desktop-workflow-edge-paths"></g></svg><div class="desktop-flow-surface" id="desktop-workflow-surface"><div id="desktop-workflow-nodes"></div></div></div><aside class="desktop-flow-inspector" id="desktop-workflow-inspector" aria-label="节点详情"></aside></div><dl class="desktop-summary"><div><dt>分析模型</dt><dd id="desktop-summary-model"></dd></div><div><dt>预测周期</dt><dd id="desktop-summary-prediction"></dd></div><div><dt>客观事实</dt><dd id="desktop-summary-facts"></dd></div><div><dt>本轮通知</dt><dd id="desktop-summary-mail"></dd></div></dl>`; const intro = focus.querySelector('.desktop-focus-intro'); if (intro) intro.hidden = true; const focusData = focus.querySelector('#desktop-focus-data'); if (focusData) focus.querySelector('.desktop-flow-toolbar')?.prepend(focusData); const summary = focus.querySelector('.desktop-summary'); if (summary) summary.hidden = true; feedback = document.createElement('div'); feedback.id = 'desktop-feedback'; feedback.innerHTML = '<span id="desktop-feedback-text" role="status" aria-live="polite"></span><button type="button" id="desktop-feedback-action"></button><button type="button" id="desktop-history" aria-controls="conversation-thread" aria-expanded="false" hidden></button>'; office.prepend(root, focus); modeSwitch = document.createElement('div'); modeSwitch.className = 'desktop-mode-switch'; modeSwitch.setAttribute('role', 'group'); modeSwitch.setAttribute('aria-label', '界面模式'); for (const [value, text] of [['hall', '普通'], ['focus', '专业']]) { const node = document.createElement('button'); node.type = 'button'; node.textContent = text; node.dataset.desktopMode = value; node.onclick = () => setMode(value); modeSwitch.append(node); } document.querySelector('.nav')?.append(modeSwitch); if (!focus.querySelector('.desktop-flow-palette')) { const palette = document.createElement('aside'); palette.className = 'desktop-flow-palette'; palette.setAttribute('aria-label', '节点库'); const heading = document.createElement('p'); heading.className = 'eyebrow'; heading.textContent = '节点库'; palette.append(heading); for (const [type, [label]] of Object.entries(TYPE_DEFAULTS)) { const item = document.createElement('button'); item.type = 'button'; item.dataset.nodeType = type; item.title = `添加${label}节点`; const dot = document.createElement('i'); dot.setAttribute('aria-hidden', 'true'); dot.style.background = TYPE_COLOR[type] || TYPE_COLOR.custom; item.append(dot, document.createTextNode(label)); item.onclick = () => type === 'trained' ? addTrainedNode() : addNode(type); palette.append(item); } focus.querySelector('.desktop-flow-layout')?.prepend(palette); } navCollapse = document.createElement('button'); navCollapse.type = 'button'; navCollapse.className = 'desktop-nav-collapse'; navCollapse.onclick = () => setNavCollapsed(!document.body.classList.contains('desktop-nav-collapsed')); document.querySelector('.topbar')?.insertBefore(navCollapse, document.querySelector('.nav')); installNavIcons(); setNavCollapsed(navCollapsed()); $('analysis-composer').prepend(feedback); $('desktop-data').onclick = $('desktop-focus-data').onclick = openData; $('desktop-model').onclick = chooseModel; $('desktop-result').onclick = openResult; $('desktop-sample').onclick = sample; $('desktop-history').onclick = () => historyPanel(!$('analysis-composer').classList.contains('desktop-history-open')); root.querySelectorAll('[data-desktop-mode]').forEach(button => { button.onclick = () => setMode(button.dataset.desktopMode); }); focus.querySelectorAll('[data-workflow-action]').forEach(button => { button.onclick = () => ({add: addNode, undo, save: saveWorkflow, restore: restoreDefault, import: () => $('desktop-workflow-file').click(), export: exportWorkflow}[button.dataset.workflowAction])(); }); focus.querySelectorAll('[data-viewport-action]').forEach(button => { button.onclick = () => button.dataset.viewportAction === 'fit' ? fitCanvas() : canvasZoomBy(button.dataset.viewportAction === 'zoom-in' ? 1.15 : 1 / 1.15); }); installCanvasInteractions(); workflowControls(); $('desktop-workflow-file').addEventListener('change', importWorkflow); $('report-close').addEventListener('click', returnFocus); new MutationObserver(() => historyPanel()).observe($('conversation-turns'), {childList: true}); document.addEventListener('pointerdown', event => { if (desktop.matches && !$('analysis-composer').contains(event.target)) historyPanel(false); }); document.addEventListener('keydown', event => { if (window.DesktopInteractions?.active?.()) return; if (desktop.matches && event.key === 'Escape' && $('analysis-composer').classList.contains('desktop-history-open')) { event.preventDefault(); event.stopImmediatePropagation(); historyPanel(false); $('desktop-history').focus(); } }, true); $('task-form').addEventListener('submit', () => historyPanel(false));  const toolbar = focus.querySelector('.desktop-flow-toolbar'); const resize = new ResizeObserver(() => { if (!desktop.matches) return; focus.style.setProperty('--desktop-flow-toolbar-height', toolbar.offsetHeight + 'px'); const height = root.offsetHeight + 'px'; if (office.style.getPropertyValue('--desktop-workflow-height') !== height) { office.style.setProperty('--desktop-workflow-height', height); document.documentElement.style.setProperty('--desktop-workflow-height', height); window.AnalysisInput.layout(); } renderEdges(); }); resize.observe(root); resize.observe(toolbar); window.addEventListener('beforeunload', event => { if (dirty) { event.preventDefault(); event.returnValue = ''; } }); document.addEventListener('click', event => { const target = event.target.closest?.('.nav [data-view], #new-analysis'); if (target && dirty && target.dataset.view !== 'analysis' && !confirm('当前工作流尚未保存，离开后编辑内容会保留在本机草稿中。继续吗？')) { event.preventDefault(); event.stopImmediatePropagation(); } }, true); } root.hidden = focus.hidden = feedback.hidden = false; if (navFocus) { navFocus.hidden = document.body.dataset.view !== 'analysis'; navFocus.setAttribute('aria-pressed', String(mode === 'focus')); } if (navHall) { navHall.hidden = document.body.dataset.view !== 'analysis'; navHall.setAttribute('aria-pressed', String(mode === 'hall')); } $('analysis-pane-progress').prepend($('task-status')); document.body.classList.add('desktop-workbench'); setMode(mode); panel(pane); update(); }
   desktop.addEventListener('change', install); new MutationObserver(update).observe(document.body, {attributes: true, attributeFilter: ['data-view']}); document.addEventListener('visibilitychange', () => { if (!document.hidden) update(); }); window.addEventListener('focus', update); install();
   return {update, panel, setMode, addBuiltinTool, workflowPayload, acceptWorkflow, explainError, mode: () => mode, observeProgressTask(value) {task=value;deriveRuntime(task);}, observe(value) { task = value; update(); }, event: applyEvent, connectionLost(value) { disconnected = value; update(); }, selectionState() { update(); }, reset() { task = null; archived=null; archivedEvents=[]; workSurface='edit'; if(focus)updateWorkspaceTabs(); disconnected = false; runtime.taskId = null; runtime.events=[]; runtime.states.clear(); runtime.details.clear(); update(); }};
 })();

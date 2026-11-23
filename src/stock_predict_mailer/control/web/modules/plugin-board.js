@@ -170,6 +170,7 @@ globalThis.PonyPluginBoard=(()=>{
   function mountDialog(toolbar,draggable){
     const button=document.createElement('button');
     button.type='button';
+    if(!draggable)button.id='hall-plugins-open';
     button.textContent='插件';
     button.setAttribute('aria-haspopup','dialog');
     button.setAttribute('aria-label',draggable?'打开插件画布':'打开插件面板');

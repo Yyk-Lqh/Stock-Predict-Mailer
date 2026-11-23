@@ -11,11 +11,15 @@
   const second=await api('models','POST',{name:`Composer fixture B ${suffix}`,provider:'mock'});
   await refresh();
   const previous=await api('settings');
-  $('composer-model').click();
+  const options=$('composer-effort');
+  assert(options.parentElement.querySelectorAll('button').length===1,'Model and reasoning level share one actual toolbar button');
+  options.querySelector('.composer-model-name').click();
+  assert(document.querySelector('.composer-popover input[type=range]'),'Clicking the model text opens the shared reasoning controls');
+  $('composer-effort-model').click();
   const choices=[...document.querySelectorAll('.composer-menu-row')];
   assert(choices.some(n=>n.textContent===first.name)&&choices.some(n=>n.textContent===second.name),'configured model choices');
   choices.find(n=>n.textContent===second.name).click();
-  await wait(()=>$('composer-model').textContent.includes(second.name));
+  await wait(()=>options.querySelector('.composer-model-name').textContent===second.name);
   const saved=await api('settings');
   assert(saved.default_model_id===second.id,'model selection reaches backend');
   assert(JSON.stringify(saved.agents)===JSON.stringify(previous.agents),'model selection preserves role configuration');

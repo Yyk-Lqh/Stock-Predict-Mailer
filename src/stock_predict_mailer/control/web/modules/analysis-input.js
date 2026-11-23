@@ -65,6 +65,7 @@ window.AnalysisInput = (() => {
     const prediction = input.prediction || lastPrediction;
     if (!prediction?.subject?.trim()) return invalid('p-subject', '请先填写本轮分析的标的代码。');
     if (!prediction.model_version?.trim()) return invalid('p-model-version', '请填写上游模型版本。');
+    if (!prediction.direction && !Number.isFinite(prediction.value)) return invalid('p-direction-up', '请按上游预测选择本轮方向。');
     if (!(prediction.horizon?.value > 0)) return invalid('p-horizon-value', '预测周期必须大于零。');
     if (!prediction.valid_until || !(Date.parse(prediction.valid_until) > Date.now())) return invalid('p-valid-until', '预测已过期或有效期无效，请核对并更新预测。');
     if (prediction.confidence != null && !(prediction.confidence >= 0 && prediction.confidence <= 1)) return invalid('p-confidence', '置信度须在 0 到 1 之间，也可以留空。');
@@ -78,7 +79,7 @@ window.AnalysisInput = (() => {
   function update() {
     let prediction;
     try { prediction = JSON.parse($('task-data').value).prediction || lastPrediction; } catch (_) { /* show invalid state */ }
-    const ready = Boolean(prediction?.subject && prediction.model_version && Date.parse(prediction.valid_until) > Date.now());
+    const ready = Boolean(prediction?.subject && prediction.model_version && (prediction.direction || Number.isFinite(prediction.value)) && Date.parse(prediction.valid_until) > Date.now());
     const label = ready ? '资料已准备' : prediction?.subject ? '有信息需要修正' : '填写分析资料';
     data.textContent = label; status.textContent = ready ? '已填写 · 可随时修改，发送时会再次校验。' : prediction?.subject ? '待修正 · 请核对预测与有效期。' : '未配置 · 首次分析需要填写预测信息。';
     session.textContent = $('conversation-id').value ? '当前分析会话' : '新分析会话';
@@ -114,7 +115,10 @@ window.AnalysisInput = (() => {
   }
   function reset() { lastPrediction = null; window.DesktopWorkbench?.reset(); update(); }
   form.addEventListener('input', update); form.addEventListener('change', update);
-  form.addEventListener('input', event => { if (event.target.hasAttribute('aria-invalid')) { event.target.removeAttribute('aria-invalid'); event.target.setCustomValidity?.(''); } });
+  form.addEventListener('input', event => {
+    const field = event.target.name === 'p-dir' ? $('p-direction-up') : event.target;
+    if (field.hasAttribute('aria-invalid')) { field.removeAttribute('aria-invalid'); field.setCustomValidity?.(''); }
+  });
   tabs.addEventListener('keydown', event => {
     if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
     event.preventDefault(); const names = Object.keys(panes); open(names[(names.indexOf(mode) + (event.key === 'ArrowRight' ? 1 : 2)) % 3]); $('analysis-tab-' + mode).focus();

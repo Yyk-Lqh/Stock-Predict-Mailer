@@ -803,12 +803,12 @@ function draftBrief() {
   const until = isoFromLocal($('p-valid-until').value);
   if (!until) return {done: false, meta: '有效期是空的，提交会被校验拒绝。'};
   if (new Date(until) <= new Date()) return {done: false, meta: '有效期已经过了，需要往后调一天。'};
-  const direction = {up: '上涨', down: '下跌', flat: '持平'}[currentDirection()] || currentDirection();
+  const direction = numericPrediction ? `${numericPrediction.value} ${numericPrediction.value_unit}` : {up: '上涨', down: '下跌', flat: '持平'}[currentDirection()];
+  if (!direction) return {done: false, meta: '请按上游预测选择本轮方向。'};
   const horizon = horizonText({value: Number($('p-horizon-value').value) || 0, unit: $('p-horizon-unit').value});
   const named = facts.filter(fact => (fact.name || '').trim()).length;
-  const demo = subject === $('p-subject').defaultValue;
   return {done: true, meta: `${subject} · ${direction} · ${horizon} · `
-    + (demo ? '示例值，可以直接提交' : (named ? `${named} 条客观事实` : '未附客观事实'))};
+    + (named ? `${named} 条客观事实` : '未附客观事实')};
 }
 function renderSteps() {
   const host = $('steps');
@@ -988,8 +988,7 @@ $('fact-add').onclick = () => {
 
 /* ---------- task form ---------- */
 function currentDirection() {
-  const checked = document.querySelector('#p-direction input:checked');
-  return checked ? checked.value : 'up';
+  return document.querySelector('#p-direction input:checked')?.value;
 }
 function setDirection(value) {
   document.querySelectorAll('#p-direction input').forEach(input => { input.checked = input.value === value; });
@@ -1160,6 +1159,78 @@ $('prediction-import').onchange = async event => {
 };
 $('load-mock').onclick = () => { applySample(); notice('已填入示例预测与两条事实，可以直接提交。'); };
 
+/* ---------- reusable prediction defaults ---------- */
+const PREDICTION_TEMPLATE_KEY = 'stock_predict_mailer.console.prediction_template.v1';
+const PREDICTION_TEMPLATE_DEFAULTS = {
+  'p-model-version': '',
+  'p-horizon-value': '5',
+  'p-horizon-unit': 'trading_days',
+  'task-complexity': 'auto',
+  'task-goal': 'overview',
+  'task-effort': '',
+  'conversation-format': '',
+};
+function validTemplateHorizon(value) {
+  const length = Number(value);
+  return Number.isInteger(length) && length >= 1 && length <= 365;
+}
+function readPredictionTemplate() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PREDICTION_TEMPLATE_KEY));
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return null;
+    const template = {...PREDICTION_TEMPLATE_DEFAULTS};
+    for (const id of Object.keys(template)) {
+      const value = saved[id], field = $(id);
+      if (typeof value !== 'string') continue;
+      if (id === 'p-horizon-value' && !validTemplateHorizon(value)) continue;
+      if (field.options && !Array.from(field.options).some(option => option.value === value)) continue;
+      template[id] = value;
+    }
+    return template;
+  } catch (_) { return null; }
+}
+function updatePredictionTemplate() {
+  const template = readPredictionTemplate();
+  $('prediction-template-label').textContent = `填写模板 · ${template ? '我的默认' : '系统默认'}`;
+  $('prediction-template-reset').disabled = !template;
+  return template || PREDICTION_TEMPLATE_DEFAULTS;
+}
+$('prediction-template-save').onclick = () => {
+  const template = Object.fromEntries(Object.keys(PREDICTION_TEMPLATE_DEFAULTS).map(id => [id, $(id).value.trim()]));
+  if (!validTemplateHorizon(template['p-horizon-value'])) {
+    $('p-horizon-value').focus();
+    notice('模板的周期长度须为 1 到 365 的整数。', true);
+    return;
+  }
+  try {
+    localStorage.setItem(PREDICTION_TEMPLATE_KEY, JSON.stringify(template));
+    updatePredictionTemplate();
+    notice('已保存填写模板，新建分析时会自动套用。');
+  } catch (_) { notice('当前浏览器无法保存填写模板，请检查本地存储设置。', true); }
+};
+$('prediction-template-reset').onclick = () => {
+  try {
+    localStorage.removeItem(PREDICTION_TEMPLATE_KEY);
+    updatePredictionTemplate();
+    notice('新建分析将使用系统模板。');
+  } catch (_) { notice('当前浏览器无法清除填写模板。', true); }
+};
+function resetPredictionInput() {
+  setNumericPrediction(null);
+  for (const [id, value] of Object.entries(updatePredictionTemplate())) $(id).value = value;
+  $('p-subject').value = '';
+  setDirection('');
+  $('p-confidence').value = '';
+  $('p-synthetic').checked = false;
+  taskControlsDirty = false;
+  facts = [];
+  renderFacts();
+  resetTiming();
+  $('task-data').value = '{}';
+  syncJSON();
+  window.AnalysisInput?.update();
+}
+
 /* ---------- draft：没提交的输入不该因为刷新或切页丢掉 ---------- */
 const DRAFT_KEY = 'stock_predict_mailer.console.draft.v1';
 const draftKey = () => DRAFT_KEY + ($('conversation-id').value ? '.' + $('conversation-id').value : '');
@@ -1226,31 +1297,20 @@ function draftRestore() {
   $('task-recipient').value = stored.recipient || '';
   if (stored.complexity) $('task-complexity').value = stored.complexity;
   if (stored.goal) $('task-goal').value = stored.goal;
-  if (stored.effort) $('task-effort').value = stored.effort;
+  if (typeof stored.effort === 'string') $('task-effort').value = stored.effort;
   // 草稿放久了有效期会过期，直接提交必然被校验拒绝，所以顺延到两天后
   const until = new Date(payload.prediction?.valid_until || NaN);
   const expired = !isNaN(until.getTime()) && until <= new Date();
   if (expired) draftBanner('草稿中的预测已过期，请更新预测与有效期后提交。');
   draftBanner(`已恢复 ${stored.saved_at ? fmt(stored.saved_at) : '上次'} 的输入${expired ? '；预测已过期，请核对并更新有效期' : ''}。`);
+  window.AnalysisInput?.update();
   return true;
 }
 function draftClear() {
-  setNumericPrediction(null);
   clearTimeout(draftTimer);
   draftWrite(null);
   draftBanner(null);
-  $('p-subject').value = 'DEMO.SZ';
-  $('p-model-version').value = 'mock-v1';
-  setDirection('up');
-  $('p-horizon-value').value = 5;
-  $('p-horizon-unit').value = 'trading_days';
-  $('p-confidence').value = '';
-  $('p-synthetic').checked = false;
-  facts = [];
-  renderFacts();
-  resetTiming();
-  $('task-data').value = '{}';   // 同时丢掉上一份 chart_data，否则「从头填」还留着旧图表
-  syncJSON();
+  resetPredictionInput();
   notice('已清空本地草稿，表单回到默认值。');
 }
 $('task-form').addEventListener('input', draftSchedule);
@@ -2085,10 +2145,8 @@ $('try-sample').onclick = async () => {
     const initial = location.hash.replace('#', '');
     csrf = (await api('session')).csrf_token;
     await refresh();
-    resetTiming();
-    renderFacts();
-    syncJSON();
-    draftRestore();
+    if (draftRestore()) updatePredictionTemplate();
+    else resetPredictionInput();
     renderSteps();
     await window.Workbench?.init();
     const view = ['overview', 'analysis', 'records', 'settings', 'memory', 'knowledge'].includes(initial) ? initial : 'analysis';

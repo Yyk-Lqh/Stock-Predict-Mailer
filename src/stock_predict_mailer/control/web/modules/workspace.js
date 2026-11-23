@@ -37,6 +37,7 @@ window.Workbench = (() => {
   function clearFollowup() {
     window.ForecastUI?.reset();
     taskControlsDirty = false;
+    for (const id of ['task-complexity', 'task-goal', 'task-effort']) $(id).value = PREDICTION_TEMPLATE_DEFAULTS[id];
     $('task-notify').checked = false;
     for (const id of ['conversation-message', 'conversation-constraints', 'remember-text', 'remember-format', 'conversation-format']) $(id).value = '';
     window.KnowledgeUI?.reset();
@@ -127,7 +128,7 @@ window.Workbench = (() => {
         $('task-data').value = JSON.stringify({prediction: last.prediction});
         syncForm(true);
         $('task-data').value = '{}';
-      } else { blankPrediction(); }
+      } else { resetPredictionInput(); }
       draftRestore();
       $('task-notify').checked = false;
       $('prediction-editor').open = !last;
@@ -150,13 +151,6 @@ window.Workbench = (() => {
       }
       throw error;
     } finally { if (epoch === selectionEpoch) { $('task-form').inert = false;window.DesktopInteractions?.finish(id); } }
-  }
-  function blankPrediction() {
-    setNumericPrediction(null);
-    $('p-subject').value = ''; $('p-model-version').value = '';
-    $('p-confidence').value = ''; $('p-synthetic').checked = false;
-    facts = []; renderFacts(); resetTiming();
-    $('task-data').value = '{}'; syncJSON();
   }
   async function ensureAccess() {
     if (memoryKey) return;
@@ -281,7 +275,6 @@ window.Workbench = (() => {
   async function init() {
     ready = true;
     $('workspace-health').textContent = settings?.default_model_id ? '模型已配置' : '尚未选择分析模型';
-    if (!draftRead()) blankPrediction();
     await sessions();
     let position;
     try { position = JSON.parse(sessionStorage.getItem(POSITION) || 'null'); } catch (_) { /* optional */ }
@@ -298,7 +291,7 @@ window.Workbench = (() => {
     window.DesktopSessions?.identityChanged();
     window.DesktopRecords?.identityChanged();
     ++selectionEpoch; selected = ''; turns = []; clearTask(); clearFollowup(); renderTurns();
-    blankPrediction();
+    resetPredictionInput();
     $('task-form').inert = false;
     window.DesktopInteractions?.reset();
     window.KnowledgeUI?.identityReset();
@@ -324,7 +317,7 @@ window.Workbench = (() => {
     try { localStorage.removeItem(DRAFT_KEY + '.' + id); } catch (_) { /* optional */ }
     if(window.DesktopSessions?.active()&&selected!==id){await refreshMemory();return;}
     clearTimeout(draftTimer); ++selectionEpoch; selected = ''; turns = []; $('conversation-id').value = '';
-    clearTask(); clearFollowup(); blankPrediction(); renderTurns(); heading('新建分析');
+    clearTask(); clearFollowup(); resetPredictionInput(); renderTurns(); heading('新建分析');
     window.DesktopInteractions?.reset();
     await refreshMemory(); rememberPosition();
     window.DesktopInteractions?.afterDelete();

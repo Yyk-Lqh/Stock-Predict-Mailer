@@ -165,6 +165,7 @@ window.Workbench = (() => {
   function clearFollowup() {
     window.ForecastUI?.reset();
     taskControlsDirty = false;
+    for (const id of ['task-complexity', 'task-goal', 'task-effort']) $(id).value = PREDICTION_TEMPLATE_DEFAULTS[id];
     $('task-notify').checked = false;
     for (const id of ['conversation-message', 'conversation-constraints', 'remember-text', 'remember-format', 'conversation-format']) $(id).value = '';
     window.KnowledgeUI?.reset();
@@ -255,7 +256,7 @@ window.Workbench = (() => {
         $('task-data').value = JSON.stringify({prediction: last.prediction});
         syncForm(true);
         $('task-data').value = '{}';
-      } else { blankPrediction(); }
+      } else { resetPredictionInput(); }
       draftRestore();
       $('task-notify').checked = false;
       $('prediction-editor').open = !last;
@@ -278,13 +279,6 @@ window.Workbench = (() => {
       }
       throw error;
     } finally { if (epoch === selectionEpoch) { $('task-form').inert = false;window.DesktopInteractions?.finish(id); } }
-  }
-  function blankPrediction() {
-    setNumericPrediction(null);
-    $('p-subject').value = ''; $('p-model-version').value = '';
-    $('p-confidence').value = ''; $('p-synthetic').checked = false;
-    facts = []; renderFacts(); resetTiming();
-    $('task-data').value = '{}'; syncJSON();
   }
   async function ensureAccess() {
     if (memoryKey) return;
@@ -409,7 +403,6 @@ window.Workbench = (() => {
   async function init() {
     ready = true;
     $('workspace-health').textContent = settings?.default_model_id ? '模型已配置' : '尚未选择分析模型';
-    if (!draftRead()) blankPrediction();
     await sessions();
     let position;
     try { position = JSON.parse(sessionStorage.getItem(POSITION) || 'null'); } catch (_) { /* optional */ }
@@ -426,7 +419,7 @@ window.Workbench = (() => {
     window.DesktopSessions?.identityChanged();
     window.DesktopRecords?.identityChanged();
     ++selectionEpoch; selected = ''; turns = []; clearTask(); clearFollowup(); renderTurns();
-    blankPrediction();
+    resetPredictionInput();
     $('task-form').inert = false;
     window.DesktopInteractions?.reset();
     window.KnowledgeUI?.identityReset();
@@ -452,7 +445,7 @@ window.Workbench = (() => {
     try { localStorage.removeItem(DRAFT_KEY + '.' + id); } catch (_) { /* optional */ }
     if(window.DesktopSessions?.active()&&selected!==id){await refreshMemory();return;}
     clearTimeout(draftTimer); ++selectionEpoch; selected = ''; turns = []; $('conversation-id').value = '';
-    clearTask(); clearFollowup(); blankPrediction(); renderTurns(); heading('新建分析');
+    clearTask(); clearFollowup(); resetPredictionInput(); renderTurns(); heading('新建分析');
     window.DesktopInteractions?.reset();
     await refreshMemory(); rememberPosition();
     window.DesktopInteractions?.afterDelete();
@@ -2829,6 +2822,7 @@ window.AnalysisInput = (() => {
     const prediction = input.prediction || lastPrediction;
     if (!prediction?.subject?.trim()) return invalid('p-subject', '请先填写本轮分析的标的代码。');
     if (!prediction.model_version?.trim()) return invalid('p-model-version', '请填写上游模型版本。');
+    if (!prediction.direction && !Number.isFinite(prediction.value)) return invalid('p-direction-up', '请按上游预测选择本轮方向。');
     if (!(prediction.horizon?.value > 0)) return invalid('p-horizon-value', '预测周期必须大于零。');
     if (!prediction.valid_until || !(Date.parse(prediction.valid_until) > Date.now())) return invalid('p-valid-until', '预测已过期或有效期无效，请核对并更新预测。');
     if (prediction.confidence != null && !(prediction.confidence >= 0 && prediction.confidence <= 1)) return invalid('p-confidence', '置信度须在 0 到 1 之间，也可以留空。');
@@ -2842,7 +2836,7 @@ window.AnalysisInput = (() => {
   function update() {
     let prediction;
     try { prediction = JSON.parse($('task-data').value).prediction || lastPrediction; } catch (_) { /* show invalid state */ }
-    const ready = Boolean(prediction?.subject && prediction.model_version && Date.parse(prediction.valid_until) > Date.now());
+    const ready = Boolean(prediction?.subject && prediction.model_version && (prediction.direction || Number.isFinite(prediction.value)) && Date.parse(prediction.valid_until) > Date.now());
     const label = ready ? '资料已准备' : prediction?.subject ? '有信息需要修正' : '填写分析资料';
     data.textContent = label; status.textContent = ready ? '已填写 · 可随时修改，发送时会再次校验。' : prediction?.subject ? '待修正 · 请核对预测与有效期。' : '未配置 · 首次分析需要填写预测信息。';
     session.textContent = $('conversation-id').value ? '当前分析会话' : '新分析会话';
@@ -2878,7 +2872,10 @@ window.AnalysisInput = (() => {
   }
   function reset() { lastPrediction = null; window.DesktopWorkbench?.reset(); update(); }
   form.addEventListener('input', update); form.addEventListener('change', update);
-  form.addEventListener('input', event => { if (event.target.hasAttribute('aria-invalid')) { event.target.removeAttribute('aria-invalid'); event.target.setCustomValidity?.(''); } });
+  form.addEventListener('input', event => {
+    const field = event.target.name === 'p-dir' ? $('p-direction-up') : event.target;
+    if (field.hasAttribute('aria-invalid')) { field.removeAttribute('aria-invalid'); field.setCustomValidity?.(''); }
+  });
   tabs.addEventListener('keydown', event => {
     if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
     event.preventDefault(); const names = Object.keys(panes); open(names[(names.indexOf(mode) + (event.key === 'ArrowRight' ? 1 : 2)) % 3]); $('analysis-tab-' + mode).focus();
@@ -4099,7 +4096,7 @@ window.DesktopWorkbench = (() => {
     }
   }
 
-  function inputState() { let raw; try { raw = JSON.parse($('task-data').value); if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw Error(); } catch (_) { return {state: 'invalid', field: 'task-data', label: '请修正原始 JSON', detail: '原始输入无法解析，请打开资料检查格式。'}; } const prediction = window.AnalysisInput.currentPrediction(); if (typeof prediction?.subject !== 'string' || !prediction.subject.trim()) return {state: 'empty', label: '填写分析资料', detail: '先填写标的、预测周期和上游模型版本。'}; const result = {prediction, facts: Array.isArray(raw.context?.facts) ? raw.context.facts.length : 0}; if (typeof prediction.model_version !== 'string' || !prediction.model_version.trim()) return {...result, state: 'invalid', field: 'p-model-version', label: '补充模型版本', detail: '请填写这份预测的上游模型版本。'}; if (!(Number.isFinite(prediction.horizon?.value) && prediction.horizon.value > 0)) return {...result, state: 'invalid', field: 'p-horizon-value', label: '核对预测周期', detail: '预测周期需要大于零。'}; if (!(Date.parse(prediction.valid_until) > Date.now())) return {...result, state: 'expired', field: 'p-valid-until', label: '更新过期预测', detail: '预测已过期或缺少有效期，请核对原始资料后更新。'}; if (prediction.confidence != null && !(Number.isFinite(prediction.confidence) && prediction.confidence >= 0 && prediction.confidence <= 1)) return {...result, state: 'invalid', field: 'p-confidence', label: '核对置信度', detail: '置信度须在 0 到 1 之间；上游未提供时可留空。'}; if (raw.context?.facts && (!Array.isArray(raw.context.facts) || raw.context.facts.some(fact => typeof fact?.source !== 'string' || !fact.source.trim() || !Number.isFinite(Date.parse(fact.observed_at))))) return {...result, state: 'invalid', label: '补充事实来源', detail: '每条客观事实都需要来源和有效的观测时间。'}; return {...result, state: 'ready', label: prediction.subject, detail: '主要资料已填写；发送时会再次校验资料、归档和授权。'}; }
+  function inputState() { let raw; try { raw = JSON.parse($('task-data').value); if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw Error(); } catch (_) { return {state: 'invalid', field: 'task-data', label: '请修正原始 JSON', detail: '原始输入无法解析，请打开资料检查格式。'}; } const prediction = window.AnalysisInput.currentPrediction(); if (typeof prediction?.subject !== 'string' || !prediction.subject.trim()) return {state: 'empty', label: '填写分析资料', detail: '先填写标的和上游预测。'}; const result = {prediction, facts: Array.isArray(raw.context?.facts) ? raw.context.facts.length : 0}; if (typeof prediction.model_version !== 'string' || !prediction.model_version.trim()) return {...result, state: 'invalid', field: 'p-model-version', label: '补充模型版本', detail: '请填写这份预测的上游模型版本。'}; if (!prediction.direction && !Number.isFinite(prediction.value)) return {...result, state: 'invalid', field: 'p-direction-up', label: '补充预测方向', detail: '请按上游预测选择本轮方向。'}; if (!(Number.isFinite(prediction.horizon?.value) && prediction.horizon.value > 0)) return {...result, state: 'invalid', field: 'p-horizon-value', label: '核对预测周期', detail: '预测周期需要大于零。'}; if (!(Date.parse(prediction.valid_until) > Date.now())) return {...result, state: 'expired', field: 'p-valid-until', label: '更新过期预测', detail: '预测已过期或缺少有效期，请核对原始资料后更新。'}; if (prediction.confidence != null && !(Number.isFinite(prediction.confidence) && prediction.confidence >= 0 && prediction.confidence <= 1)) return {...result, state: 'invalid', field: 'p-confidence', label: '核对置信度', detail: '置信度须在 0 到 1 之间；上游未提供时可留空。'}; if (raw.context?.facts && (!Array.isArray(raw.context.facts) || raw.context.facts.some(fact => typeof fact?.source !== 'string' || !fact.source.trim() || !Number.isFinite(Date.parse(fact.observed_at))))) return {...result, state: 'invalid', label: '补充事实来源', detail: '每条客观事实都需要来源和有效的观测时间。'}; return {...result, state: 'ready', label: prediction.subject, detail: '主要资料已填写；发送时会再次校验资料、归档和授权。'}; }
   function openData() { origin = document.activeElement?.getClientRects?.().length ? document.activeElement : $('analysis-data-open'); $('prediction-editor').open = true; window.AnalysisInput.open('input'); const target = $('task-form').querySelector('[aria-invalid="true"]') || $(inputState().field || 'p-subject'); for (let parent = target.parentElement; parent && parent !== $('task-form'); parent = parent.parentElement) if (parent.tagName === 'DETAILS') parent.open = true; target.focus(); target.scrollIntoView({block: 'nearest'}); }
   function openResult() { if (!task) return; origin = document.activeElement; window.AnalysisInput.open(['submitted', 'working'].includes(task.status.state) ? 'progress' : 'report'); $('analysis-tab-' + pane).focus(); }
   function chooseModel() { origin = document.activeElement; if (safeProfiles().some(item => item.enabled && item.id === safeSettings()?.default_model_id)) $('composer-model').click(); else { showView('settings'); showPanel('models'); $('model-name').focus(); } }

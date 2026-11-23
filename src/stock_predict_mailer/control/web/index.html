@@ -111,15 +111,23 @@
             <span class="hint">来自上游模型，本系统不复核数值</span>
             <button type="button" id="load-mock" class="btn quiet">填入示例</button>
           </div>
+          <details class="advanced">
+            <summary id="prediction-template-label">填写模板 · 系统默认</summary>
+            <p class="hint">新建分析时预填上游模型版本、预测周期、分析目标、复杂度、推理强度和报告格式。模板保存在当前浏览器。</p>
+            <div class="actions mt-10">
+              <button type="button" id="prediction-template-save" class="btn tiny">保存当前设置为默认</button>
+              <button type="button" id="prediction-template-reset" class="btn tiny" disabled>恢复系统默认</button>
+            </div>
+          </details>
           <label class="field"><span>导入上游预测 JSON</span><input id="prediction-import" type="file" accept=".json,application/json"></label>
           <p id="numeric-prediction" class="hint" hidden></p>
 
           <div class="grid-3">
-            <label class="field"><span>标的代码</span><input id="p-subject" value="DEMO.SZ" autocomplete="off" required></label>
-            <label class="field"><span>模型版本</span><input id="p-model-version" value="mock-v1" autocomplete="off" required></label>
+            <label class="field"><span>标的代码</span><input id="p-subject" autocomplete="off" required></label>
+            <label class="field"><span>模型版本</span><input id="p-model-version" autocomplete="off" required></label>
             <label class="field"><span>预测方向</span>
               <span class="seg" id="p-direction">
-                <label><input type="radio" name="p-dir" value="up" checked><span>上涨</span></label>
+                <label><input id="p-direction-up" type="radio" name="p-dir" value="up"><span>上涨</span></label>
                 <label><input type="radio" name="p-dir" value="down"><span>下跌</span></label>
                 <label><input type="radio" name="p-dir" value="flat"><span>持平</span></label>
               </span>

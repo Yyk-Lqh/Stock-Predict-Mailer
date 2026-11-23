@@ -7,9 +7,11 @@ encoding, never the meaning.
 from __future__ import annotations
 
 import csv
+import io
 import json
 from pathlib import Path
 
+from ...core import atomic_write
 from ..contract import declare
 
 FIELDS = ("date", "security_id", "open", "high", "low", "close", "volume", "available_at", "source")
@@ -56,3 +58,24 @@ class ParquetExporter:
         target = Path(path)
         pq.write_table(pa.Table.from_pylist(_pick(rows)), target)
         return {"format": "parquet", "path": str(target), "rows": len(rows)}
+
+
+class DeclarativeExporter:
+    def __init__(self, manifest, settings):
+        self.manifest = manifest
+        self.settings = settings
+
+    def export(self, rows, path):
+        fmt = self.settings["format"]
+        if fmt == "csv":
+            stream = io.StringIO(newline="")
+            writer = csv.DictWriter(stream, fieldnames=FIELDS,
+                                    delimiter=self.settings.get("delimiter", ","))
+            writer.writeheader()
+            writer.writerows(_pick(rows))
+            raw = stream.getvalue().encode("utf-8-sig" if self.settings.get("bom") else "utf-8")
+        else:
+            raw = (json.dumps(_pick(rows), ensure_ascii=False, indent=self.settings.get("indent") or None,
+                              allow_nan=False) + "\n").encode("utf-8")
+        atomic_write(Path(path), raw)
+        return {"format": fmt, "path": str(path), "rows": len(rows)}

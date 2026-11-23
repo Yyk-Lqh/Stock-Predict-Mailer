@@ -18,6 +18,7 @@ from ..agent_service.mail import MailService
 from ..agent_service.reporting import render
 from ..naming import env
 from ..operations.components import Component
+from ..plugins.errors import PluginError
 from .a2a import SESSION_COOKIE, A2AService, card
 from .forecast_preview import preview as forecast_preview
 from .forecast_views import detail as forecast_detail
@@ -393,10 +394,17 @@ def make_server(root, port=8767, master_key=None, market=None):
                         raise ServiceError("NOT_FOUND", "模型注册表接口不存在")
                     return
                 if kind == "plugins":
+                    from ..plugins import github
+
                     if method == "GET" and len(parts) == 2:
                         from ..plugins.doctor import check
 
                         self.output(check(store.root))
+                    elif method == "POST" and parts[2:] == ["github"]:
+                        self.output(github.install(store.root, self.body().get("url")), 201)
+                    elif method == "DELETE" and len(parts) == 4 and parts[2] == "github":
+                        github.remove(store.root, parts[3])
+                        self.output({"status": "deleted"})
                     else:
                         raise ServiceError("NOT_FOUND", "插件接口不存在")
                     return
@@ -437,6 +445,8 @@ def make_server(root, port=8767, master_key=None, market=None):
             except ServiceError as exc:
                 status = 403 if exc.code in ("FORBIDDEN", "PERMISSION_DENIED") else 404 if exc.code == "NOT_FOUND" else 400
                 self.output(exc.as_dict(), status)
+            except PluginError as exc:
+                self.output(exc.as_dict(), 404 if exc.code == "PLUGIN_NOT_FOUND" else 400)
             except Exception:
                 self.output({"error": {"code": "INTERNAL_ERROR", "message": "本地操作失败，请检查配置或工作区", "retryable": False}}, 500)
 

@@ -141,7 +141,7 @@ Version **0.6.0**. This is a working local tool, not a hosted service. The table
 | Private knowledge and memory | Available with optional extras | Embeddings and semantic cleaning are configured separately |
 | Mail delivery | Simulated by default | One QQ SMTP test was accepted and receipt confirmed by the user; deliverability, bounces, quotas, and bulk sending were not evaluated |
 | Market data | Collectable, long-term reliability unverified | Hall quotes are display-only; `bars-fetch` pulls unadjusted daily bars from Eastmoney, `legacy bars-audit` checks them, and only a snapshot reaches training; no licence or SLA |
-| Plugin system | Quote sources and report renderers available | Static whitelist: Tencent/Sina form the default quote chain, Eastmoney is opt-in; `sources` reloads without a restart and a bad edit keeps the previous chain; reports record their renderers in `renderers.json`; `plugins-check` validates before startup; the console has a read-only panel and a professional-mode plugin board; snapshots export to CSV / JSON Lines / Parquet via `dataset-export`; notification channels are contract-only |
+| Plugin system | Quote sources, report renderers, and dataset exporters | Tencent/Sina form the default quote chain and Eastmoney is opt-in. The console imports declarative CSV or JSON array exporters from public GitHub repositories. `dataset-export` also provides built-in CSV, JSON Lines, and Parquet formats. [Manifest and usage](docs/插件系统设计.md#12-从-github-添加声明式插件) |
 | Hosted multi-user use | Out of scope | No authentication layer beyond the local principal |
 | Branch protection | Not enforced yet | Review and merge rules are conventions until repository rulesets are enabled |
 

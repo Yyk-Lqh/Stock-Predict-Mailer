@@ -1736,7 +1736,7 @@ body[data-view="analysis"].inspector-visible #analysis-composer { left: var(--do
 }
 .desktop-nav-icon { display: none; }
 
-/* 插件面板：只读卡片；专业模式里可拖动排布，位置只存本机 */
+/* 插件面板与专业模式画布 */
 .plugin-board { margin: 12px 0; }
 .plugin-board-head { display: flex; align-items: baseline; gap: 10px; }
 .plugin-board-head strong { font-size: 13px; }
@@ -1745,21 +1745,29 @@ body[data-view="analysis"].inspector-visible #analysis-composer { left: var(--do
 .plugin-board-head button { flex: none; min-height: 26px; padding: 3px 9px; border: 1px solid var(--rule-strong); border-radius: 5px; background: var(--surface); color: var(--ink-2); font-size: 11px; cursor: pointer; }
 .plugin-board-head button:hover { color: var(--ink); border-color: var(--accent); }
 .plugin-board-hint { margin: 0 0 6px; color: var(--ink-3); font-size: 11px; }
+.plugin-github { margin: 8px 0; font-size: 12px; }
+.plugin-github summary { width: fit-content; cursor: pointer; }
+.plugin-github form { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; margin: 8px 0 4px; }
+.plugin-github label { display: grid; flex: 1; max-width: 400px; gap: 4px; }
+.plugin-github input { width: 100%; }
+.plugin-feedback { margin: 4px 0; font-size: 12px; }
+.plugin-feedback:empty { margin: 0; }
 .plugin-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; margin-top: 8px; }
 .plugin-card { padding: 9px 11px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); }
 .plugin-card header { display: flex; align-items: center; gap: 7px; }
 .plugin-card strong { font-size: 12px; }
-.plugin-card code { margin-left: auto; color: var(--ink-3); font-size: 10px; }
+.plugin-card code { margin-left: auto; color: var(--ink-3); font-size: 10px; overflow-wrap: anywhere; }
 .plugin-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .plugin-card[data-state="warn"] .plugin-dot { background: var(--danger); }
 .plugin-kind { margin: 4px 0 0; color: var(--ink-2); font-size: 11px; }
 .plugin-caps { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 0; padding: 0; list-style: none; }
 .plugin-caps li { padding: 1px 6px; border: 1px solid var(--rule); border-radius: 999px; color: var(--ink-3); font-size: 10px; }
 .plugin-meta { margin: 6px 0 0; color: var(--ink-3); font-size: 10px; }
+.plugin-meta button { padding: 1px 4px; font-size: inherit; }
 .plugin-board[data-draggable="true"] .plugin-cards { position: relative; display: block; height: 348px; overflow: auto; border: 1px dashed var(--rule); border-radius: 8px; background: var(--surface-2); }
 .plugin-board[data-draggable="true"] .plugin-card { position: absolute; width: 220px; cursor: grab; touch-action: none; }
 .plugin-board[data-draggable="true"] .plugin-card[data-dragging="true"] { cursor: grabbing; z-index: 2; box-shadow: 0 8px 18px rgba(0,0,0,.12); }
-.plugin-dialog { width: min(780px, calc(100vw - 48px)); padding: 14px 16px; border: 1px solid var(--rule-strong); border-radius: 10px; background: var(--surface); color: var(--ink); }
+.plugin-dialog { width: min(780px, calc(100vw - 48px)); max-height: calc(100dvh - 48px); padding: 14px 16px; border: 1px solid var(--rule-strong); border-radius: 10px; background: var(--surface); color: var(--ink); }
 .plugin-dialog::backdrop { background: rgba(20,28,30,.32); }
 .plugin-dialog-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .plugin-dialog-head button { min-height: 26px; padding: 3px 9px; border: 1px solid var(--rule-strong); border-radius: 5px; background: var(--surface-2); color: var(--ink-2); font-size: 11px; cursor: pointer; }

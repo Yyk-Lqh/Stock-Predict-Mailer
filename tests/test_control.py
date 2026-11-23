@@ -671,6 +671,22 @@ class ConsoleAPITests(unittest.TestCase):
         self.assertTrue(all(len(plugin["module_digest"]) == 64 for plugin in body["plugins"]))
         self.assertEqual(self.client.post("/api/plugins", json={}).status_code, 404)
 
+    def test_github_plugin_routes_require_csrf_and_persist_only_valid_declarations(self):
+        path = "/api/plugins/github"
+        request = {"url": "https://github.com/example/exporter"}
+        raw = b'{"id":"export_array","kind":"exporter","label":"JSON Array","api_version":1,"export":{"format":"json"}}'
+        with patch("stock_predict_mailer.plugins.github._download", return_value=raw) as download:
+            self.assertEqual(self.client.post(path, json=request, headers={"X-CSRF-Token": ""}).status_code, 403)
+            self.assertEqual(self.client.post(path, json={"url": "https://example.org/plugin"}).status_code, 400)
+            download.assert_not_called()
+            created = self.client.post(path, json=request)
+        self.assertEqual(created.status_code, 201)
+        self.assertIn(created.json(), self.client.get("/api/plugins").json()["plugins"])
+        self.assertEqual(self.client.delete(path + "/export_array", headers={"X-CSRF-Token": ""}).status_code, 403)
+        self.assertEqual(self.client.delete(path + "/export_array").status_code, 200)
+        self.assertEqual(self.client.delete(path + "/export_array").status_code, 404)
+        self.assertNotIn(created.json(), self.client.get("/api/plugins").json()["plugins"])
+
     def test_progress_endpoint_returns_running_step_and_incremental_cursor(self):
         original = self.server.engine.models.generate
         entered, release = threading.Event(), threading.Event()

@@ -6,7 +6,9 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from .agent_service.contracts import ServiceError
 from .core import connect, load_config, tracked_run
+from .plugins.errors import PluginError
 
 
 def _audit_refusal(cfg, paths, market):
@@ -70,7 +72,10 @@ def main(argv=None) -> int:
     audit.add_argument("--limit", type=int, default=20, help="每类问题最多列多少条")
     export = sub.add_parser("dataset-export", help="按已声明的导出插件把一个快照写成文件")
     export.add_argument("snapshot_id")
-    export.add_argument("--format", default="csv", choices=("csv", "json", "parquet"))
+    exporter = export.add_mutually_exclusive_group()
+    exporter.add_argument("--format", default="csv", choices=("csv", "json", "parquet"))
+    exporter.add_argument("--plugin", help="已添加的 GitHub 导出插件 id")
+    export.add_argument("--plugin-workspace", type=Path, help="插件所在的控制台工作区，默认使用快照工作区")
     export.add_argument("--output", type=Path, required=True)
     sub.add_parser("update-history", help="List recorded incremental updates")
     research = sub.add_parser("research", help="Run SYNTHETIC-only purged research")
@@ -113,6 +118,8 @@ def main(argv=None) -> int:
     from .model_cli import COMMANDS, add_commands, dispatch
     add_commands(sub)
     args = parser.parse_args(argv)
+    if args.command == "dataset-export" and args.plugin_workspace and not args.plugin:
+        parser.error("--plugin-workspace 需要同时指定 --plugin")
     cfg = load_config(args.config)
     if args.command in COMMANDS:
         dispatch(cfg, args)
@@ -190,10 +197,17 @@ def main(argv=None) -> int:
         return 0 if report["ok"] else 2
     elif args.command == "dataset-export":
         from .data import load_snapshot
-        from .plugins import registry
+        from .plugins import github, registry
 
         _, rows = load_snapshot(cfg, args.snapshot_id)
-        result = registry.exporter(args.format).export(rows, args.output)
+        try:
+            if args.plugin:
+                result = github.export(args.plugin_workspace or cfg.workspace, args.plugin, rows, args.output)
+            else:
+                result = registry.exporter(args.format).export(rows, args.output)
+        except (PluginError, ServiceError) as exc:
+            print(json.dumps(exc.as_dict(), ensure_ascii=False), file=sys.stderr)
+            return 2
         result["snapshot_id"] = args.snapshot_id
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0

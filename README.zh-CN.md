@@ -57,6 +57,8 @@ uv run stock-predict-mailer --config config/agent-example.toml console --port 87
 
 访问 [127.0.0.1:8767](http://127.0.0.1:8767)，使用会话、结构化预测、执行进度、报告、知识库与预测归档。控制台的模型分析任务需要配置模型；未配置时可能退回明确标注的确定性报告，CLI 演示仍独立可用。
 
+在插件面板选择「从 GitHub 添加」，即可从公开仓库导入声明式数据导出插件。支持格式和仓库声明示例见[插件系统设计](docs/插件系统设计.md#12-从-github-添加声明式插件)。
+
 未设置 `STOCK_PREDICT_MAILER_MASTER_KEY` 时使用独立开发库与开发密钥。调整配置时保留已有密钥和工作区路径，详见[控制台手册](docs/control-console.md)。
 
 ## 动态运行流程
@@ -141,7 +143,7 @@ uv run stock-predict-mailer-crawler-verify
 | 私有知识库与会话记忆 | 安装可选依赖后可用 | Embedding 与语义清洗分别配置 |
 | 邮件投递 | 默认文件模拟 | QQ SMTP 接受单封测试，用户已确认收到；送达率、退信、配额与批量发送未评估 |
 | 行情数据 | 可采集，长期可用性未验证 | 大厅报价仅用于显示；`bars-fetch` 从东方财富取不复权日线写成契约 CSV，`legacy bars-audit` 核对后经快照才进入训练；公开页无授权、无 SLA |
-| 插件系统 | 数据源与报告渲染可用 | 静态白名单：腾讯/新浪为默认行情链，东方财富可选；改 `sources` 无需重启，坏配置保留上一组源；报告在 `renderers.json` 记录来源；`plugins-check` 可在启动前校验；控制台有普通视图只读面板与专业视图插件画布；数据可导出 CSV / JSON Lines / Parquet（`dataset-export`）；通知渠道只有契约 |
+| 插件系统 | 行情源、报告渲染和数据导出 | 默认行情链为腾讯和新浪，东方财富可选。控制台支持从公开 GitHub 仓库添加 CSV 或 JSON 数组导出插件。`dataset-export` 还内置 CSV、JSON Lines 和 Parquet 格式。 |
 | 托管多用户 | 非目标 | 除本机 principal 外没有认证层 |
 | 分支保护 | 尚未启用 | 在启用仓库规则集前，审查与合并属于约定 |
 

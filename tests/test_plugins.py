@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import importlib.util
 import io
@@ -11,10 +12,11 @@ from pathlib import Path
 from unittest import mock
 
 from stock_predict_mailer import __version__
+from stock_predict_mailer.agent_service.contracts import ServiceError
 from stock_predict_mailer.agent_service.reporting import render, save_report
 from stock_predict_mailer.cli import main
 from stock_predict_mailer.control.market_feed import MarketFeed
-from stock_predict_mailer.plugins import registry
+from stock_predict_mailer.plugins import github, registry
 from stock_predict_mailer.plugins.builtin import market as market_module
 from stock_predict_mailer.plugins.builtin import report as report_module
 from stock_predict_mailer.plugins.builtin.eastmoney import EastmoneyError, EastmoneySource
@@ -360,6 +362,20 @@ class ExporterTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(len(output.read_text(encoding="utf-8").splitlines()), 3)
 
+            plugin_root = Path(folder) / "console"
+            plugin_root.mkdir()
+            raw_manifest = json.dumps({"id": "export_array", "kind": "exporter", "label": "数组",
+                                       "api_version": 1, "export": {"format": "json", "indent": 2}}).encode()
+            with mock.patch.object(github, "_download", return_value=raw_manifest):
+                github.install(plugin_root, "https://github.com/example/exporter")
+            output = Path(folder) / "out.json"
+            with redirect_stdout(io.StringIO()) as stdout:
+                code = main(["legacy", "--config", str(config), "dataset-export", snapshot, "--plugin", "export_array",
+                             "--plugin-workspace", str(plugin_root), "--output", str(output)])
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), self.ROWS)
+            self.assertEqual(json.loads(stdout.getvalue())["manifest_sha256"], hashlib.sha256(raw_manifest).hexdigest())
+
     @unittest.skipUnless(importlib.util.find_spec("pyarrow"), "需要 research 额外依赖（pyarrow）")
     def test_parquet_export_round_trips(self):
         import pyarrow.parquet as pq
@@ -492,6 +508,48 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual([item["format"] for item in record["renderers"]], ["text", "html"])
         self.assertEqual([item["id"] for item in record["renderers"]], ["report_text", "report_html"])
         self.assertEqual(record["renderers"][1]["module_digest"], registry.identity("report_html")["module_digest"])
+
+
+class GitHubPluginTests(unittest.TestCase):
+    def test_import_is_workspace_local_and_rejects_collisions(self):
+        raw = b'{"id":"export_tabs","kind":"exporter","label":"TSV","api_version":1,"export":{"format":"csv","delimiter":"\\t","bom":true}}'
+        body = json.dumps({"type": "file", "encoding": "base64", "size": len(raw), "content": base64.b64encode(raw).decode()})
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(github, "build_opener") as opener:
+            root = Path(folder)
+            opener.return_value.open.return_value.__enter__.return_value.read.return_value = body.encode()
+            url = "https://github.com/Owner/Repo/"
+            entry = github.install(root, url)
+            self.assertEqual(github.install(root, url), entry)
+            request = opener.return_value.open.call_args.args[0]
+            self.assertEqual(request.full_url, f"https://api.github.com/repos/owner/repo/contents/{github.MANIFEST_NAME}")
+            self.assertEqual(check(root)["plugins"][-1], entry)
+            self.assertEqual(github.describe(root / "other"), [])
+            with self.assertRaises(PluginError):
+                github.install(root, "https://github.com/other/repo")
+            target = root / "output.tsv"
+            github.export(root, "export_tabs", ExporterTests.ROWS, target)
+            self.assertTrue(target.read_bytes().startswith(b"\xef\xbb\xbfdate\tsecurity_id\t"))
+            github.remove(root, "export_tabs")
+            self.assertEqual(github.describe(root), [])
+            with self.assertRaises(PluginNotFound):
+                github.remove(root, "export_tabs")
+
+    def test_rejects_unsupported_urls_and_manifests_without_persisting(self):
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(github, "_download") as download:
+            root = Path(folder)
+            for url in ("http://github.com/o/r", "https://github.com@localhost/o/r",
+                        "https://github.com/o/..", "https://github.com/o/r?ref=test"):
+                with self.subTest(url=url), self.assertRaises(ServiceError):
+                    github.install(root, url)
+            download.assert_not_called()
+            declaration = {"id": "export_custom", "kind": "exporter", "label": "Example",
+                           "api_version": 1, "export": {"format": "json"}}
+            for change in ({"id": "export_csv"}, {"api_version": 2}, {"kind": "notifier"}, {"python": "plugin.py"},
+                           {"export": {"format": "json", "indent": True}}):
+                download.return_value = json.dumps(declaration | change).encode()
+                with self.subTest(change=change), self.assertRaises(PluginIncompatible):
+                    github.install(root, "https://github.com/o/r")
+            self.assertEqual(list(root.iterdir()), [])
 
 
 class ReloadTests(unittest.TestCase):

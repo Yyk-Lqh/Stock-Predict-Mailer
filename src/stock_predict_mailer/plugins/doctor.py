@@ -9,11 +9,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..control import market_feed
-from . import registry
+from . import github, registry
 from .errors import PluginError
 
 
-def _plugin_rows():
+def _plugin_rows(root):
     rows = []
     for entry in registry.describe()["plugins"]:
         problems = []
@@ -21,7 +21,7 @@ def _plugin_rows():
         if missing:
             problems.append(f"缺少可选依赖 {list(missing)}，请安装 .[{entry['extra']}] 后重试")
         rows.append({**entry, "problems": problems})
-    return rows
+    return rows if root is None else rows + github.describe(root)
 
 
 def check(market_root=None):
@@ -51,5 +51,5 @@ def check(market_root=None):
         "source_chain": chain,
         "candles_from": candles_from,
         "problems": problems,
-        "plugins": _plugin_rows(),
+        "plugins": _plugin_rows(market_root),
     }

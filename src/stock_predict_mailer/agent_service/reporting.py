@@ -19,7 +19,8 @@ def render_with_provenance(analysis, timezone="Asia/Shanghai", *, charts="inline
 
     view = {"analysis": analysis, "timezone": timezone, "charts": charts}
     text_plugin = resolve("report_text", kind="report_renderer")
-    html_plugin = resolve("report_html", kind="report_renderer")
+    page = analysis.get("report_renderer", "report_html") if charts == "inline" else "report_html"
+    html_plugin = resolve(page, kind="report_renderer")
     text = text_plugin.render(view).decode("utf-8")
     html = html_plugin.render(view).decode("utf-8")
     provenance = {"plugin_api_version": API_VERSION, "release": __version__,

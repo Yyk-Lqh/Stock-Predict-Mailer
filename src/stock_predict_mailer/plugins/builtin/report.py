@@ -73,9 +73,12 @@ def lines(analysis, timezone):
     return result
 
 
-def _chart_labels(chart):
-    labels = "".join(f'<p style="color:{LEGEND[key][1]}">{LEGEND[key][0]} · {escape(series["source"])}</p>'
-                     for key, series in chart["series"].items())
+def _chart_labels(chart, color_labels):
+    labels = ""
+    for key, series in chart["series"].items():
+        name, color = LEGEND[key]
+        tag = f'<p style="color:{color}">' if color_labels else '<p>'
+        labels += f'{tag}{name} · {escape(series["source"])}</p>'
     points = [p for series in chart["series"].values() for p in series["points"]]
     labels += f'<p>单位：{escape(chart["unit"])}；{escape(min(p["at"] for p in points))} — {escape(max(p["at"] for p in points))}</p>'
     if any("lower" in p for p in points):
@@ -102,10 +105,15 @@ class HtmlReport:
         analysis, timezone, charts = view["analysis"], view["timezone"], view["charts"]
         html = '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>预测分析报告</title><body>'
         html += "".join(f"<p>{escape(line)}</p>" for line in lines(analysis, timezone))
-        for idx, chart in enumerate(analysis.get("charts", [])):
-            visual = (chart_svg(chart) if charts == "inline"
-                      else f'<img src="cid:chart-{idx}@stock-predict-mailer.local" alt="{escape(chart["title"])}">'
-                      if charts == "cid" else "")
-            html += (f"<figure><h2>{escape(chart['title'])}</h2>{visual}"
-                     f"<figcaption>{escape(chart['caption'])}{_chart_labels(chart)}</figcaption></figure>")
-        return (html + "</body></html>").encode("utf-8")
+        return (html + html_figures(analysis, charts) + "</body></html>").encode("utf-8")
+
+
+def html_figures(analysis, charts, *, color_labels=True):
+    figures = []
+    for idx, chart in enumerate(analysis.get("charts", [])):
+        visual = (chart_svg(chart) if charts == "inline"
+                  else f'<img src="cid:chart-{idx}@stock-predict-mailer.local" alt="{escape(chart["title"])}">'
+                  if charts == "cid" else "")
+        figures.append(f"<figure><h2>{escape(chart['title'])}</h2>{visual}"
+                       f"<figcaption>{escape(chart['caption'])}{_chart_labels(chart, color_labels)}</figcaption></figure>")
+    return "".join(figures)

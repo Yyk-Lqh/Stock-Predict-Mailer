@@ -80,17 +80,38 @@ def build_charts(data):
 
 
 def chart_svg(chart):
+    from ..plugins.registry import resolve
+
+    return resolve(chart.get("renderer", "chart_line"), "chart_renderer").render(chart)
+
+
+def chart_geometry(points, *, bars=False):
+    times = [instant(p["at"]).timestamp() for p in points]
+    values = [v for p in points for v in (p["value"], p.get("lower", p["value"]), p.get("upper", p["value"]))]
+    start, end, low, high = min(times), max(times), min(values), max(values)
+    if bars:
+        low, high = min(0, low), max(0, high)
+    inset = 24 if bars else 0
+    def x(at):
+        ratio = (instant(at).timestamp() - start) / (end - start) if end != start else .5
+        return 72 + inset + (590 - 2 * inset) * ratio
+    def y(value):
+        return 232 - 174 * ((value - low) / (high - low) if high != low else .5)
+    return x, y, low, high
+
+
+def bar_width(points, x, series_count):
+    positions = sorted({x(p["at"]) for p in points})
+    spacing = min((b - a for a, b in zip(positions, positions[1:], strict=False)), default=590)
+    return min(15, spacing / (series_count + 1))
+
+
+def render_svg(chart, *, bars=False):
     """Render only server-built chart data. Labels are escaped, never interpreted as markup."""
     palette = {"observed": ("历史观测", "#17634d"), "forecast": ("模型预测", "#2356a3"),
                "backtest": ("历史预测", "#a64b29")}
     points = [p for s in chart["series"].values() for p in s["points"]]
-    times = [instant(p["at"]).timestamp() for p in points]
-    values = [v for p in points for v in (p["value"], p.get("lower", p["value"]), p.get("upper", p["value"]))]
-    start, end, low, high = min(times), max(times), min(values), max(values)
-    def x(at):
-        return 72 + 590 * ((instant(at).timestamp() - start) / (end - start) if end != start else .5)
-    def y(value):
-        return 232 - 174 * ((value - low) / (high - low) if high != low else .5)
+    x, y, low, high = chart_geometry(points, bars=bars)
     def label(px, py, value):
         return f'<text x="{px}" y="{py}">{escape(str(value))}</text>'
     svg = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 350" width="720" height="350" role="img">',
@@ -100,17 +121,27 @@ def chart_svg(chart):
            label(24, 47, chart["unit"]), label(5, 65, f"{high:.5g}"), label(5, 230, f"{low:.5g}"),
            label(72, 250, min(p["at"] for p in points)[:16] + " UTC"),
            label(505, 250, max(p["at"] for p in points)[:16] + " UTC")]
+    if bars:
+        series_count = len(chart["series"])
+        width = bar_width(points, x, series_count)
+        baseline = y(0)
+        svg.append(f'<path d="M72 {baseline:.2f}H662" fill="none" stroke="#829392"/>')
     for idx, (kind, series) in enumerate(chart["series"].items()):
         name, color = palette[kind]
-        coords = [(x(p["at"]), y(p["value"])) for p in series["points"]]
-        for point in series["points"]:
-            if "lower" in point:
-                px = x(point["at"])
-                svg.append(f'<path d="M{px:.2f} {y(point["lower"]):.2f}V{y(point["upper"]):.2f}" stroke="#88b2ec" stroke-width="6"/>')
+        offset = (idx - (series_count - 1) / 2) * width if bars else 0
+        coords = [(x(p["at"]) + offset, y(p["value"])) for p in series["points"]]
         dash = ' stroke-dasharray="5 3"' if kind != "observed" else ""
-        xy = " ".join(f"{px:.2f},{py:.2f}" for px, py in coords)
-        svg.append(f'<polyline points="{xy}" fill="none" stroke="{color}" stroke-width="2"{dash}/>')
-        svg.extend(f'<circle cx="{px:.2f}" cy="{py:.2f}" r="3" fill="{color}"/>' for px, py in coords)
+        intervals = [f'<path d="M{px:.2f} {y(point["lower"]):.2f}V{y(point["upper"]):.2f}" stroke="#88b2ec" stroke-width="{4 if bars else 6}"/>'
+                     for point, (px, _) in zip(series["points"], coords, strict=True) if "lower" in point]
+        if bars:
+            svg.extend(f'<rect x="{px - width * .4:.2f}" y="{min(py, baseline):.2f}" '
+                       f'width="{width * .8:.4f}" height="{abs(py - baseline):.2f}" fill="{color}"/>' for px, py in coords)
+            svg.extend(intervals)
+        else:
+            svg.extend(intervals)
+            xy = " ".join(f"{px:.2f},{py:.2f}" for px, py in coords)
+            svg.append(f'<polyline points="{xy}" fill="none" stroke="{color}" stroke-width="2"{dash}/>')
+            svg.extend(f'<circle cx="{px:.2f}" cy="{py:.2f}" r="3" fill="{color}"/>' for px, py in coords)
         py = 272 + idx * 18
         svg.append(f'<path d="M24 {py - 4}h14" stroke="{color}" stroke-width="3"{dash}/>')
         svg.append(label(45, py, f"{name} · {series['source'][:90]}"))

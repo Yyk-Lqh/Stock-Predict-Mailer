@@ -113,7 +113,9 @@ class AnalysisAgent:
 def validate_analysis(value, settings=None):
     settings = settings or {}
     keys(value, ("schema_version", "analysis_id", "generated_at", "status", "mode", "prediction", "facts", "inferences",
-                 "recommendations", "limitations", "risks"), ("charts", "report_format", "user_constraints", "knowledge_evidence", "input_evidence", "forecast_evidence"))
+                 "recommendations", "limitations", "risks"), ("charts", "report_format", "user_constraints", "knowledge_evidence", "input_evidence", "forecast_evidence", "report_renderer"))
+    if "report_renderer" in value:
+        _validate_renderer(value["report_renderer"], "report")
     if "knowledge_evidence" in value:
         evidence = value["knowledge_evidence"]
         keys(evidence, ("as_of", "results", "used_ids"))
@@ -141,7 +143,9 @@ def validate_analysis(value, settings=None):
         if not isinstance(value["charts"], list) or len(value["charts"]) > 2:
             fail("图表数量无效")
         for chart in value["charts"]:
-            keys(chart, ("title", "caption", "series", "unit"))
+            keys(chart, ("title", "caption", "series", "unit"), ("renderer",))
+            if "renderer" in chart:
+                _validate_renderer(chart["renderer"], "chart")
             chart_data({"series": chart["series"], "unit": chart["unit"]}, value["prediction"])
     context({"schema_version": "1", "context_id": "analysis", "subject": value["prediction"]["subject"], "facts": value["facts"]},
             value["prediction"]["subject"], max_age=settings.get("max_context_age_seconds", 86400))
@@ -170,3 +174,10 @@ def validate_analysis(value, settings=None):
         if any(note not in value["limitations"] for note in evidence["snapshot"]["source"]["warnings"]):
             fail("分析遗漏来源限制声明")
     return value
+
+
+def _validate_renderer(value, kind):
+    from ..plugins.registry import renderer_options
+
+    if not isinstance(value, str) or value not in renderer_options(kind):
+        fail("分析中的渲染插件无效")

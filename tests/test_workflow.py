@@ -121,6 +121,20 @@ class WorkflowTests(unittest.TestCase):
         prepared = self.engine.prepare({key: val for key, val in request.items() if key != "workflow"})
         self.assertIn("conditional", {node["state"] for node in preview(spec, prepared, self.store.settings())["nodes"]})
 
+    def test_renderer_config_is_frozen_and_checked_against_node_kind(self):
+        value = graph()
+        chart, report = value["nodes"][4:6]
+        chart["data"]["config"]["renderer"] = "chart_bar"
+        report["data"]["config"]["renderer"] = "report_dashboard"
+        workflow = self.request(value=value)["workflow"]
+        spec = freeze(workflow, self.engine, self.store.settings())
+        self.assertEqual(spec["graph"]["nodes"][4]["data"]["config"], {"renderer": "chart_bar"})
+        self.assertEqual(spec["graph"]["nodes"][5]["data"]["config"], {"renderer": "report_dashboard"})
+        for invalid in ("chart_bar", "report_text", "missing"):
+            report["data"]["config"]["renderer"] = invalid
+            with self.subTest(renderer=invalid), self.assertRaisesRegex(ServiceError, "内置渲染插件"):
+                freeze(workflow, self.engine, self.store.settings())
+
     def test_debug_mcp_mail_and_cancel_are_visible_in_task_history(self):
         settings = self.store.settings()
         mcp = self.store.put("mcp", {"name": "Mock MCP", "transport": "stdio", "command": sys.executable,

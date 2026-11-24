@@ -37,6 +37,8 @@ def summary(state):
     p = state["request"]["prediction"]
     series = (state["series"] or {}).get("series", {})
     knowledge = (state.get("knowledge") or {}).get("results", [])
+    analysis = state.get("analysis", {})
+    charts = analysis.get("charts", [])
     return {
         "synthetic": p["synthetic"], "confidence": p["confidence"], "prediction_source": p["model_version"],
         "facts": len(state["facts"]),
@@ -45,8 +47,10 @@ def summary(state):
         "series": [{"kind": kind, "source": item["source"], "point_at": item["points"][-1]["at"], "timezone": "UTC",
                     "freshness": "historical" if kind == "observed" else kind,
                     "points": len(item["points"]), "synthetic": p["synthetic"]} for kind, item in series.items()],
-        "charts": len(state.get("analysis", {}).get("charts", [])),
-        "analysis_id": state.get("analysis", {}).get("analysis_id") if state.get("report") else None,
+        "charts": len(charts),
+        **({"chart_renderer": charts[0]["renderer"]} if charts and "renderer" in charts[0] else {}),
+        **({"report_renderer": analysis["report_renderer"]} if "report_renderer" in analysis else {}),
+        "analysis_id": analysis.get("analysis_id") if state.get("report") else None,
         "mail_status": (state.get("mail") or {}).get("status"),
     }
 
@@ -112,6 +116,10 @@ async def _node(engine, key, data, upstream, settings, budget, progress, spec):
     elif kind == "chart":
         analysis = deepcopy(state["analysis"])
         figures, notes = build_charts(state["series"])
+        renderer = data["config"].get("renderer")
+        if renderer:
+            for chart in figures:
+                chart["renderer"] = renderer
         if request["goal"] == "comparison":
             figures.reverse()
         if figures:
@@ -122,6 +130,8 @@ async def _node(engine, key, data, upstream, settings, budget, progress, spec):
         state["analysis"] = analysis
     elif kind == "report":
         analysis = deepcopy(state["analysis"])
+        if renderer := data["config"].get("renderer"):
+            analysis["report_renderer"] = renderer
         analysis["analysis_id"] = identity({k: v for k, v in analysis.items() if k != "analysis_id"})
         validate_analysis(analysis)
         if debug:

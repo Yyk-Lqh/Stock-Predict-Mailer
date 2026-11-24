@@ -12,7 +12,9 @@ from pathlib import Path
 from unittest import mock
 
 from stock_predict_mailer import __version__
+from stock_predict_mailer.agent_service.charts import chart_svg
 from stock_predict_mailer.agent_service.contracts import ServiceError
+from stock_predict_mailer.agent_service.png import chart_png
 from stock_predict_mailer.agent_service.reporting import render, save_report
 from stock_predict_mailer.cli import main
 from stock_predict_mailer.control.market_feed import MarketFeed
@@ -154,7 +156,8 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(described["api_version"], API_VERSION)
         self.assertEqual([item["id"] for item in described["plugins"]],
                          ["market_tencent", "market_sina", "market_eastmoney", "export_csv", "export_jsonl",
-                          "export_parquet", "report_text", "report_html"])
+                          "export_parquet", "report_text", "report_html", "chart_line", "chart_bar",
+                          "report_dashboard", "report_evidence"])
         self.assertTrue(all(item["available"] for item in described["plugins"]))
 
     def test_error_payload_matches_the_cli_envelope(self):
@@ -169,7 +172,8 @@ class RendererTests(unittest.TestCase):
 
     def test_builtin_reporters_declare_one_format_each(self):
         declared = {adapter.manifest.id: adapter.manifest.capabilities for adapter in registry.select("report_renderer")}
-        self.assertEqual(declared, {"report_text": ("text",), "report_html": ("html",)})
+        self.assertEqual(declared, {"report_text": ("text",), "report_html": ("html",),
+                                    "report_dashboard": ("html",), "report_evidence": ("html",)})
 
     def test_public_render_routes_through_the_declared_reporters(self):
         text, html = render(self.analysis)
@@ -196,6 +200,37 @@ class RendererTests(unittest.TestCase):
         self.assertIn("<svg", inline)
         self.assertIn("cid:chart-0@stock-predict-mailer.local", cid)
         self.assertNotIn("<svg", cid)
+
+    def test_chart_plugins_render_the_same_series_as_lines_or_grouped_bars(self):
+        first, second = "2026-11-18T00:00:00+08:00", "2026-11-19T00:00:00+08:00"
+        chart = {"title": "走势", "caption": "说明", "unit": "元", "series": {
+            "observed": {"source": "本地观测", "points": [{"at": first, "value": -2}, {"at": second, "value": 3}]},
+            "forecast": {"source": "本地模型", "points": [{"at": second, "value": 5, "lower": 4, "upper": 6}]},
+        }}
+        bars = {**chart, "renderer": "chart_bar"}
+        line, bar = chart_svg(chart), chart_svg(bars)
+        self.assertIn("<polyline", line)
+        self.assertNotIn("<polyline", bar)
+        self.assertRegex(bar, r'<rect [^>]*fill="#17634d"')
+        self.assertRegex(bar, r'<rect [^>]*fill="#2356a3"')
+        line_png, bar_png = chart_png(chart), chart_png(bars)
+        self.assertTrue(bar_png.startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertNotEqual(line_png, bar_png)
+
+    def test_selected_page_renders_escaped_evidence_and_records_its_provenance(self):
+        source = '<script>alert(1)</script>'
+        fact = {"id": "fact-1", "name": "收盘价", "value": 10, "unit": "元", "source": source,
+                "observed_at": "2026-11-18T00:00:00+08:00", "available_at": "2026-11-18T01:00:00+08:00"}
+        body = analysis(facts=[fact], report_renderer="report_evidence")
+        with tempfile.TemporaryDirectory() as folder:
+            path = save_report(Path(folder), body)
+            page = (path / "report.html").read_text(encoding="utf-8")
+            provenance = json.loads((path / "renderers.json").read_text(encoding="utf-8"))
+        self.assertIn("<td>&lt;script&gt;alert(1)&lt;/script&gt;</td>", page)
+        self.assertNotIn(source, page)
+        self.assertEqual(provenance["renderers"][1]["id"], "report_evidence")
+        self.assertIn("分析概览", render({**body, "report_renderer": "report_dashboard"})[1])
+        self.assertNotIn("客观事实来源</h2>", render(body, charts="cid")[1])
 
 
 class WiringTests(unittest.TestCase):

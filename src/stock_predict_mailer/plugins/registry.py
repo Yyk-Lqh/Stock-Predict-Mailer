@@ -13,14 +13,16 @@ import inspect
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from .builtin.chart import GroupedBarChart, LineChart
 from .builtin.eastmoney import EastmoneySource
 from .builtin.export import CsvExporter, JsonLinesExporter, ParquetExporter
 from .builtin.market import SinaSource, TencentSource
+from .builtin.page import DashboardPage, EvidencePage
 from .builtin.report import HtmlReport, TextReport
 from .contract import API_VERSION, KINDS, validate_manifest
 from .errors import PluginError, PluginIncompatible, PluginKindMismatch, PluginMissingDependency, PluginNotFound
 
-_REQUIRED_METHODS = {"market_source": ("quotes",), "report_renderer": ("render",), "notifier": ("send",),
+_REQUIRED_METHODS = {"market_source": ("quotes",), "report_renderer": ("render",), "chart_renderer": ("render",), "notifier": ("send",),
                      "exporter": ("export",)}
 _OPTIONAL_METHODS = {"market_source": ("candles", "bars")}
 _NOT_FOUND = "未声明的插件：{id}（只接受内置白名单中的 id）"
@@ -127,7 +129,7 @@ class Registry:
 
 
 BUILTIN = Registry((TencentSource(), SinaSource(), EastmoneySource(), CsvExporter(), JsonLinesExporter(),
-                     ParquetExporter(), TextReport(), HtmlReport()))
+                     ParquetExporter(), TextReport(), HtmlReport(), LineChart(), GroupedBarChart(), DashboardPage(), EvidencePage()))
 # Declaring a source does not put it in the display chain: only these ids are
 # contacted unless ``market.json`` names another set explicitly.
 DEFAULT_MARKET_SOURCES = ("market_tencent", "market_sina")
@@ -153,6 +155,12 @@ def describe() -> dict:
 
 def identity(plugin_id: str) -> dict:
     return BUILTIN.identity(plugin_id)
+
+
+def renderer_options(kind):
+    category = {"chart": "chart_renderer", "report": "report_renderer"}[kind]
+    return {plugin.manifest.id: plugin.manifest.label for plugin in select(category)
+            if kind == "chart" or "html" in plugin.manifest.capabilities}
 
 
 def market_fetchers(source_ids: Sequence[str] | None = None) -> tuple[tuple[str, Callable], ...]:

@@ -7,6 +7,7 @@ from graphlib import CycleError, TopologicalSorter
 
 from ..agent_service.analysis import identity
 from ..agent_service.contracts import ServiceError
+from ..plugins.registry import renderer_options
 from . import workflow_database, workflow_tools
 
 # Input and output are named ports with one bounded business-object type each.
@@ -47,6 +48,8 @@ def catalog():
     graph = {"version": 2, "nodes": [], "edges": []}
     nodes["database"]["options"] = workflow_database.options()
     nodes["tool"]["options"] = workflow_tools.catalog()
+    for kind in ("chart", "report"):
+        nodes[kind]["options"] = renderer_options(kind)
     for index, (key, kind) in enumerate(zip(SYSTEM_STEPS, SYSTEM_TYPES, strict=True)):
         graph["nodes"].append({"id": key, "position": system_position(index),
                                "data": {"type": kind, "label": nodes[kind]["label"], "detail": nodes[kind]["detail"],
@@ -94,9 +97,12 @@ def validate_graph(raw, engine, settings, *, debug=None):
         ) or (failure == "degrade" and kind not in ("analysis", "merge", "retrieval")):
             graph_error("启用状态或失败策略与端口不兼容", key)
         allowed = {"retrieval": {"binding"}, "analysis": {"model"}, "merge": {"model"},
-                   "database": workflow_database.FIELDS, "tool": {"tool", "required"}}.get(kind, set())
+                   "database": workflow_database.FIELDS, "tool": {"tool", "required"},
+                   "chart": {"renderer"}, "report": {"renderer"}}.get(kind, set())
         if not isinstance(config, dict) or set(config) - allowed:
             graph_error("包含未登记的配置项", key)
+        if "renderer" in config and (not isinstance(config["renderer"], str) or config["renderer"] not in renderer_options(kind)):
+            graph_error("请选择与节点类型匹配的内置渲染插件", key)
         if kind == "database":
             try:
                 config = workflow_database.config_for(config, engine.store, enabled=enabled)

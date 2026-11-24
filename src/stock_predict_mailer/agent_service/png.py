@@ -5,7 +5,7 @@ import math
 import struct
 import zlib
 
-from .contracts import instant
+from .charts import bar_width, chart_geometry
 
 
 def chart_png(chart):
@@ -31,26 +31,31 @@ def chart_png(chart):
         return phase + length
 
     points = [p for s in chart["series"].values() for p in s["points"]]
-    times = [instant(p["at"]).timestamp() for p in points]
-    values = [v for p in points for v in (p["value"], p.get("lower", p["value"]), p.get("upper", p["value"]))]
-    start, end, low, high = min(times), max(times), min(values), max(values)
-
-    def x(at):
-        return 72 + 590 * ((instant(at).timestamp() - start) / (end - start) if end != start else .5)
-
-    def y(value):
-        return 232 - 174 * ((value - low) / (high - low) if high != low else .5)
-
+    bars = chart.get("renderer") == "chart_bar"
+    x, y, _, _ = chart_geometry(points, bars=bars)
     line((72, 55), (72, 232), bytes.fromhex("829392"), 1)
     line((72, 232), (662, 232), bytes.fromhex("829392"), 1)
+    if bars:
+        series_count = len(chart["series"])
+        group_width = bar_width(points, x, series_count)
+        baseline = y(0)
+        line((72, baseline), (662, baseline), bytes.fromhex("829392"), 1)
     palette = {"observed": "17634d", "forecast": "2356a3", "backtest": "a64b29"}
-    for kind, series in chart["series"].items():
+    for idx, (kind, series) in enumerate(chart["series"].items()):
         color = bytes.fromhex(palette[kind])
-        coords = [(x(p["at"]), y(p["value"])) for p in series["points"]]
-        for point in series["points"]:
+        offset = (idx - (series_count - 1) / 2) * group_width if bars else 0
+        coords = [(x(p["at"]) + offset, y(p["value"])) for p in series["points"]]
+        if bars:
+            for px, py in coords:
+                for row in range(math.ceil(min(py, baseline)), math.floor(max(py, baseline)) + 1):
+                    for col in range(math.ceil(px - group_width * .4), math.floor(px + group_width * .4) + 1):
+                        begin = (row * width + col) * 3
+                        pixels[begin:begin + 3] = color
+        for point, (px, _) in zip(series["points"], coords, strict=True):
             if "lower" in point:
-                line((x(point["at"]), y(point["lower"])),
-                     (x(point["at"]), y(point["upper"])), bytes.fromhex("88b2ec"), 6)
+                line((px, y(point["lower"])), (px, y(point["upper"])), bytes.fromhex("88b2ec"), 4 if bars else 6)
+        if bars:
+            continue
         phase = 0
         for a, b in zip(coords, coords[1:], strict=False):
             phase = line(a, b, color, dashed=kind != "observed", phase=phase)

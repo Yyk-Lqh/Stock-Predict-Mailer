@@ -14,12 +14,13 @@ from typing import Protocol
 from .errors import PluginIncompatible
 
 API_VERSION = 1
-KINDS = ("market_source", "report_renderer", "notifier", "exporter")
+KINDS = ("market_source", "report_renderer", "notifier", "exporter", "chart_renderer")
 KIND_CAPABILITIES = {
     "market_source": ("quotes", "candles", "bars"),
     "report_renderer": ("html", "text"),
     "notifier": ("send",),
     "exporter": ("csv", "json", "parquet"),
+    "chart_renderer": ("line", "bar"),
 }
 PLUGIN_ID = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 MODULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
@@ -95,6 +96,14 @@ class ReportRenderer(Protocol):
     manifest: PluginManifest
 
     def render(self, view: Mapping[str, object]) -> bytes: ...
+
+
+class ChartRenderer(Protocol):
+    """Render a validated chart model as a standalone SVG."""
+
+    manifest: PluginManifest
+
+    def render(self, chart: Mapping[str, object]) -> str: ...
 
 
 class Notifier(Protocol):

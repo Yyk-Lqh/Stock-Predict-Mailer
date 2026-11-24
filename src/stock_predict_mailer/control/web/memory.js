@@ -347,6 +347,7 @@ window.Workbench = (() => {
       const host = $('inspector-actions');
       host.replaceChildren();
       if (result) {
+        if (result.analysis?.report_renderer) host.append(action('预览渲染页面', () => previewPage(value.id)));
         host.append(action('下载 HTML 报告', () => download('report', 'html')), action('下载分析 JSON', () => download('analysis', 'json')));
         if (result.knowledge) host.append(action('查看知识证据', () => window.KnowledgeUI.evidence(result.knowledge)));
         host.append(action('刷新投递状态', async () => {
@@ -360,6 +361,20 @@ window.Workbench = (() => {
         }));
       }
     }
+  }
+  async function previewPage(id) {
+    const key=memoryKey;
+    const response=await fetch(`/api/tasks/${id}/report`,{headers:{'X-Memory-Key':key}});
+    if(!response.ok)throw new Error('无法读取本次渲染页面。');
+    const html=await response.text();
+    if(displayed?.id!==id||memoryKey!==key||document.querySelector('.report-page-preview[open]'))return;
+    const dialog=document.createElement('dialog');dialog.className='plugin-dialog report-page-preview';
+    dialog.setAttribute('aria-label','渲染页面预览');
+    const frame=document.createElement('iframe');frame.title='渲染页面';frame.setAttribute('sandbox','');
+    frame.srcdoc=html.replace(/<style>[\s\S]*?<\/style>/,'<link rel="stylesheet" href="/style.css">');
+    const close=action('关闭预览',()=>dialog.close());
+    dialog.append(close,frame);dialog.addEventListener('close',()=>dialog.remove(),{once:true});
+    document.body.append(dialog);dialog.showModal();
   }
   async function download(kind, extension) {
     const response = await fetch(`/api/tasks/${displayed.id}/${kind}`, {headers: {'X-Memory-Key': memoryKey}});
@@ -2214,8 +2229,13 @@ globalThis.PonyMarketFeed=(()=>{
 /* Plugin cards and workspace-local GitHub imports for both console views. */
 globalThis.PonyPluginBoard=(()=>{
   const KEY='stock_predict_mailer.plugin.board.v1';
-  const KINDS={market_source:'行情源',report_renderer:'报告渲染',notifier:'通知渠道',exporter:'数据导出'};
+  const desktop=matchMedia('(min-width: 761px)');
+  const KINDS={market_source:'行情源',chart_renderer:'图表绘制',report_renderer:'页面渲染',notifier:'通知渠道',exporter:'数据导出'};
+  const CAPABILITIES={quotes:'行情报价',candles:'走势图',bars:'历史日线',html:'HTML 报告',text:'纯文本报告',send:'邮件投递',csv:'CSV',json:'JSON',parquet:'Parquet',line:'时间序列折线',bar:'同时间点分组对比'};
+  const PAGE_DESCRIPTIONS={report_dashboard:'汇总上游模型、事实和图表',report_evidence:'按事实列出来源和观测时间'};
+  const MARKS={market_source:'行',chart_renderer:'图',report_renderer:'页',notifier:'邮',exporter:'出'};
   let cache=null,pending=null,observer=null,hallMounted=false,focusMounted=false;
+  let renderWorkspace;
 
   async function load(force){
     if(cache&&!force)return cache;
@@ -2225,6 +2245,21 @@ globalThis.PonyPluginBoard=(()=>{
   }
   const saved=()=>{try{return JSON.parse(localStorage.getItem(KEY))||{};}catch{return{};}};
   const remember=map=>{try{localStorage.setItem(KEY,JSON.stringify(map));}catch{}};
+
+  function githubSource(plugin) {
+    const source=document.createElement('a');
+    source.href=plugin.github_url;source.target='_blank';source.rel='noopener noreferrer';
+    source.textContent='GitHub ↗';source.title=plugin.github_url;
+    return source;
+  }
+
+  function removePlugin(plugin,container) {
+    const button=document.createElement('button');
+    button.type='button';button.textContent='移除';
+    button.setAttribute('aria-label',`移除插件 ${plugin.label}`);
+    button.onclick=()=>mutate(container,button,`plugins/github/${encodeURIComponent(plugin.id)}`,'DELETE',undefined,'插件已移除');
+    return button;
+  }
 
   function card(plugin,container){
     const node=document.createElement('article');
@@ -2241,18 +2276,7 @@ globalThis.PonyPluginBoard=(()=>{
     const missing=plugin.requires.length?` · 需 ${plugin.requires.join(', ')}`:'';
     const meta=node.querySelector('.plugin-meta');
     if(plugin.github_url){
-      const source=document.createElement('a');
-      source.href=plugin.github_url;
-      source.target='_blank';
-      source.rel='noopener noreferrer';
-      source.textContent='GitHub';
-      source.title=plugin.github_url;
-      const remove=document.createElement('button');
-      remove.type='button';
-      remove.textContent='移除';
-      remove.setAttribute('aria-label',`移除插件 ${plugin.label}`);
-      remove.onclick=()=>mutate(container,remove,`plugins/github/${encodeURIComponent(plugin.id)}`,'DELETE',undefined,'插件已移除');
-      meta.append(source,` · ${plugin.manifest_sha256.slice(0,8)} `,remove);
+      meta.append(githubSource(plugin),` · ${plugin.manifest_sha256.slice(0,8)} `,removePlugin(plugin,container));
     }else{
       const signature=plugin.module_digest?.slice(0,8)||'—';
       meta.textContent=`${plugin.available?'可用':'缺依赖'}${missing} · 模块 ${signature}`;
@@ -2261,18 +2285,52 @@ globalThis.PonyPluginBoard=(()=>{
     return node;
   }
 
+  function inventoryCard(plugin,container) {
+    const node=document.createElement('article');
+    node.className='plugin-entry';node.dataset.pluginId=plugin.id;node.dataset.kind=plugin.kind;
+    const main=document.createElement('div');main.className='plugin-entry-main';
+    const mark=text(main,'span',MARKS[plugin.kind]||'件','plugin-entry-mark');mark.setAttribute('aria-hidden','true');
+    const copy=document.createElement('div');copy.className='plugin-entry-copy';
+    text(copy,'h3',plugin.label);
+    text(copy,'p',PAGE_DESCRIPTIONS[plugin.id]||plugin.capabilities.map(value=>CAPABILITIES[value]||value).join(' · '));
+    if(plugin.requires.length) text(copy,'p',`依赖 ${plugin.requires.join('、')}`,'plugin-entry-deps');
+    main.append(copy);
+    const kind=text(main,'span',KINDS[plugin.kind]||plugin.kind,'plugin-entry-kind');
+    kind.title=plugin.problems.join('；');
+    const foot=document.createElement('footer');foot.className='plugin-entry-foot';
+    const digest=(plugin.manifest_sha256||plugin.module_digest)?.slice(0,8);
+    const identifier=text(foot,'code',plugin.id);identifier.title=digest?`${plugin.id} · ${digest}`:plugin.id;
+    const meta=document.createElement('div');meta.className='plugin-entry-meta';
+    if(plugin.default)text(meta,'span','默认行情链');
+    const state=text(meta,'span',plugin.available?'可用':'缺依赖','plugin-entry-state');state.dataset.available=String(plugin.available);
+    if(plugin.github_url)meta.append(githubSource(plugin),removePlugin(plugin,container));
+    else text(meta,'span','内置');
+    const kindForNode=plugin.kind==='chart_renderer'?'chart':plugin.kind==='report_renderer'&&plugin.capabilities.includes('html')?'report':null;
+    if(kindForNode && plugin.available){
+      const use=text(meta,'button','应用到流程');use.type='button';
+      use.setAttribute('aria-label',`将${plugin.label}应用到流程`);
+      use.onclick=()=>{
+        if(window.DesktopWorkbench?.useRenderer(kindForNode,plugin.id))container.closest('dialog').close();
+        else container.querySelector('.plugin-feedback').textContent='暂时无法应用，请检查工作流是否已加载及节点数量。';
+      };
+    }
+    foot.append(meta);node.append(main,foot);return node;
+  }
+
   async function mutate(container,button,path,method,body,success){
-    let status=container.querySelector('[role="status"]');
+    let status=container.querySelector('.plugin-feedback'), changed=false;
     button.disabled=true;
     status.textContent=method==='POST'?'正在从 GitHub 获取插件…':'正在移除插件…';
     try{
       await api(path,method,body);
+      changed=true;
       status.textContent=success;
       await refresh();
-      status=container.querySelector('[role="status"]');
+      status=container.querySelector('.plugin-feedback');
       status.textContent=success;
+      return true;
     }catch(error){
-      const message=status.textContent===success?`${success}，列表刷新失败`:'操作失败';
+      const message=changed?`${success}，列表刷新失败`:'操作失败';
       status.textContent=`${message}。 ${error.message}`;
     }finally{
       button.disabled=false;
@@ -2282,7 +2340,9 @@ globalThis.PonyPluginBoard=(()=>{
   async function refresh(){
     if(pending)await pending.catch(()=>{});
     const body=await load(true);
-    document.querySelectorAll('.plugin-board[data-draggable]').forEach(board=>fill(board,body,board.dataset.draggable==='true'));
+    const hall=document.getElementById('plugin-board-hall');
+    if(hall?.dataset.state==='ready')fill(hall,body);
+    renderWorkspace?.(body);
   }
 
   function githubForm(container){
@@ -2293,9 +2353,11 @@ globalThis.PonyPluginBoard=(()=>{
       '<button type="submit">添加插件</button></form>'+
       '<p class="plugin-board-hint">仓库默认分支的根目录需包含 stock-predict-mailer-plugin.json。</p>';
     const form=details.querySelector('form');
-    form.onsubmit=event=>{
+    form.onsubmit=async event=>{
       event.preventDefault();
-      mutate(container,form.querySelector('button'),'plugins/github','POST',{url:form.elements.url.value},'插件已添加');
+      if(await mutate(container,form.querySelector('button'),'plugins/github','POST',{url:form.elements.url.value},'插件已添加')){
+        form.reset();details.open=false;
+      }
     };
     return details;
   }
@@ -2314,28 +2376,29 @@ globalThis.PonyPluginBoard=(()=>{
     return line;
   }
 
-  function fill(container,body,draggable){
+  function fill(container,body){
     container.replaceChildren();
-    container.dataset.draggable=String(Boolean(draggable));
     const status=document.createElement('p');
     status.className='plugin-feedback';
     status.setAttribute('role','status');
     container.append(head(body,container),githubForm(container),status);
     const grid=document.createElement('div');
     grid.className='plugin-cards';
-    container.append(grid);
-    const spots=draggable?saved():{};
-    body.plugins.forEach((plugin,index)=>{
+    grid.append(...body.plugins.map(plugin=>card(plugin,container)));
+    container.append(grid);container.dataset.state='ready';
+  }
+
+  function fillLayout(grid,plugins,container) {
+    const spots=saved();
+    grid.replaceChildren(...plugins.map((plugin,index)=>{
       const node=card(plugin,container);
-      grid.append(node);
-      if(!draggable)return;
       const fallback={x:12+(index%3)*232,y:12+Math.floor(index/3)*128};
       const spot=spots[plugin.id]||fallback;
       node.style.left=spot.x+'px';
       node.style.top=spot.y+'px';
       node.addEventListener('pointerdown',event=>drag(event,node,plugin.id));
-    });
-    container.dataset.state='ready';
+      return node;
+    }));
   }
 
   function drag(event,node,id){
@@ -2363,52 +2426,136 @@ globalThis.PonyPluginBoard=(()=>{
   }
 
   async function fillWorkflowTools(host,dialog){
+    host.textContent='正在读取工作流工具…';
     try {
       const catalog=await api('workflows/catalog');
       host.replaceChildren();
       for (const [id,spec] of Object.entries(catalog.nodes.tool?.options||{})) {
+        const tool=document.createElement('article');tool.className='plugin-tool-entry';
+        const copy=document.createElement('div');
+        text(copy,'h3',spec.label);text(copy,'p',spec.detail);
         const button=document.createElement('button');
         button.type='button';
-        button.textContent=`添加${spec.label}节点`;
-        button.title=spec.detail;
+        button.textContent='添加到画布';
+        button.setAttribute('aria-label',`添加${spec.label}节点`);
         button.onclick=()=>{
           if (window.DesktopWorkbench?.addBuiltinTool?.(id)) dialog.close();
-          else button.title='请确认画布已加载且节点数未达上限';
+          else dialog.querySelector('.plugin-feedback').textContent='无法添加节点，请检查当前是否为可编辑流程及节点数量。';
         };
-        host.append(button);
+        tool.append(copy,button);host.append(tool);
       }
+      if(!host.childElementCount) host.textContent='暂无可用的工作流工具。';
     } catch(error) {host.textContent=error.message;}
   }
 
-  function mountDialog(toolbar,draggable){
+  function workspace(dialog) {
+    dialog.classList.add('plugin-workspace');
+    dialog.innerHTML=`<div id="plugin-board-focus" class="plugin-board">
+      <header class="plugin-workspace-head">
+        <h2 id="plugin-title-focus">插件管理</h2>
+        <div class="plugin-workspace-tabs" role="group" aria-label="插件管理视图">
+          <button type="button" data-plugin-view="catalog" aria-controls="plugin-catalog">插件 <span data-plugin-count></span></button>
+          <button type="button" data-plugin-view="tools" aria-controls="plugin-tools">工作流工具</button>
+          <button type="button" data-plugin-view="layout" aria-controls="plugin-layout">卡片布局</button>
+        </div>
+        <div class="plugin-workspace-actions"><button type="button" data-plugin-refresh>刷新</button><button type="button" data-close>返回画布</button></div>
+      </header>
+      <p class="plugin-feedback" role="status"></p>
+      <div class="plugin-workspace-content">
+        <section id="plugin-catalog" data-plugin-pane="catalog" aria-label="插件列表">
+          <div class="plugin-filters">
+            <select aria-label="插件类别" data-plugin-kind><option value="">全部类别</option></select>
+            <select aria-label="插件来源" data-plugin-source><option value="">全部来源</option><option value="builtin">内置</option><option value="github">GitHub</option></select>
+            <input type="search" aria-label="搜索插件" placeholder="搜索名称、标识或能力" data-plugin-search>
+            <span data-plugin-matches role="status"></span>
+          </div>
+          <div class="plugin-inventory" data-plugin-list></div>
+          <p data-plugin-empty class="plugin-workspace-empty" hidden>没有符合当前筛选条件的插件。</p>
+          <p data-plugin-diagnostics class="plugin-workspace-diagnostics"></p>
+        </section>
+        <section id="plugin-tools" data-plugin-pane="tools" aria-label="工作流工具" class="plugin-inventory" hidden></section>
+        <section id="plugin-layout" data-plugin-pane="layout" aria-label="自定义卡片布局" data-draggable="true" hidden>
+          <p class="hint">拖动卡片以调整位置，布局保存在当前浏览器。</p><div class="plugin-cards"></div>
+        </section>
+      </div></div>`;
+    const board=dialog.querySelector('#plugin-board-focus');
+    const kind=board.querySelector('[data-plugin-kind]'), source=board.querySelector('[data-plugin-source]'), search=board.querySelector('[data-plugin-search]');
+    const list=board.querySelector('[data-plugin-list]'), tools=board.querySelector('#plugin-tools'), grid=board.querySelector('#plugin-layout .plugin-cards');
+    const status=board.querySelector('.plugin-feedback');
+    const importer=githubForm(board), refreshButton=board.querySelector('[data-plugin-refresh]');
+    importer.querySelector('summary').textContent='＋ 从 GitHub 导入';
+    const importFields=document.createElement('div');importFields.className='plugin-import-fields';
+    importFields.append(importer.querySelector('form'),importer.querySelector('p'));importer.append(importFields);
+    refreshButton.before(importer);
+    for(const [value,label] of Object.entries(KINDS))kind.add(new Option(label,value));
+
+    let plugins=[], view='catalog';
+    function drawCatalog() {
+      const query=search.value.trim().toLowerCase();
+      const matches=plugins.filter(plugin=>{
+        const origin=plugin.github_url?'github':'builtin';
+        return (!kind.value||plugin.kind===kind.value)&&(!source.value||origin===source.value)&&
+          [plugin.label,plugin.id,KINDS[plugin.kind],plugin.github_url,...plugin.capabilities.map(value=>CAPABILITIES[value]||value),...plugin.capabilities].join(' ').toLowerCase().includes(query);
+      });
+      list.replaceChildren(...matches.map(plugin=>inventoryCard(plugin,board)));
+      board.querySelector('[data-plugin-matches]').textContent=matches.length===plugins.length?'':`${matches.length} 个匹配`;
+      board.querySelector('[data-plugin-empty]').hidden=board.dataset.state!=='ready'||Boolean(matches.length);
+    }
+    function select(name) {
+      view=name;
+      for(const control of board.querySelectorAll('[data-plugin-view]')) control.setAttribute('aria-pressed',String(control.dataset.pluginView===name));
+      for(const pane of board.querySelectorAll('[data-plugin-pane]')) pane.hidden=pane.dataset.pluginPane!==name;
+      if(name==='tools')fillWorkflowTools(tools,dialog);
+      if(name==='layout')fillLayout(grid,plugins,board);
+    }
+    kind.onchange=source.onchange=search.oninput=drawCatalog;
+    for(const button of board.querySelectorAll('[data-plugin-view]')) button.onclick=()=>select(button.dataset.pluginView);
+    refreshButton.onclick=async()=>{
+      refreshButton.disabled=true;status.textContent='正在刷新插件…';
+      try{await refresh();status.textContent='插件列表已刷新。';}
+      catch(error){status.textContent=`刷新失败。 ${error.message}`;}
+      finally{refreshButton.disabled=false;}
+    };
+    select('catalog');
+    renderWorkspace=body=>{
+      plugins=body.plugins;board.dataset.state='ready';
+      board.querySelector('[data-plugin-count]').textContent=plugins.length;
+      board.querySelector('[data-plugin-diagnostics]').textContent=body.problems.length?body.problems.join('；'):`当前行情链  ${body.source_chain.join(' → ')||'—'}`;
+      drawCatalog();
+      if(view==='layout')fillLayout(grid,plugins,board);
+    };
+    return board;
+  }
+
+  function mountDialog(toolbar,professional){
     const button=document.createElement('button');
     button.type='button';
-    if(!draggable)button.id='hall-plugins-open';
+    if(!professional)button.id='hall-plugins-open';
     button.textContent='插件';
     button.setAttribute('aria-haspopup','dialog');
-    button.setAttribute('aria-label',draggable?'打开插件画布':'打开插件面板');
+    button.setAttribute('aria-label',professional?'打开插件管理':'打开插件面板');
     toolbar.prepend(button);
     const dialog=document.createElement('dialog');
     dialog.className='plugin-dialog';
-    dialog.setAttribute('aria-labelledby',draggable?'plugin-title-focus':'plugin-title-hall');
-    dialog.innerHTML='<div class="plugin-dialog-head"><strong></strong><button type="button" data-close>关闭</button></div>'+
-      (draggable?'<details><summary>可调用的工作流工具</summary><div class="workflow-run-list" data-workflow-tools></div></details>'+
-        '<p class="hint">拖动卡片可调整本机画布布局。</p>':'')+
-      '<div class="plugin-board"></div>';
-    const title=dialog.querySelector('strong');
-    title.id=dialog.getAttribute('aria-labelledby');
-    title.textContent=draggable?'插件画布':'插件面板';
-    const board=dialog.querySelector('.plugin-board');
-    board.id=draggable?'plugin-board-focus':'plugin-board-hall';
+    dialog.setAttribute('aria-labelledby',professional?'plugin-title-focus':'plugin-title-hall');
+    if(!professional)dialog.innerHTML='<div class="plugin-dialog-head"><strong id="plugin-title-hall">插件面板</strong><button type="button" data-close>关闭</button></div><div id="plugin-board-hall" class="plugin-board"></div>';
+    const board=professional?workspace(dialog):dialog.querySelector('.plugin-board');
     document.body.append(dialog);
     const close=dialog.querySelector('[data-close]');
     close.onclick=()=>dialog.close();
-    const tools=dialog.querySelector('[data-workflow-tools]');
-    tools?.parentElement.addEventListener('toggle',()=>{if(tools.parentElement.open) fillWorkflowTools(tools,dialog);});
     dialog.addEventListener('click',event=>{if(event.target===dialog)dialog.close();});
+    if(professional)dialog.addEventListener('close',()=>{
+      if(button.getClientRects().length)button.focus({preventScroll:true});
+    });
     button.onclick=()=>{
       dialog.showModal();
-      load().then(body=>fill(board,body,draggable)).catch(error=>{
+      const status=board.querySelector('.plugin-feedback');
+      if(professional&&!cache)status.textContent='正在读取插件…';
+      load().then(body=>{
+        if(professional){renderWorkspace(body);status.textContent='';}
+        else fill(board,body);
+      }).catch(error=>{
+        if(professional){board.querySelector('.plugin-feedback').textContent=`插件状态读取失败。 ${error.message}`;return;}
         board.replaceChildren();
         const note=document.createElement('p');
         note.className='plugin-board-hint';
@@ -2423,17 +2570,21 @@ globalThis.PonyPluginBoard=(()=>{
       const toolbar=document.querySelector('.market-wall-actions');
       if(toolbar){mountDialog(toolbar,false);hallMounted=true;}
     }
-    if(!focusMounted&&matchMedia('(min-width: 761px)').matches){
+    if(!focusMounted&&desktop.matches){
       const toolbar=document.querySelector('#desktop-focus .desktop-flow-toolbar-actions');
       if(toolbar){mountDialog(toolbar,true);focusMounted=true;}
     }
-    if(hallMounted&&(focusMounted||!matchMedia('(min-width: 761px)').matches)&&observer){observer.disconnect();observer=null;}
+    if(hallMounted&&(focusMounted||!desktop.matches)&&observer){observer.disconnect();observer=null;}
   }
 
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',install,{once:true});
   install();
   observer=new MutationObserver(()=>{try{install();}catch{}});
   observer.observe(document.body,{childList:true,subtree:true});
+  desktop.addEventListener('change',event=>{
+    if(event.matches)requestAnimationFrame(install);
+    else document.querySelector('.plugin-workspace[open]')?.close();
+  });
   return{install};
 })();
 
@@ -3510,6 +3661,9 @@ window.DesktopWorkbench = (() => {
   let workflowCatalog = null, workSurface = 'edit', archived = null, archivedEvents = [], submitKey = null, submitBody = null;
   let systemTemplate = null, debugDialog = null, selectingPort = null;
   let selectedEdge = null, edgeDrag = null;
+  const narrowCanvas = matchMedia('(max-width: 1050px)');
+  let libraryOpen = !narrowCanvas.matches, inspectorOpen = !narrowCanvas.matches;
+  let inspectorTab = 'config';
 
   const systemPosition = index => {
     const row=Math.floor(index/4), column=index%4;
@@ -3582,7 +3736,7 @@ window.DesktopWorkbench = (() => {
       const type = raw.version === 1 ? fallback[data.actualKey] || String(data.type || 'custom') : String(data.type || 'custom');
       const fields = type==='database' ? {source:'string',query:'string',scope:'string',path:'string',table:'string',
         symbol_column:'string',limit:'number',include_fact:'boolean'} : type==='tool' ? {tool:'string',required:'boolean'} :
-        {model:'string',binding:'string'};
+        ['chart','report'].includes(type) ? {renderer:'string'} : {model:'string',binding:'string'};
       const config = Object.fromEntries(Object.entries(fields).filter(([key,kind])=>typeof data.config?.[key]===kind)
         .map(([key])=>[key,data.config[key]]));
       return {id:node.id.trim(), position:{x:coord(node.position?.x),y:coord(node.position?.y)}, data:{
@@ -3606,6 +3760,9 @@ window.DesktopWorkbench = (() => {
       if (!/^[A-Za-z0-9_-]{1,64}$/.test(node.id) || nodes.has(node.id)) errors.push(`${node.id} · 节点 ID 无效或重复`);
       nodes.set(node.id,node);
       if (workflowCatalog && !workflowCatalog.nodes[node.data.type]) errors.push(`${node.id} · 草稿节点缺少执行器`);
+      const renderer = node.data.config?.renderer;
+      if (workflowCatalog && renderer && !Object.hasOwn(workflowCatalog.nodes[node.data.type]?.options || {}, renderer))
+        errors.push(`${node.id} · 渲染插件不可用，请重新选择`);
     }
     const seen = new Set(), incoming = new Map(value.nodes.map(node=>[node.id,0]));
     for (const edge of value.edges) {
@@ -3672,7 +3829,7 @@ window.DesktopWorkbench = (() => {
   }
   function setMessage(value) { message = value; const node = $('desktop-workflow-message'); if (node) node.textContent = value; }
   function commit(next, announcement) { history = [...history.slice(-19), clone(graph)]; graph = normalizeGraph(customCopy({...graph,...next})); dirty = true; persistDraft(); setMessage(announcement); renderCanvas(); renderInspector(); updateSaveState(); }
-  function selectNode(id, moveFocus = false) { if (!nodeById(id)) return; selected = id; renderCanvas(); renderInspector(); if (moveFocus) nodeElement(id)?.focus({preventScroll: true}); }
+  function selectNode(id, moveFocus = false) { if (!nodeById(id)) return; selected = id; if(moveFocus) showCanvasPanel('inspector',true); renderCanvas(); renderInspector(); if (moveFocus) nodeElement(id)?.focus({preventScroll: true}); }
   function removeNode() { const node = nodeById(selected); if (!node || showingRun()) return; const incoming = graph.edges.filter(edge => edge.target === selected), outgoing = graph.edges.filter(edge => edge.source === selected), remaining = {nodes: graph.nodes.filter(item => item.id !== selected), edges: graph.edges.filter(edge => edge.source !== selected && edge.target !== selected)}; if (incoming.length === 1 && outgoing.length === 1 && canConnect(incoming[0].source, outgoing[0].target)) remaining.edges.push({id: `bridge-${Date.now()}`, source: incoming[0].source, target: outgoing[0].target}); commit(remaining, incoming.length === 1 && outgoing.length === 1 ? '节点已删除，已尝试保留前后依赖。' : '节点及其连线已删除，请检查流程入口和结束节点。'); selected = remaining.nodes[0]?.id || ''; renderCanvas(); renderInspector(); }
   const TYPE_DEFAULTS = {
     input: ['资料输入', '分析所需的行情、财报或研究资料。'], validation: ['数据校验', '核对交易日、缺口与价格口径。'],
@@ -3713,6 +3870,19 @@ window.DesktopWorkbench = (() => {
     addNode('tool',{label:spec.label,detail:spec.detail,config:{tool:id,required:false}});
     return true;
   }
+  function useRenderer(kind,id) {
+    if(!['chart','report'].includes(kind) || !Object.hasOwn(workflowCatalog?.nodes[kind]?.options||{},id))return false;
+    const target=graph.nodes.find(node=>node.id===selected && node.data.type===kind) || graph.nodes.find(node=>node.data.type===kind);
+    if(!target && graph.nodes.length>=24)return false;
+    if(showingRun()){workSurface='edit';archived=null;archivedEvents=[];updateWorkspaceTabs();}
+    inspectorTab='config';showCanvasPanel('inspector',true);
+    if(!target){addNode(kind,{config:{renderer:id}});return true;}
+    selected=target.id;
+    if(nodeDrafts.has(selected))nodeDrafts.get(selected).renderer=id;
+    const updated={...target,data:{...target.data,config:{renderer:id}}};
+    commit({...graph,nodes:graph.nodes.map(node=>node.id===selected?updated:node)},'已将渲染插件应用到流程草稿');
+    return true;
+  }
   function editNode(event) {
     event.preventDefault();
     const form=event.currentTarget, node=nodeById(selected);
@@ -3721,6 +3891,7 @@ window.DesktopWorkbench = (() => {
     const type=fields.type, config={};
     if (fields.binding?.trim() && type==='retrieval') config.binding=fields.binding.trim();
     if (fields.model && ['analysis','merge'].includes(type)) config.model=fields.model;
+    if (fields.renderer && ['chart','report'].includes(type)) config.renderer=fields.renderer;
     if (type==='tool') Object.assign(config,{tool:fields.tool,required:form.elements.required.checked});
     if (type==='database') {
       Object.assign(config,{limit:Number(fields.limit),include_fact:form.elements.include_fact.checked});
@@ -3837,6 +4008,7 @@ window.DesktopWorkbench = (() => {
     const head = document.createElement('header'), icon = document.createElement('span'), title = document.createElement('div'), label = document.createElement('strong'), type = document.createElement('small');
     icon.className = 'desktop-flow-node-icon';
     icon.textContent = STATUS_ICON[status] || '○';
+    icon.setAttribute('aria-hidden','true');
     label.textContent = node.data.label;
     type.textContent = (TYPE_LABEL[node.data.type] || node.data.type) + (article.dataset.draft?' · 草稿':'');
     title.append(label, type);
@@ -3846,8 +4018,9 @@ window.DesktopWorkbench = (() => {
     const query=node.data.config?.source==='sqlite' ? (node.data.config.table || '本机 SQLite 文件') :
       database?.queries[node.data.config?.query || database?.defaults.query];
     const tool=workflowCatalog?.nodes.tool?.options[node.data.config?.tool]?.label;
+    const renderer=node.data.config?.renderer && workflowCatalog?.nodes[node.data.type]?.options?.[node.data.config.renderer];
     const configured=(node.data.type==='database' && query ? `${query} · 最多 ${node.data.config?.limit ?? database.defaults.limit} 条` : '') ||
-      tool || node.data.config?.binding || (node.data.config?.model && safeProfiles().find(profile=>profile.id===node.data.config.model)?.name);
+      renderer || tool || node.data.config?.binding || (node.data.config?.model && safeProfiles().find(profile=>profile.id===node.data.config.model)?.name);
     body.textContent = configured || node.data.detail || workflowCatalog?.nodes[node.data.type]?.detail || '草稿配置';
     const foot = document.createElement('footer'), badge = document.createElement('span'), source = document.createElement('span');
     badge.className = 'desktop-flow-status';
@@ -4156,6 +4329,7 @@ window.DesktopWorkbench = (() => {
       '<p data-node-config="tool" data-tool-detail class="hint"></p>'+
       '<label data-node-config="tool" class="desktop-flow-check"><input name="required" type="checkbox"> 缺少所需数据时触发失败策略</label>'+
       '<label data-node-config="model">分析模型<select name="model"></select></label>'+
+      '<label data-node-config="renderer">渲染插件<select name="renderer"></select></label>'+
       '<label data-node-config="database">数据来源<select name="source" required></select></label>'+
       '<label data-node-config="tasks">查询类型<select name="query" required></select></label>'+
       '<label data-node-config="tasks">标的范围<select name="scope" required></select></label>'+
@@ -4186,13 +4360,27 @@ window.DesktopWorkbench = (() => {
     const scanDatabases=databaseForm(form,fields,workflowCatalog?.nodes.database?.options);
     for(const key of ['label','type','detail','binding','model','failurePolicy']) form.elements[key].value=fields[key]||'';
     form.elements.enabled.checked=fields.enabled!==false;
+    let rendererKind;
     const sync=()=>{
+      const nodeType=form.elements.type.value, renderer=form.elements.renderer;
+      if(nodeType!==rendererKind){
+        rendererKind=nodeType;
+        const options=workflowCatalog?.nodes[nodeType]?.options;
+        renderer.replaceChildren(new Option('采用系统默认',''));
+        if(['chart','report'].includes(nodeType)){
+          for(const [value,label] of Object.entries(options||{}))renderer.add(new Option(label,value));
+          if(nodeType===fields.type && fields.renderer){
+            if(!Object.hasOwn(options||{},fields.renderer))renderer.add(new Option('插件不可用，请重新选择',fields.renderer));
+            renderer.value=fields.renderer;
+          }
+        }
+      }
       for(const label of form.querySelectorAll('[data-node-config]')) {
         const key=label.dataset.nodeConfig;
         const type=form.elements.type.value;
         const source=form.elements.source.value;
         const visible={database:type==='database',tasks:type==='database'&&source==='tasks',
-          sqlite:type==='database'&&source==='sqlite',binding:type==='retrieval',tool:type==='tool',model:['analysis','merge'].includes(type)};
+          sqlite:type==='database'&&source==='sqlite',binding:type==='retrieval',tool:type==='tool',model:['analysis','merge'].includes(type),renderer:['chart','report'].includes(type)};
         label.hidden=!visible[key] || (label.contains(form.querySelector('[data-scan-folder]')) &&
           form.querySelector('[data-scan-scope]').value!=='directory');
         const control=label.querySelector('input,select');
@@ -4225,38 +4413,42 @@ window.DesktopWorkbench = (() => {
     const host=$('desktop-workflow-inspector');
     if (!host || host.contains(document.activeElement) && document.activeElement.closest('form') && host.dataset.node===selected) return;
     host.dataset.node=selected;
-    host.replaceChildren();
-    const node=nodeById(selected), heading=document.createElement('h3');
-    heading.textContent=node?.data.label||'节点详情';host.append(heading);
+    const node=nodeById(selected), config=$('desktop-node-config'), runtime=$('desktop-node-runtime');
+    put('desktop-node-heading',node?.data.label||'节点详情');
+    put('desktop-node-type',TYPE_LABEL[node?.data.type]||'');
+    put('desktop-node-state',node?statusText(node.id):'');
+    host.style.setProperty('--node-accent',TYPE_COLOR[node?.data.type]||TYPE_COLOR.custom);
+    config.replaceChildren();runtime.replaceChildren();
+    updateInspectorTabs();
     const version=shownTask()?.metadata?.workflow?.version;
-    if (showingRun()) host.append(terms([['执行版本',version||'旧任务 · 无图版本'],
+    if (showingRun()) runtime.append(terms([['执行版本',version||'旧任务 · 无图版本'],
       ['配置版本',shownTask()?.metadata?.workflow?.configuration_version?.slice(0,12)],
       ['任务状态',shownTask()?.status?.state||'未选择运行']]));
     if(!node) return;
     const spec=workflowCatalog?.nodes[node.data.type], info=runtimeFor(node.id);
     const deps=shownGraph().edges.filter(edge=>edge.target===node.id).map(edge=>nodeById(edge.source)?.data.label||edge.source);
-    host.append(terms([['状态',statusText(node.id)],['读取',spec?.input||'任务输入'],['输出类型',spec?.output||'—'],
+    runtime.append(terms([['当前状态',statusText(node.id)],['读取',spec?.input||'任务输入'],['输出类型',spec?.output||'—'],
       ['依赖',deps.join('、')||'入口'],['运行条件',deps.length?'上游完成且连线条件成立':'收到任务输入'],
       ['说明',node.data.detail||spec?.detail],['来源',info.source||spec?.source||'用户草稿'],['耗时',info.duration!=null?`${info.duration} ms`:null],
       ['分支来源',info.branch?.join('、')],['错误或跳过原因',info.failure],['执行尝试',info.attempts||null],['重试次数',info.retries]]));
     if(showingRun()) {
-      host.append(terms([['输入摘要',info.input],['输出摘要',info.output]]));
+      runtime.append(terms([['输入摘要',info.input],['输出摘要',info.output]]));
       return;
     }
     if (workSurface==='debug') {
-      host.append(makeButton('单测所选节点',()=>openDebug(node)));
-      const button=host.lastElementChild;button.disabled=spec?.testable!==true || node.data.enabled===false;
+      const button=makeButton('单测所选节点',()=>openDebug(node));
+      button.disabled=spec?.testable!==true || node.data.enabled===false;config.append(button);
     }
-    if (node.data.type==='input') host.append(terms([['输入预览',info.output],['来源',info.source]]));
+    if (node.data.type==='input') runtime.append(terms([['输入预览',info.output],['来源',info.source]]));
     if (node.data.type==='retrieval') {
       const market=window.PonyMarketFeed?.current?.(), quote=market?.snapshot;
-      host.append(terms([['行情墙参考',quote ? `${quote.source} · ${quote.as_of||'未提供观测时间'} · ${quote.timezone||'未提供时区'} · ${quote.demo?'演示':market.status==='stale'?'已过期':quote.session==='live'&&market.status==='connected'?'实时':'最近快照'}` : '暂无行情']]));
+      runtime.append(terms([['行情墙参考',quote ? `${quote.source} · ${quote.as_of||'未提供观测时间'} · ${quote.timezone||'未提供时区'} · ${quote.demo?'演示':market.status==='stale'?'已过期':quote.session==='live'&&market.status==='connected'?'实时':'最近快照'}` : '暂无行情']]));
     }
-    if (!spec) host.append(terms([['草稿能力','选择有执行器的节点类型，或移除此节点后再运行']]));
-    nodeEditor(host,node);
+    if (!spec) config.append(terms([['草稿能力','选择有执行器的节点类型，或移除此节点后再运行']]));
+    nodeEditor(config,node);
     if (graph.mode!=='system') for (const error of validateGraph().slice(0,6)) {
       const id=error.split(' · ')[0];
-      const item=makeButton(error,()=>nodeById(id)&&selectNode(id,true)); item.className='desktop-flow-issue';host.append(item);
+      const item=makeButton(error,()=>nodeById(id)&&selectNode(id,true)); item.className='desktop-flow-issue';config.append(item);
     }
   }
 
@@ -4366,6 +4558,7 @@ window.DesktopWorkbench = (() => {
   }
   function showRun(value,events) {
     archived=value;archivedEvents=events;workSurface='run';selected=shownGraph().nodes[0]?.id||'';
+    showCanvasPanel('inspector',true);
     deriveRuntime(task);updateWorkspaceTabs();renderCanvas();renderInspector();
   }
   async function chooseRun() {
@@ -4459,7 +4652,66 @@ window.DesktopWorkbench = (() => {
     for(const button of focus.querySelectorAll('[data-workflow-surface]')) button.setAttribute('aria-pressed',String(button.dataset.workflowSurface===workSurface));
     focus.dataset.workflowSurface=workSurface;
     for(const button of focus.querySelectorAll('[data-workflow-action]')) button.hidden=showingRun();
-    focus.querySelector('.desktop-flow-palette').hidden=showingRun();
+    syncCanvasPanels();
+  }
+  function showCanvasPanel(panel, open) {
+    if (panel==='library') {
+      libraryOpen=open;
+      if(open&&narrowCanvas.matches)inspectorOpen=false;
+    } else {
+      inspectorOpen=open;
+      if(open&&narrowCanvas.matches)libraryOpen=false;
+    }
+    syncCanvasPanels();
+  }
+  function syncCanvasPanels() {
+    const library=libraryOpen&&!showingRun();
+    focus.querySelector('.desktop-flow-palette').hidden=!library;
+    $('desktop-workflow-inspector').hidden=!inspectorOpen;
+    $('workflow-library-toggle').disabled=showingRun();
+    $('workflow-library-toggle').setAttribute('aria-expanded',String(library));
+    $('workflow-inspector-toggle').setAttribute('aria-expanded',String(inspectorOpen));
+    focus.classList.toggle('inspector-open',inspectorOpen);
+  }
+  function updateInspectorTabs() {
+    const current=showingRun()?'runtime':inspectorTab;
+    for(const button of focus.querySelectorAll('[data-node-view]')) {
+      const view=button.dataset.nodeView;
+      button.disabled=showingRun()&&view==='config';
+      button.setAttribute('aria-pressed',String(view===current));
+      $(`desktop-node-${view}`).hidden=view!==current;
+    }
+  }
+  function layoutWorkspace(toolbar, palette) {
+    const host=$('desktop-workflow-inspector');
+    host.innerHTML=`<header class="workflow-node-heading"><div><small id="desktop-node-type"></small><h3 id="desktop-node-heading"></h3></div><span id="desktop-node-state"></span></header>
+      <div class="workflow-node-tabs" role="group" aria-label="节点详情视图">
+        <button type="button" data-node-view="config" aria-controls="desktop-node-config">配置</button>
+        <button type="button" data-node-view="runtime" aria-controls="desktop-node-runtime">执行详情</button>
+      </div><section id="desktop-node-config" class="workflow-node-body"></section><section id="desktop-node-runtime" class="workflow-node-body"></section>`;
+    for(const button of host.querySelectorAll('[data-node-view]')) button.onclick=()=>{inspectorTab=button.dataset.nodeView;updateInspectorTabs();};
+    const rail=document.createElement('div');rail.className='workflow-canvas-rail';
+    palette.id='workflow-node-library';
+    for(const [id,label,target,panel] of [['workflow-library-toggle','节点库',palette.id,'library'],['workflow-inspector-toggle','详情',host.id,'inspector']]) {
+      const button=makeButton(label,()=>showCanvasPanel(panel,button.getAttribute('aria-expanded')!=='true'));
+      button.id=id;button.setAttribute('aria-controls',target);rail.append(button);
+    }
+    rail.append($('desktop-workflow-undo'));
+    palette.querySelector('[data-node-type="custom"]').remove();
+    palette.append(toolbar.querySelector('[data-workflow-action="add"]'));
+    const viewport=toolbar.querySelector('.desktop-flow-viewport-tools');
+    focus.append(rail,viewport);
+    narrowCanvas.addEventListener('change',event=>{if(event.matches&&inspectorOpen&&libraryOpen)showCanvasPanel('library',false);});
+    const menu=document.createElement('details');menu.className='workflow-file-menu';
+    const summary=document.createElement('summary');summary.textContent='流程管理';
+    const actions=document.createElement('div');actions.className='workflow-file-actions';
+    actions.append(...toolbar.querySelectorAll('[data-workflow-action="copy"], [data-workflow-action="restore"], [data-workflow-action="import"], [data-workflow-action="export"], .workflow-library-action'));
+    actions.addEventListener('click',()=>{menu.open=false;});
+    menu.append(summary,actions);toolbar.append(menu);
+    const modes=document.createElement('div');modes.className='workflow-surface-switch';modes.setAttribute('role','group');modes.setAttribute('aria-label','工作流视图');
+    modes.append(...toolbar.querySelectorAll('[data-workflow-surface]'));
+    const status=focus.querySelector('.desktop-flow-toolbar-status');
+    status.querySelector('strong').textContent='预测分析流程';status.after(modes);
   }
   function workflowControls() {
     const toolbar=focus.querySelector('.desktop-flow-toolbar-actions');
@@ -4477,11 +4729,22 @@ window.DesktopWorkbench = (() => {
       persistDraft();setMessage('模板副本可编辑并执行');renderCanvas();renderInspector();
     });
     copy.dataset.workflowAction='copy';
-    toolbar.prepend(makeButton('校验计划',previewWorkflow),copy,makeButton('自定义流程',workflowLibrary));
-    toolbar.prepend(makeButton('运行流程',()=>$('task-form').requestSubmit()));
+    const library=makeButton('自定义流程',workflowLibrary);library.className='workflow-library-action';
+    toolbar.prepend(makeButton('校验计划',previewWorkflow),copy,library);
+    const run=makeButton('运行流程',()=>$('task-form').requestSubmit());run.className='workflow-run-primary';toolbar.prepend(run);
     const palette=focus.querySelector('.desktop-flow-palette'), search=document.createElement('input');
     search.type='search';search.placeholder='搜索节点';search.setAttribute('aria-label','搜索节点库');palette.insertBefore(search,palette.querySelector('button'));
-    search.oninput=()=>{for(const button of palette.querySelectorAll('[data-node-type]')) button.hidden=!button.textContent.includes(search.value.trim());};
+    for(const [label,types] of [['资料与工具',['input','validation','knowledge','retrieval','database','tool']],['模型与分析',['model','trained','analysis','review','merge']],['结果与交付',['chart','forecast','report','delivery','custom']]]) {
+      const group=document.createElement('section'), title=document.createElement('h4');title.textContent=label;
+      group.append(title,...types.map(type=>palette.querySelector(`[data-node-type="${type}"]`)));palette.append(group);
+    }
+    search.oninput=()=>{
+      for(const group of palette.querySelectorAll('section')) {
+        for(const button of group.querySelectorAll('[data-node-type]')) button.hidden=!button.textContent.includes(search.value.trim());
+        group.hidden=!group.querySelector('[data-node-type]:not([hidden])');
+      }
+    };
+    layoutWorkspace(toolbar,palette);
     updateWorkspaceTabs();
     api('workflows/catalog').then(data=>{
       workflowCatalog=data;systemTemplate=data.system;
@@ -4530,7 +4793,8 @@ window.DesktopWorkbench = (() => {
     const toolbarBottom = focus.querySelector('.desktop-flow-toolbar').getBoundingClientRect().bottom - rect.top;
     const composerTop = $('analysis-composer').getBoundingClientRect().top - rect.top;
     const palette=focus.querySelector('.desktop-flow-palette').getBoundingClientRect();
-    const viewLeft = Math.max(20,palette.right-rect.left+12), viewTop = Math.max(20, toolbarBottom + 16);
+    const rail=focus.querySelector('.workflow-canvas-rail').getBoundingClientRect();
+    const viewLeft = Math.max(20,Math.max(palette.right,rail.right)-rect.left+12), viewTop = Math.max(20, toolbarBottom + 16);
     const viewRight = inspectorLeft > 120 ? inspectorLeft - 16 : canvas.clientWidth - 20;
     const viewBottom = composerTop > viewTop + 100 ? composerTop - 16 : canvas.clientHeight - 20;
     const width = right - left, height = bottom - top;
@@ -4684,7 +4948,7 @@ window.DesktopWorkbench = (() => {
 
   function install() { if (!desktop.matches) { moveComposer(false); navCollapse?.remove(); navCollapse = null; navFocus?.remove(); navFocus = null; navHall?.remove(); navHall = null; modeSwitch?.remove(); modeSwitch = null; document.body.classList.remove('desktop-nav-collapsed'); if (root) { root.hidden = focus.hidden = feedback.hidden = true; document.body.classList.remove('desktop-workbench', 'desktop-focus-view'); office.querySelector('.office-stage').inert = false; office.querySelector('.market-wall')?.removeAttribute('inert'); clearTimeout(expiry); expiresAt = 0; statusParent.insertBefore($('task-status'), statusNext); $('analysis-composer').classList.remove('desktop-history-open'); inspectorTitle.textContent = originalTitle; document.querySelectorAll('.nav [aria-current]').forEach(button => button.removeAttribute('aria-current')); window.AnalysisInput.layout(); } return; } if (!root) { root = document.createElement('section'); root.id = 'desktop-workflow'; root.setAttribute('aria-label', '分析流程'); root.innerHTML = `<div class="desktop-workflow-heading"><div><h1 id="desktop-title"></h1><p id="desktop-subtitle"></p></div></div><div class="desktop-workflow-actions"><button type="button" id="desktop-model"><span class="desktop-step">1 · 模型</span><strong id="desktop-model-value"></strong></button><button type="button" id="desktop-data"><span class="desktop-step">2 · 资料</span><strong id="desktop-data-value"></strong></button><button type="button" id="desktop-result"><span class="desktop-step">3 · 结果</span><strong id="desktop-result-value"></strong></button></div>`; focus = document.createElement('section'); focus.id = 'desktop-focus'; focus.setAttribute('aria-label', '可编辑分析工作流'); focus.innerHTML = `<div class="desktop-focus-intro"><p class="eyebrow">本轮分析工作流</p><h2 id="desktop-focus-title"></h2><p id="desktop-focus-copy"></p><div class="desktop-focus-actions"><button type="button" id="desktop-focus-data" class="btn primary">填写 / 修改资料</button><button type="button" id="desktop-sample" class="btn">准备离线示例</button></div><p class="hint desktop-sample-note">离线示例会将默认模型设为 Mock 并填入 synthetic 资料，准备后仍需手动发送。</p></div><div class="desktop-flow-toolbar"><div class="desktop-flow-toolbar-status"><strong>可视化流程</strong><span id="desktop-workflow-message" role="status" aria-live="polite">选择节点查看详情。</span></div><div class="desktop-flow-toolbar-actions"><span id="desktop-workflow-validation"></span><button type="button" data-workflow-action="add">新增节点</button><button type="button" data-workflow-action="undo" id="desktop-workflow-undo">撤销</button><button type="button" data-workflow-action="save" id="desktop-workflow-save">保存流程</button><button type="button" data-workflow-action="restore">恢复默认</button><button type="button" data-workflow-action="import">导入</button><button type="button" data-workflow-action="export">导出</button><div class="desktop-flow-viewport-tools" role="group" aria-label="画布视图控制"><button type="button" data-viewport-action="zoom-out" aria-label="缩小画布">−</button><span id="desktop-workflow-zoom">72%</span><button type="button" data-viewport-action="zoom-in" aria-label="放大画布">+</button><button type="button" data-viewport-action="fit" aria-label="适配画布">适配</button></div><input id="desktop-workflow-file" type="file" accept="application/json,.json" hidden></div></div><div class="desktop-flow-layout"><div class="desktop-flow-canvas" id="desktop-workflow-canvas" role="application" aria-label="分析工作流画布"><svg id="desktop-workflow-edges" aria-label="工作流连线"><defs><marker id="desktop-flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/></marker></defs><g id="desktop-workflow-edge-paths"></g></svg><div class="desktop-flow-surface" id="desktop-workflow-surface"><div id="desktop-workflow-nodes"></div></div></div><aside class="desktop-flow-inspector" id="desktop-workflow-inspector" aria-label="节点详情"></aside></div><dl class="desktop-summary"><div><dt>分析模型</dt><dd id="desktop-summary-model"></dd></div><div><dt>预测周期</dt><dd id="desktop-summary-prediction"></dd></div><div><dt>客观事实</dt><dd id="desktop-summary-facts"></dd></div><div><dt>本轮通知</dt><dd id="desktop-summary-mail"></dd></div></dl>`; const intro = focus.querySelector('.desktop-focus-intro'); if (intro) intro.hidden = true; const focusData = focus.querySelector('#desktop-focus-data'); if (focusData) focus.querySelector('.desktop-flow-toolbar')?.prepend(focusData); const summary = focus.querySelector('.desktop-summary'); if (summary) summary.hidden = true; feedback = document.createElement('div'); feedback.id = 'desktop-feedback'; feedback.innerHTML = '<span id="desktop-feedback-text" role="status" aria-live="polite"></span><button type="button" id="desktop-feedback-action"></button><button type="button" id="desktop-history" aria-controls="conversation-thread" aria-expanded="false" hidden></button>'; office.prepend(root, focus); modeSwitch = document.createElement('div'); modeSwitch.className = 'desktop-mode-switch'; modeSwitch.setAttribute('role', 'group'); modeSwitch.setAttribute('aria-label', '界面模式'); for (const [value, text] of [['hall', '普通'], ['focus', '专业']]) { const node = document.createElement('button'); node.type = 'button'; node.textContent = text; node.dataset.desktopMode = value; node.onclick = () => setMode(value); modeSwitch.append(node); } document.querySelector('.nav')?.append(modeSwitch); if (!focus.querySelector('.desktop-flow-palette')) { const palette = document.createElement('aside'); palette.className = 'desktop-flow-palette'; palette.setAttribute('aria-label', '节点库'); const heading = document.createElement('p'); heading.className = 'eyebrow'; heading.textContent = '节点库'; palette.append(heading); for (const [type, [label]] of Object.entries(TYPE_DEFAULTS)) { const item = document.createElement('button'); item.type = 'button'; item.dataset.nodeType = type; item.title = `添加${label}节点`; const dot = document.createElement('i'); dot.setAttribute('aria-hidden', 'true'); dot.style.background = TYPE_COLOR[type] || TYPE_COLOR.custom; item.append(dot, document.createTextNode(label)); item.onclick = () => type === 'trained' ? addTrainedNode() : addNode(type); palette.append(item); } focus.querySelector('.desktop-flow-layout')?.prepend(palette); } navCollapse = document.createElement('button'); navCollapse.type = 'button'; navCollapse.className = 'desktop-nav-collapse'; navCollapse.onclick = () => setNavCollapsed(!document.body.classList.contains('desktop-nav-collapsed')); document.querySelector('.topbar')?.insertBefore(navCollapse, document.querySelector('.nav')); installNavIcons(); setNavCollapsed(navCollapsed()); $('analysis-composer').prepend(feedback); $('desktop-data').onclick = $('desktop-focus-data').onclick = openData; $('desktop-model').onclick = chooseModel; $('desktop-result').onclick = openResult; $('desktop-sample').onclick = sample; $('desktop-history').onclick = () => historyPanel(!$('analysis-composer').classList.contains('desktop-history-open')); root.querySelectorAll('[data-desktop-mode]').forEach(button => { button.onclick = () => setMode(button.dataset.desktopMode); }); focus.querySelectorAll('[data-workflow-action]').forEach(button => { button.onclick = () => ({add: addNode, undo, save: saveWorkflow, restore: restoreDefault, import: () => $('desktop-workflow-file').click(), export: exportWorkflow}[button.dataset.workflowAction])(); }); focus.querySelectorAll('[data-viewport-action]').forEach(button => { button.onclick = () => button.dataset.viewportAction === 'fit' ? fitCanvas() : canvasZoomBy(button.dataset.viewportAction === 'zoom-in' ? 1.15 : 1 / 1.15); }); installCanvasInteractions(); workflowControls(); $('desktop-workflow-file').addEventListener('change', importWorkflow); $('report-close').addEventListener('click', returnFocus); new MutationObserver(() => historyPanel()).observe($('conversation-turns'), {childList: true}); document.addEventListener('pointerdown', event => { if (desktop.matches && !$('analysis-composer').contains(event.target)) historyPanel(false); }); document.addEventListener('keydown', event => { if (window.DesktopInteractions?.active?.()) return; if (desktop.matches && event.key === 'Escape' && $('analysis-composer').classList.contains('desktop-history-open')) { event.preventDefault(); event.stopImmediatePropagation(); historyPanel(false); $('desktop-history').focus(); } }, true); $('task-form').addEventListener('submit', () => historyPanel(false));  const toolbar = focus.querySelector('.desktop-flow-toolbar'); const resize = new ResizeObserver(() => { if (!desktop.matches) return; focus.style.setProperty('--desktop-flow-toolbar-height', toolbar.offsetHeight + 'px'); const height = root.offsetHeight + 'px'; if (office.style.getPropertyValue('--desktop-workflow-height') !== height) { office.style.setProperty('--desktop-workflow-height', height); document.documentElement.style.setProperty('--desktop-workflow-height', height); window.AnalysisInput.layout(); } renderEdges(); }); resize.observe(root); resize.observe(toolbar); window.addEventListener('beforeunload', event => { if (dirty) { event.preventDefault(); event.returnValue = ''; } }); document.addEventListener('click', event => { const target = event.target.closest?.('.nav [data-view], #new-analysis'); if (target && dirty && target.dataset.view !== 'analysis' && !confirm('当前工作流尚未保存，离开后编辑内容会保留在本机草稿中。继续吗？')) { event.preventDefault(); event.stopImmediatePropagation(); } }, true); } root.hidden = focus.hidden = feedback.hidden = false; if (navFocus) { navFocus.hidden = document.body.dataset.view !== 'analysis'; navFocus.setAttribute('aria-pressed', String(mode === 'focus')); } if (navHall) { navHall.hidden = document.body.dataset.view !== 'analysis'; navHall.setAttribute('aria-pressed', String(mode === 'hall')); } $('analysis-pane-progress').prepend($('task-status')); document.body.classList.add('desktop-workbench'); setMode(mode); panel(pane); update(); }
   desktop.addEventListener('change', install); new MutationObserver(update).observe(document.body, {attributes: true, attributeFilter: ['data-view']}); document.addEventListener('visibilitychange', () => { if (!document.hidden) update(); }); window.addEventListener('focus', update); install();
-  return {update, panel, setMode, addBuiltinTool, workflowPayload, acceptWorkflow, explainError, mode: () => mode, observeProgressTask(value) {task=value;deriveRuntime(task);}, observe(value) { task = value; update(); }, event: applyEvent, connectionLost(value) { disconnected = value; update(); }, selectionState() { update(); }, reset() { task = null; archived=null; archivedEvents=[]; workSurface='edit'; if(focus)updateWorkspaceTabs(); disconnected = false; runtime.taskId = null; runtime.events=[]; runtime.states.clear(); runtime.details.clear(); update(); }};
+  return {update, panel, setMode, addBuiltinTool, useRenderer, workflowPayload, acceptWorkflow, explainError, mode: () => mode, observeProgressTask(value) {task=value;deriveRuntime(task);}, observe(value) { task = value; update(); }, event: applyEvent, connectionLost(value) { disconnected = value; update(); }, selectionState() { update(); }, reset() { task = null; archived=null; archivedEvents=[]; workSurface='edit'; if(focus)updateWorkspaceTabs(); disconnected = false; runtime.taskId = null; runtime.events=[]; runtime.states.clear(); runtime.details.clear(); update(); }};
 })();
 
 /* Desktop reading layer over the original report. No new report generation. */

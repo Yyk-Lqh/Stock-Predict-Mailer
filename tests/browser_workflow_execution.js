@@ -43,7 +43,7 @@
     assert(defaultEvents.some(e=>e.step==='report'&&e.status==='completed'),'Report did not produce a completion event');
     assert(!defaultEvents.some(e=>e.step==='mail'),'Unrequested email ran');
 
-    button('编辑').click();button('复制系统模板').click();
+    button('编辑').click();document.querySelector('.workflow-file-menu summary').click();button('复制系统模板').click();
     const first=await run();
     const original=await events(first);
     assert(original.some(e=>e.step==='report'&&e.kind==='branch'&&e.selected.join() === 'charts'),'Baseline report did not consume charts');

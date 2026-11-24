@@ -6,6 +6,8 @@
   assert(innerWidth===900 && checkpoint,'Narrow desktop fixture state is missing');
   const entry=document.querySelector('[data-workflow-node=prediction]');
   assert(parseFloat(entry?.style.left)===checkpoint.position,'Unsaved keyboard movement did not survive reload');
+  const library=document.getElementById('workflow-library-toggle');
+  if(library.getAttribute('aria-expanded')==='false')library.click();
   assert(document.querySelector('.desktop-flow-palette input').getClientRects().length,'Node search not visible');
   const file=document.getElementById('desktop-workflow-file'), transfer=new DataTransfer();
   const old={version:1,nodes:[

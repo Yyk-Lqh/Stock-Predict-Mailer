@@ -219,6 +219,7 @@ window.Workbench = (() => {
       const host = $('inspector-actions');
       host.replaceChildren();
       if (result) {
+        if (result.analysis?.report_renderer) host.append(action('预览渲染页面', () => previewPage(value.id)));
         host.append(action('下载 HTML 报告', () => download('report', 'html')), action('下载分析 JSON', () => download('analysis', 'json')));
         if (result.knowledge) host.append(action('查看知识证据', () => window.KnowledgeUI.evidence(result.knowledge)));
         host.append(action('刷新投递状态', async () => {
@@ -232,6 +233,20 @@ window.Workbench = (() => {
         }));
       }
     }
+  }
+  async function previewPage(id) {
+    const key=memoryKey;
+    const response=await fetch(`/api/tasks/${id}/report`,{headers:{'X-Memory-Key':key}});
+    if(!response.ok)throw new Error('无法读取本次渲染页面。');
+    const html=await response.text();
+    if(displayed?.id!==id||memoryKey!==key||document.querySelector('.report-page-preview[open]'))return;
+    const dialog=document.createElement('dialog');dialog.className='plugin-dialog report-page-preview';
+    dialog.setAttribute('aria-label','渲染页面预览');
+    const frame=document.createElement('iframe');frame.title='渲染页面';frame.setAttribute('sandbox','');
+    frame.srcdoc=html.replace(/<style>[\s\S]*?<\/style>/,'<link rel="stylesheet" href="/style.css">');
+    const close=action('关闭预览',()=>dialog.close());
+    dialog.append(close,frame);dialog.addEventListener('close',()=>dialog.remove(),{once:true});
+    document.body.append(dialog);dialog.showModal();
   }
   async function download(kind, extension) {
     const response = await fetch(`/api/tasks/${displayed.id}/${kind}`, {headers: {'X-Memory-Key': memoryKey}});

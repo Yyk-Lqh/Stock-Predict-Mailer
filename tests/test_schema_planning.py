@@ -142,9 +142,10 @@ class SchemaTests(unittest.TestCase):
             con.execute("INSERT INTO chunk_fts(terms) VALUES ('CONFIDENTIAL-TEXT')")
         before = self.files()
         value = self.plan("knowledge")
-        self.assertEqual(value["changes"], 7, value)
+        self.assertEqual(value["changes"], 8, value)
         operations = {item["id"]: item for item in value["databases"][0]["operations"]}
         self.assertIn("knowledge.profile", operations)
+        self.assertEqual(operations["knowledge.recall.initialize"]["data_effect"], "creates_empty_recall_history")
         self.assertNotIn("CONFIDENTIAL", json.dumps(value))
         self.assertTrue(self.rehearse("knowledge")["rehearsal"][0]["target_verified"])
         self.assertEqual(self.files(), before)
@@ -154,7 +155,7 @@ class SchemaTests(unittest.TestCase):
 
     def test_supported_partial_knowledge_additions(self):
         self.create("knowledge", "knowledge.core", additions=["knowledge.extraction"])
-        self.assertEqual(self.plan("knowledge")["changes"], 6)
+        self.assertEqual(self.plan("knowledge")["changes"], 7)
         self.assertTrue(self.rehearse("knowledge")["rehearsal"][0]["target_verified"])
 
     def test_new_knowledge_workers_and_owner_map_are_recognized(self):
@@ -162,8 +163,9 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(self.plan("control")["state"], "current")
         self.create("knowledge", "knowledge.core")
         value = self.plan("knowledge")
-        self.assertEqual(value["changes"], 1)
-        self.assertEqual(value["databases"][0]["operations"][0]["id"], "knowledge.workers.initialize")
+        self.assertEqual(value["changes"], 2)
+        self.assertEqual([item["id"] for item in value["databases"][0]["operations"]],
+                         ["knowledge.workers.initialize", "knowledge.recall.initialize"])
         before = self.files()
         self.rehearse("knowledge")
         self.assertEqual(self.files(), before)

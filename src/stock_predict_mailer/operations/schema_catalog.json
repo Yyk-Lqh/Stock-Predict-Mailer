@@ -95,7 +95,7 @@
     },
     "knowledge.core": {
       "source": "stock_predict_mailer/private_knowledge/service.py",
-      "source_id": "6c06f9bda1b1634b72bffff2b6ad71c60bb2671b77b56590ed6a6fdb169ea936",
+      "source_id": "a630ddc3c71e42bc0540432d64c8bd6c3c2dc231aae692cc72979a73af3d7590",
       "ddl": [
         "CREATE TABLE IF NOT EXISTS owners (owner TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0, config BLOB);",
         "CREATE TABLE IF NOT EXISTS documents (\n                    id TEXT PRIMARY KEY, owner TEXT NOT NULL, logical TEXT NOT NULL, filename TEXT NOT NULL,\n                    hash TEXT NOT NULL, metadata TEXT NOT NULL, uploaded TEXT NOT NULL,\n                    status TEXT NOT NULL, step TEXT NOT NULL, error TEXT, parsed TEXT, draft TEXT,\n                    active INTEGER NOT NULL DEFAULT 0, UNIQUE(owner,logical,hash,metadata));",
@@ -162,13 +162,25 @@
     },
     "knowledge.workers": {
       "source": "stock_predict_mailer/private_knowledge/service.py",
-      "source_id": "6c06f9bda1b1634b72bffff2b6ad71c60bb2671b77b56590ed6a6fdb169ea936",
+      "source_id": "a630ddc3c71e42bc0540432d64c8bd6c3c2dc231aae692cc72979a73af3d7590",
       "ddl": [
         "CREATE TABLE IF NOT EXISTS workers (id TEXT PRIMARY KEY, host TEXT NOT NULL, pid INTEGER NOT NULL,\n                    started TEXT NOT NULL, beat TEXT NOT NULL, state TEXT NOT NULL, current TEXT,\n                    processed INTEGER NOT NULL DEFAULT 0);"
       ],
       "additions": [],
       "initialize_when_absent": true,
       "target_revision": "1"
+    },
+    "knowledge.recall": {
+      "source": "stock_predict_mailer/private_knowledge/service.py",
+      "source_id": "a630ddc3c71e42bc0540432d64c8bd6c3c2dc231aae692cc72979a73af3d7590",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS recall_history (id INTEGER PRIMARY KEY, owner TEXT NOT NULL,\n                    at TEXT NOT NULL, body BLOB NOT NULL);",
+        "CREATE INDEX IF NOT EXISTS recall_owner ON recall_history(owner,id DESC);"
+      ],
+      "additions": [],
+      "initialize_when_absent": true,
+      "target_revision": "1",
+      "initialize_data_effect": "creates_empty_recall_history"
     },
     "crawler.jobs": {
       "source": "mcp_server/jobs.py",
@@ -368,7 +380,8 @@
       ],
       "groups": [
         "knowledge.core",
-        "knowledge.workers"
+        "knowledge.workers",
+        "knowledge.recall"
       ]
     },
     "crawler": {

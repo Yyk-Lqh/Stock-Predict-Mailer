@@ -424,6 +424,40 @@ class EmbeddingTests(unittest.TestCase):
 
 
 class HTTPTests(unittest.TestCase):
+    def test_recall_settings_and_history_are_owner_scoped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server = make_server(Path(tmp), 0, Fernet.generate_key())
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                with httpx.Client(base_url=f"http://127.0.0.1:{server.server_port}", trust_env=False) as client:
+                    client.get("/")
+                    client.headers["X-CSRF-Token"] = client.get("/api/session").json()["csrf_token"]
+                    profile_path, history_path = "/api/knowledge/profile", "/api/knowledge/recall-history"
+                    original = client.get(profile_path).json()
+                    self.assertEqual(original["top_k"], 8)
+                    profile = {**original, "name": "研究资料", "icon": "research", "top_k": 1, "retrieval": "lexical"}
+                    self.assertEqual(client.put(profile_path, json=profile).json(), profile)
+                    self.assertEqual(client.put(profile_path, json={**profile, "top_k": 21}).status_code, 400)
+                    self.assertEqual(client.get(profile_path).json(), profile)
+                    query = {"query": "synthetic recall query", "as_of": "2026-11-01"}
+                    res = client.post("/api/knowledge/search", json={**query, "record": True}).json()
+                    self.assertEqual((res["limit"], res["retrieval_mode"]), (1, "lexical"))
+                    client.post("/api/knowledge/search", json={"query": "ordinary search"})
+                    rows = client.get(history_path).json()
+                    self.assertEqual(rows["total"], 1)
+                    self.assertEqual(rows["items"][0]["filters"], {**query, "limit": 1, "retrieval": "lexical"})
+                    self.assertEqual(rows["items"][0]["hits"], 0)
+                    self.assertEqual(client.get(history_path + "?page=2").json()["items"], [])
+                    self.assertEqual(client.get(history_path + "?page=0").status_code, 400)
+                    self.assertNotIn(b"synthetic recall query", (Path(tmp) / "private-knowledge" / "knowledge.sqlite3").read_bytes())
+                    key = client.post("/api/memory/access", json={}).json()["key"]
+                    private = {"X-Knowledge-Scope": "private", "X-Memory-Key": key}
+                    self.assertEqual(client.get(profile_path, headers=private).json(), original)
+                    self.assertEqual(client.get(history_path, headers=private).json()["items"], [])
+            finally:
+                server.shutdown()
+                server.server_close()
+
     def test_local_knowledge_needs_no_access_key_and_can_feed_analysis(self):
         with tempfile.TemporaryDirectory() as tmp:
             server = make_server(Path(tmp), 0, Fernet.generate_key())

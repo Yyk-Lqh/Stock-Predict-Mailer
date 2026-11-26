@@ -113,6 +113,7 @@ def entity_anchors(query, entity, stock_code, registry, stocks):
 STATES = ("pending", "processing", "ready", "review", "failed", "rejected", "deleting")
 PROFILE = {"name": "预测资料库", "description": "", "icon": "library", "top_k": 8, "retrieval": "auto"}
 RETRIEVAL_MODES = ("auto", "lexical")
+RECALL_HISTORY_LIMIT = 100
 # A worker beats at least every ten seconds while idle; ninety seconds of silence
 # means it is gone and the queue is stalled, not merely busy with a large file.
 WORKER_STALE = 90
@@ -159,6 +160,9 @@ class Knowledge:
                 CREATE TABLE IF NOT EXISTS workers (id TEXT PRIMARY KEY, host TEXT NOT NULL, pid INTEGER NOT NULL,
                     started TEXT NOT NULL, beat TEXT NOT NULL, state TEXT NOT NULL, current TEXT,
                     processed INTEGER NOT NULL DEFAULT 0);
+                CREATE TABLE IF NOT EXISTS recall_history (id INTEGER PRIMARY KEY, owner TEXT NOT NULL,
+                    at TEXT NOT NULL, body BLOB NOT NULL);
+                CREATE INDEX IF NOT EXISTS recall_owner ON recall_history(owner,id DESC);
             """)
             con.execute("BEGIN IMMEDIATE")
             for table, additions in {"owners": {"cleaner_config": "BLOB", "profile": "BLOB"},
@@ -213,6 +217,31 @@ class Knowledge:
             profile = {**raw, "name": name.strip(), "description": description.strip()}
             con.execute("UPDATE owners SET profile=? WHERE owner=?", (self.seal(profile), owner))
             return profile
+
+    def recall_history(self, owner, page):
+        if type(page) is not int or not 1 <= page <= (RECALL_HISTORY_LIMIT + 9) // 10:
+            raise ServiceError("INVALID_INPUT", "召回记录页码无效")
+        self.ensure(owner)
+        with self.db() as con:
+            con.execute("BEGIN")
+            total = con.execute("SELECT COUNT(*) FROM recall_history WHERE owner=?", (owner,)).fetchone()[0]
+            rows = con.execute("SELECT at,body FROM recall_history WHERE owner=? ORDER BY id DESC LIMIT 10 OFFSET ?",
+                               (owner, (page - 1) * 10)).fetchall()
+        return {"items": [{"at": row["at"], **self.opened(row["body"])} for row in rows],
+                "total": total, "page": page, "page_size": 10}
+
+    def recall(self, owner, **filters):
+        profile = self.profile(owner)
+        options = {"limit": profile["top_k"], "retrieval": profile["retrieval"], **filters}
+        result = self.search(owner, **options)
+        entry = {"filters": {**options, "as_of": result["as_of"]}, "hits": len(result["results"])}
+        with self.db() as con:
+            con.execute("INSERT INTO recall_history(owner,at,body) VALUES (?,?,?)",
+                        (owner, utcnow().isoformat(), self.seal(entry)))
+            con.execute("""DELETE FROM recall_history WHERE owner=? AND id IN
+                        (SELECT id FROM recall_history WHERE owner=? ORDER BY id DESC LIMIT -1 OFFSET ?)""",
+                        (owner, owner, RECALL_HISTORY_LIMIT))
+        return result
 
     def config(self, owner, raw=None):
         self.ensure(owner)

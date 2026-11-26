@@ -124,8 +124,10 @@ def classify(con, family):
                 record["issues"].append({"code": "REQUIRED_GROUP_MISSING", "feature": name})
             elif group["initialize_when_absent"]:
                 feature["state"] = "upgrade_available"
+                effect = group.get("initialize_data_effect", "creates_empty_binding_tables_without_deriving_history"
+                                   if name == "mail.bindings" else "creates_empty_worker_status_table")
                 record["operations"].append({"id": name + ".initialize", "feature": name, "statements": list(group["ddl"]),
-                    "data_effect": "creates_empty_binding_tables_without_deriving_history" if name == "mail.bindings" else "creates_empty_worker_status_table",
+                    "data_effect": effect,
                     "requires_permission_review": False})
             continue
         present_adds, missing_adds = [], []

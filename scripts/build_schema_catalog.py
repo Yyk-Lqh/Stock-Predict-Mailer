@@ -86,6 +86,8 @@ def build():
     ])
     groups["knowledge.core"]["target_revision"] = "3"
     group("knowledge.workers", "stock_predict_mailer/private_knowledge/service.py", objects={"workers"}, initialize=True)
+    group("knowledge.recall", "stock_predict_mailer/private_knowledge/service.py", objects={"recall_history", "recall_owner"}, initialize=True)
+    groups["knowledge.recall"]["initialize_data_effect"] = "creates_empty_recall_history"
     group("crawler.jobs", "mcp_server/jobs.py")
     group("legacy.runs", "stock_predict_mailer/core.py")
     group("legacy.outbox", "stock_predict_mailer/delivery.py")
@@ -109,7 +111,7 @@ def build():
             "stores": {
                 "mail": {"required": ["mail.core"], "groups": ["mail.core", "mail.bindings", "mail.archive"]},
                 "control": {"required": ["control.base"], "groups": ["control.base", "control.memory", "control.receipts", "control.knowledge_owners"]},
-                "knowledge": {"required": ["knowledge.core"], "groups": ["knowledge.core", "knowledge.workers"]},
+                "knowledge": {"required": ["knowledge.core"], "groups": ["knowledge.core", "knowledge.workers", "knowledge.recall"]},
                 "crawler": {"required": ["crawler.jobs"], "groups": ["crawler.jobs"]},
                 "legacy": {"required": ["legacy.runs"], "groups": [name for name in groups if name.startswith("legacy.")]}}}
 

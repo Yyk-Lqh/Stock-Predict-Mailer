@@ -286,6 +286,16 @@ def make_server(root, port=8767, master_key=None, market=None):
                         self.output(kb.test_cleaner(owner))
                     elif route == ["profile"] and method in ("GET", "PUT"):
                         self.output(kb.profile(owner, self.body() if method == "PUT" else None))
+                    elif route == ["recall-history"] and method == "GET":
+                        params = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                        pages = params.get("page", ["1"])
+                        if set(params) - {"page"} or len(pages) != 1:
+                            raise ServiceError("INVALID_INPUT", "召回记录只接受单个页码")
+                        try:
+                            page = int(pages[0])
+                        except ValueError:
+                            raise ServiceError("INVALID_INPUT", "页码须为整数") from None
+                        self.output(kb.recall_history(owner, page))
                     elif route == ["test"] and method == "POST":
                         self.output(kb.test(owner))
                     elif route == ["indexes"] and method == "GET":
@@ -294,10 +304,12 @@ def make_server(root, port=8767, master_key=None, market=None):
                         self.output(kb.rebuild(owner))
                     elif route in (["search"], ["answer"]) and method == "POST":
                         data = self.body()
-                        allowed = {"query", "as_of", "start_date", "stock_code", "entity", "limit"}
-                        if set(data) - allowed or "query" not in data:
+                        record = data.pop("record", False) if route == ["search"] else False
+                        allowed = {"query", "as_of", "start_date", "stock_code", "entity", "limit", "retrieval"}
+                        if set(data) - allowed or "query" not in data or type(record) is not bool:
                             raise ServiceError("INVALID_INPUT", "检索参数无效")
-                        self.output((kb.answer if route == ["answer"] else kb.search)(owner, **data))
+                        operation = kb.answer if route == ["answer"] else kb.recall if record else kb.search
+                        self.output(operation(owner, **data))
                     elif len(route) == 2 and route[0] == "citations" and method == "GET":
                         self.output(kb.citation(owner, route[1]))
                     elif len(route) >= 2 and route[0] == "documents":

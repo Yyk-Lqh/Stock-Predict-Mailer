@@ -6,10 +6,11 @@
    system preference is re-read only while the stored choice is 跟随系统. */
 const THEME_KEY = 'stock_predict_mailer.console.theme';
 const THEME_MODES = ['light', 'dark', 'system'];
+const DEFAULT_THEME = 'light';
 const THEME_LABELS = {light: '浅色', dark: '深色'};
 const SYSTEM_THEME = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 const THEME_MOTION = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
-let themeMode = 'dark';
+let themeMode = DEFAULT_THEME;
 
 function systemTheme() { return SYSTEM_THEME && SYSTEM_THEME.matches ? 'dark' : 'light'; }
 function resolvedTheme() { return themeMode === 'system' ? systemTheme() : themeMode; }
@@ -29,7 +30,7 @@ function syncThemeButton(theme) {
 
 function applyTheme(mode, options) {
   const {persist = false, announce = false} = options || {};
-  themeMode = THEME_MODES.includes(mode) ? mode : 'dark';
+  themeMode = THEME_MODES.includes(mode) ? mode : DEFAULT_THEME;
   const theme = resolvedTheme();
   const root = document.documentElement;
   root.dataset.theme = theme;
@@ -89,7 +90,7 @@ document.querySelectorAll('[data-theme-choice]').forEach(choice => {
   if (choice.tagName === 'INPUT') choice.addEventListener('change', pick);
   else choice.addEventListener('click', pick);
 });
-try { applyTheme(localStorage.getItem(THEME_KEY)); } catch (_) { applyTheme('dark'); }
+try { applyTheme(localStorage.getItem(THEME_KEY)); } catch (_) { applyTheme(DEFAULT_THEME); }
 /* Follow the OS only while the user asked us to; an explicit choice wins. */
 const followSystem = () => { if (themeMode === 'system') applyTheme('system', {announce: true}); };
 if (SYSTEM_THEME) {

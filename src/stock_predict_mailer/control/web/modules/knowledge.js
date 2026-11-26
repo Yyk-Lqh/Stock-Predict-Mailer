@@ -75,7 +75,7 @@ window.KnowledgeUI = (() => {
     </div>`;
   const knowledgeCreate = document.createElement('div');
   knowledgeCreate.className = 'knowledge-dify-main knowledge-create-main'; knowledgeCreate.hidden = true;
-  knowledgeCreate.innerHTML = '<div class="knowledge-step-head"><button type="button" class="btn" data-knowledge-back>← 知识库</button><div class="knowledge-steps"><strong>上传文档</strong></div></div><div class="knowledge-create-body"><h1>选择数据源</h1><div class="knowledge-source-options"><button type="button" class="selected" data-knowledge-source="upload">▤ 导入已有文本</button><button type="button" data-knowledge-source="notion">▣ 同步自 Notion 内容</button><button type="button" data-knowledge-source="web">◉ 同步自 Web 站点</button></div><h2>上传文本文件</h2><div class="knowledge-dropzone">☁&nbsp; <button type="button" id="knowledge-upload-from-create">选择文件</button><input id="knowledge-create-file" type="file" accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.json" multiple hidden><p>选择后会直接上传到当前知识库。支持 PDF、DOCX、TXT、Markdown、CSV、XLSX、JSON，每次最多 5 个文件，每个不超过 10 MiB。</p><p id="knowledge-create-status" class="hint" aria-live="polite"></p></div><button type="button" class="btn primary knowledge-next-upload" id="knowledge-next-upload">选择文件并上传</button></div>';
+  knowledgeCreate.innerHTML = '<div class="knowledge-step-head"><button type="button" class="btn" data-knowledge-back>← 知识库</button><div class="knowledge-steps"><strong>上传文档</strong></div></div><div class="knowledge-create-body"><h1>选择数据源</h1><div class="knowledge-source-options"><button type="button" class="selected" data-knowledge-source="upload">▤ 导入已有文本</button><button type="button" data-knowledge-source="notion">▣ 同步自 Notion 内容</button><button type="button" data-knowledge-source="web">◉ 同步自 Web 站点</button></div><h2>上传文本文件</h2><div class="knowledge-dropzone">☁&nbsp; 拖拽文件到此处，或 <button type="button" id="knowledge-upload-from-create">选择文件</button><input id="knowledge-create-file" type="file" accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.json" multiple hidden><p>选择后会直接上传到当前知识库。支持 PDF、DOCX、TXT、Markdown、CSV、XLSX、JSON，每次最多 5 个文件，每个不超过 10 MiB。</p><p id="knowledge-create-status" class="hint" aria-live="polite"></p></div><button type="button" class="btn primary knowledge-next-upload" id="knowledge-next-upload">选择文件并上传</button></div>';
   const knowledgeConnect = document.createElement('div');
   knowledgeConnect.className = 'knowledge-dify-main knowledge-connect-main'; knowledgeConnect.hidden = true;
   knowledgeConnect.innerHTML = '<div class="knowledge-connect-layout"><form id="knowledge-external-form" class="knowledge-connect-form"><button type="button" class="btn" data-knowledge-back>← 返回知识库</button><h1>连接外部知识库</h1><p class="lede">通过 API 和知识库 ID 连接外部知识库。目前仅支持检索功能。</p><label class="field"><span>外部知识库名称</span><input id="knowledge-external-name" placeholder="请输入外部知识库名称"></label><label class="field"><span>知识库描述</span><textarea id="knowledge-external-description" rows="3" placeholder="描述知识库内容（可选）"></textarea></label><label class="field"><span>外部知识库 API</span><input id="knowledge-external-api" placeholder="点击此处创建或选择 API"></label><label class="field"><span>外部知识库 ID</span><input id="knowledge-external-id" placeholder="请输入外部知识库 ID"></label><div class="knowledge-connect-actions"><button type="button" class="btn" data-knowledge-back>取消</button><button type="submit" class="btn primary">连接 →</button></div></form><aside class="knowledge-connect-help"><div class="knowledge-sidebar-icon">▣</div><h2>如何连接外部知识库</h2><p>需要先创建一个外部 API，再填写对应的知识库 ID。连接后可以直接进入召回测试。</p><a href="#knowledge" data-knowledge-help>了解更多</a></aside></div>';
@@ -198,6 +198,19 @@ window.KnowledgeUI = (() => {
     input.value = '';
     await uploadCreateFiles(files);
   });
+  const dropzone = knowledgeCreate.querySelector('.knowledge-dropzone');
+  const setDragState = active => dropzone.classList.toggle('is-dragging', active);
+  dropzone.addEventListener('dragenter', event => { event.preventDefault(); setDragState(true); });
+  dropzone.addEventListener('dragover', event => { event.preventDefault(); setDragState(true); });
+  dropzone.addEventListener('dragleave', event => { event.preventDefault(); if (!dropzone.contains(event.relatedTarget)) setDragState(false); });
+  dropzone.addEventListener('drop', safe(async event => {
+    event.preventDefault(); setDragState(false);
+    if ([...event.dataTransfer.items].some(item => item.webkitGetAsEntry?.()?.isDirectory)) {
+      $('knowledge-create-status').textContent = '请打开文件夹并拖入其中的文件。';
+      return;
+    }
+    await uploadCreateFiles([...event.dataTransfer.files]);
+  }));
   $('knowledge-external-form').onsubmit = event => {
     event.preventDefault();
     notice('外部知识库连接暂未接入。', true);

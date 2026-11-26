@@ -2154,3 +2154,4 @@ body.dify-knowledge-view .nav button.new-analysis{color:#fff}
   .knowledge-sidebar-actions{display:flex;flex-wrap:wrap}
   .knowledge-sidebar-card,.knowledge-sidebar-foot{display:none}
 }
+.knowledge-dropzone.is-dragging{border-color:#155eef;background:#eef4ff;color:#155eef;box-shadow:0 0 0 2px #cfe0ff}

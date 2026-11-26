@@ -82,7 +82,9 @@ def build():
         addition("knowledge.review", "documents", "review", "TEXT"),
         addition("knowledge.origin", "relations", "origin", "TEXT NOT NULL DEFAULT 'structured'"),
         addition("knowledge.claim_id", "relations", "claim_id", "TEXT"),
+        addition("knowledge.profile", "owners", "profile", "BLOB"),
     ])
+    groups["knowledge.core"]["target_revision"] = "3"
     group("knowledge.workers", "stock_predict_mailer/private_knowledge/service.py", objects={"workers"}, initialize=True)
     group("crawler.jobs", "mcp_server/jobs.py")
     group("legacy.runs", "stock_predict_mailer/core.py")
@@ -102,7 +104,7 @@ def build():
     version_tree = ast.parse((ROOT / "src/stock_predict_mailer/__init__.py").read_text(encoding="utf-8"))
     version = next(node.value.value for node in version_tree.body if isinstance(node, ast.Assign) and
                    any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets))
-    return {"schema_version": "1", "catalogue_revision": "3", "app_version": version,
+    return {"schema_version": "1", "catalogue_revision": "4", "app_version": version,
             "database_markers": {"application_id": 0x53504D31, "user_version": 1}, "groups": groups,
             "stores": {
                 "mail": {"required": ["mail.core"], "groups": ["mail.core", "mail.bindings", "mail.archive"]},

@@ -111,6 +111,7 @@ def entity_anchors(query, entity, stock_code, registry, stocks):
 
 
 STATES = ("pending", "processing", "ready", "review", "failed", "rejected", "deleting")
+PROFILE = {"name": "预测资料库", "description": "", "icon": "library", "top_k": 8, "retrieval": "auto"}
 RETRIEVAL_MODES = ("auto", "lexical")
 # A worker beats at least every ten seconds while idle; ninety seconds of silence
 # means it is gone and the queue is stalled, not merely busy with a large file.
@@ -160,7 +161,7 @@ class Knowledge:
                     processed INTEGER NOT NULL DEFAULT 0);
             """)
             con.execute("BEGIN IMMEDIATE")
-            for table, additions in {"owners": {"cleaner_config": "BLOB"},
+            for table, additions in {"owners": {"cleaner_config": "BLOB", "profile": "BLOB"},
                                      "documents": {"extraction": "TEXT", "review": "TEXT"},
                                      "relations": {"origin": "TEXT NOT NULL DEFAULT 'structured'", "claim_id": "TEXT"}}.items():
                 columns = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
@@ -193,6 +194,25 @@ class Knowledge:
 
     def opened(self, blob):
         return json.loads(self.store.cipher.decrypt(blob))
+
+    def profile(self, owner, raw=None):
+        self.ensure(owner)
+        with self.db() as con:
+            if raw is None:
+                saved = con.execute("SELECT profile FROM owners WHERE owner=?", (owner,)).fetchone()[0]
+                return {**PROFILE, **(self.opened(saved) if saved else {})}
+            if not isinstance(raw, dict) or set(raw) != set(PROFILE):
+                raise ServiceError("INVALID_INPUT", "请提交完整的知识库设置")
+            name, description, icon, top_k, retrieval = (raw[key] for key in PROFILE)
+            if (not isinstance(name, str) or not 1 <= len(name.strip()) <= 80
+                    or not isinstance(description, str) or len(description) > 500
+                    or icon not in ("library", "reports", "notes", "research")
+                    or type(top_k) is not int or not 1 <= top_k <= 20
+                    or retrieval not in RETRIEVAL_MODES):
+                raise ServiceError("INVALID_INPUT", "知识库设置无效，请检查名称、描述、图标和检索范围")
+            profile = {**raw, "name": name.strip(), "description": description.strip()}
+            con.execute("UPDATE owners SET profile=? WHERE owner=?", (self.seal(profile), owner))
+            return profile
 
     def config(self, owner, raw=None):
         self.ensure(owner)

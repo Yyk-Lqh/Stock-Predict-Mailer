@@ -142,7 +142,9 @@ class SchemaTests(unittest.TestCase):
             con.execute("INSERT INTO chunk_fts(terms) VALUES ('CONFIDENTIAL-TEXT')")
         before = self.files()
         value = self.plan("knowledge")
-        self.assertEqual(value["changes"], 6, value)
+        self.assertEqual(value["changes"], 7, value)
+        operations = {item["id"]: item for item in value["databases"][0]["operations"]}
+        self.assertIn("knowledge.profile", operations)
         self.assertNotIn("CONFIDENTIAL", json.dumps(value))
         self.assertTrue(self.rehearse("knowledge")["rehearsal"][0]["target_verified"])
         self.assertEqual(self.files(), before)
@@ -152,7 +154,7 @@ class SchemaTests(unittest.TestCase):
 
     def test_supported_partial_knowledge_additions(self):
         self.create("knowledge", "knowledge.core", additions=["knowledge.extraction"])
-        self.assertEqual(self.plan("knowledge")["changes"], 5)
+        self.assertEqual(self.plan("knowledge")["changes"], 6)
         self.assertTrue(self.rehearse("knowledge")["rehearsal"][0]["target_verified"])
 
     def test_new_knowledge_workers_and_owner_map_are_recognized(self):

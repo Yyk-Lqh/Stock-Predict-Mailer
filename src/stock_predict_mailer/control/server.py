@@ -284,6 +284,8 @@ def make_server(root, port=8767, master_key=None, market=None):
                         self.output(kb.cleaning_config(owner, self.body() if method == "PUT" else None))
                     elif route == ["cleaner", "test"] and method == "POST":
                         self.output(kb.test_cleaner(owner))
+                    elif route == ["profile"] and method in ("GET", "PUT"):
+                        self.output(kb.profile(owner, self.body() if method == "PUT" else None))
                     elif route == ["test"] and method == "POST":
                         self.output(kb.test(owner))
                     elif route == ["indexes"] and method == "GET":

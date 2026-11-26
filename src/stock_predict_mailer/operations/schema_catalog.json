@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "catalogue_revision": "3",
+  "catalogue_revision": "4",
   "app_version": "0.6.0",
   "database_markers": {
     "application_id": 1397771569,
@@ -95,7 +95,7 @@
     },
     "knowledge.core": {
       "source": "stock_predict_mailer/private_knowledge/service.py",
-      "source_id": "03958d82e49c45cb7778011fa271e548f8db18222271dac29973fdbdef284701",
+      "source_id": "6c06f9bda1b1634b72bffff2b6ad71c60bb2671b77b56590ed6a6fdb169ea936",
       "ddl": [
         "CREATE TABLE IF NOT EXISTS owners (owner TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0, config BLOB);",
         "CREATE TABLE IF NOT EXISTS documents (\n                    id TEXT PRIMARY KEY, owner TEXT NOT NULL, logical TEXT NOT NULL, filename TEXT NOT NULL,\n                    hash TEXT NOT NULL, metadata TEXT NOT NULL, uploaded TEXT NOT NULL,\n                    status TEXT NOT NULL, step TEXT NOT NULL, error TEXT, parsed TEXT, draft TEXT,\n                    active INTEGER NOT NULL DEFAULT 0, UNIQUE(owner,logical,hash,metadata));",
@@ -147,14 +147,22 @@
           "sql": "ALTER TABLE relations ADD COLUMN claim_id TEXT",
           "data_sql": [],
           "data_effect": "adds_defaulted_or_nullable_column"
+        },
+        {
+          "id": "knowledge.profile",
+          "table": "owners",
+          "column": "profile",
+          "sql": "ALTER TABLE owners ADD COLUMN profile BLOB",
+          "data_sql": [],
+          "data_effect": "adds_defaulted_or_nullable_column"
         }
       ],
       "initialize_when_absent": false,
-      "target_revision": "2"
+      "target_revision": "3"
     },
     "knowledge.workers": {
       "source": "stock_predict_mailer/private_knowledge/service.py",
-      "source_id": "03958d82e49c45cb7778011fa271e548f8db18222271dac29973fdbdef284701",
+      "source_id": "6c06f9bda1b1634b72bffff2b6ad71c60bb2671b77b56590ed6a6fdb169ea936",
       "ddl": [
         "CREATE TABLE IF NOT EXISTS workers (id TEXT PRIMARY KEY, host TEXT NOT NULL, pid INTEGER NOT NULL,\n                    started TEXT NOT NULL, beat TEXT NOT NULL, state TEXT NOT NULL, current TEXT,\n                    processed INTEGER NOT NULL DEFAULT 0);"
       ],

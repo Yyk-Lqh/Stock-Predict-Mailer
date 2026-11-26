@@ -87,10 +87,16 @@ window.KnowledgeUI = (() => {
       <button type="button" class="btn primary" id="knowledge-documents-add">＋ 添加文件</button>
     </div>
     <div class="knowledge-documents-toolbar">
+      <select id="knowledge-documents-filter" aria-label="按状态筛选"><option value="">全部状态</option></select>
+      <input type="search" id="knowledge-documents-search" aria-label="搜索已载入的文档" placeholder="搜索文档">
+      <button type="button" class="btn tiny" id="knowledge-documents-sort">上传时间 ↓</button>
       <button type="button" class="btn tiny" id="knowledge-documents-refresh">刷新</button>
     </div>
     <div id="knowledge-documents-list" class="knowledge-documents-list"></div>
     <section id="knowledge-detail" class="knowledge-detail" hidden></section>`;
+  for (const [value, label] of Object.entries(STATE)) {
+    knowledgeDocuments.querySelector('select').append(new Option(label, value));
+  }
   knowledgeLanding.querySelector('.knowledge-catalog-toolbar').prepend(knowledgeContent.querySelector('#knowledge-scope').closest('label'));
   knowledgeLanding.querySelector('.knowledge-catalog-grid').before(knowledgeContent.querySelector('#knowledge-access'));
   const knowledgeHeader = document.createElement('header');
@@ -134,6 +140,8 @@ window.KnowledgeUI = (() => {
   }
   async function openDocuments(id = '') {
     if (surface !== 'documents') {
+      $('knowledge-documents-search').value = '';
+      $('knowledge-documents-filter').value = '';
       selectTab('documents');
     }
     if (id) await detail(id);
@@ -149,7 +157,15 @@ window.KnowledgeUI = (() => {
   $('knowledge-open-card').onclick = safe(() => openDocuments());
   section.querySelectorAll('[data-knowledge-back]').forEach(button => { button.onclick = goCatalog; });
   $('knowledge-documents-add').onclick = goCreate;
+  $('knowledge-documents-search').oninput = () => renderDifyDocuments();
+  $('knowledge-documents-filter').onchange = () => renderDifyDocuments();
   $('knowledge-documents-refresh').onclick = safe(() => load());
+  let newestFirst = true;
+  $('knowledge-documents-sort').onclick = () => {
+    newestFirst = !newestFirst;
+    $('knowledge-documents-sort').textContent = `上传时间 ${newestFirst ? '↓' : '↑'}`;
+    renderDifyDocuments();
+  };
   const openCreatePicker = () => $('knowledge-create-file').click();
   $('knowledge-upload-from-create').onclick = openCreatePicker;
   $('knowledge-next-upload').onclick = openCreatePicker;
@@ -274,8 +290,10 @@ window.KnowledgeUI = (() => {
   }
   function renderDifyDocuments() {
     const host = $('knowledge-documents-list'); host.replaceChildren();
-    if (documents.length) renderDocumentsTable(host, documents);
-    else text(host, 'p', '尚未上传文档。', 'empty');
+    const query = $('knowledge-documents-search').value.trim().toLowerCase(), status = $('knowledge-documents-filter').value;
+    const items = documents.filter(item => (!status || item.status === status) && (!query || `${item.logical} ${item.filename}`.toLowerCase().includes(query)));
+    if (items.length) renderDocumentsTable(host, newestFirst ? items : items.reverse());
+    else text(host, 'p', documents.length ? '已载入的文档中没有匹配项。' : '尚未上传文档。', 'empty');
     if (documents.length < catalog.total) host.append(action('加载更多文档', () => load(true)));
   }
   function renderDocumentsTable(host, items) {

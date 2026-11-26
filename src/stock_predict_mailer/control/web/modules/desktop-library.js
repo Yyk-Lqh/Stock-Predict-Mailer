@@ -59,7 +59,7 @@ window.DesktopLibrary = (() => {
     actions.append(make('strong', '版本与处理阶段'), button('返回资料列表', () => {
       window.KnowledgeUI.close();
       const row = [...$('knowledge-documents-list').querySelectorAll('[data-document-id]')].find(node => node.dataset.documentId === item.id);
-      const target = row?.querySelector('button') || $('knowledge-documents-refresh');
+      const target = row?.querySelector('button') || $('knowledge-documents-search');
       target.focus(); target.scrollIntoView({block:'center'});
     }, 'btn tiny'));
     if (review) actions.append(button('核对待审阅候选', () => {

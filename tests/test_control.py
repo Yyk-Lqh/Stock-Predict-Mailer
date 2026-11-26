@@ -635,6 +635,34 @@ class ConsoleAPITests(unittest.TestCase):
         self.thread.join(timeout=2)
         self.f.close()
 
+    def test_browser_memory_restores_the_same_space_without_widening_api_access(self):
+        self.assertIs(self.client.get("/api/session").json()["browser_memory_access"], True)
+        browser_path = "/api/memory/browser-access"
+        legacy_key = self.client.post("/api/memory/access", json={}).json()["key"]
+        legacy_headers = {"X-Memory-Key": legacy_key}
+        conversation = self.client.post("/api/conversations", headers=legacy_headers, json={}).json()["id"]
+        self.assertEqual(self.client.post(browser_path, headers={"X-CSRF-Token": ""}).status_code, 403)
+
+        adopted = self.client.post(browser_path, headers=legacy_headers)
+        self.assertEqual(adopted.status_code, 200)
+        self.assertIn("HttpOnly; SameSite=Strict; Path=/api/memory/browser-access; Max-Age=", adopted.headers["set-cookie"])
+        self.assertNotIn(legacy_key, adopted.headers["set-cookie"])
+        restored = self.client.post(browser_path)
+        self.assertEqual(restored.status_code, 200)
+        self.assertTrue(restored.json()["key"] == legacy_key)
+        self.assertEqual(self.client.get("/api/conversations").status_code, 403)
+        listing = self.client.get("/api/conversations", headers={"X-Memory-Key": restored.json()["key"]})
+        self.assertEqual([item["id"] for item in listing.json()], [conversation])
+
+        with httpx.Client(base_url=self.client.base_url, trust_env=False) as other:
+            other.get("/")
+            csrf = other.get("/api/session").json()["csrf_token"]
+            created = other.post(browser_path, headers={"X-CSRF-Token": csrf})
+            self.assertEqual(created.status_code, 200)
+            self.assertTrue(created.json()["key"] != legacy_key)
+            separate = other.get("/api/conversations", headers={"X-Memory-Key": created.json()["key"]})
+            self.assertEqual(separate.json(), [])
+
     def test_disconnected_client_response_closes_without_second_response(self):
         for error in (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             for phase in ("headers", "body"):

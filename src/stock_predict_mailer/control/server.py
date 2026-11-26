@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import hashlib
 import hmac
 import json
 import secrets
@@ -12,6 +13,8 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
+
+from cryptography.fernet import InvalidToken
 
 from ..agent_service.contracts import ServiceError, decode
 from ..agent_service.mail import MailService
@@ -28,6 +31,7 @@ from .orchestrator import Orchestrator
 from .store import Store
 
 STATIC = Path(__file__).with_name("web")
+BROWSER_MEMORY_MAX_AGE = 365 * 24 * 60 * 60
 
 
 def make_server(root, port=8767, master_key=None, market=None):
@@ -35,6 +39,8 @@ def make_server(root, port=8767, master_key=None, market=None):
     engine = Orchestrator(store)
     market = MarketFeed(store.root) if market is None else market
     session, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+    workspace_id = hashlib.sha256(str(store.root.resolve()).encode()).hexdigest()[:16]
+    browser_memory_cookie = f"spm_memory_{workspace_id}"
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "StockAgent/1"
@@ -42,7 +48,8 @@ def make_server(root, port=8767, master_key=None, market=None):
         def log_message(self, *args):
             pass  # Request bodies, tokens, tool text and provider errors never enter logs.
 
-        def output(self, value, status=200, content_type="application/json; charset=utf-8", cookie=False):
+        def output(self, value, status=200, content_type="application/json; charset=utf-8", cookie=False,
+                   browser_key=None):
             raw = json.dumps(value, ensure_ascii=False, allow_nan=False).encode() if isinstance(value, (dict, list)) else value
             self.send_response(status)
             self.send_header("Content-Type", content_type)
@@ -52,6 +59,10 @@ def make_server(root, port=8767, master_key=None, market=None):
             self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
             if cookie:
                 self.send_header("Set-Cookie", f"{SESSION_COOKIE}={session}; HttpOnly; SameSite=Strict; Path=/")
+            if browser_key is not None:
+                sealed = store.cipher.encrypt(browser_key.encode()).decode()
+                self.send_header("Set-Cookie", f"{browser_memory_cookie}={sealed}; HttpOnly; SameSite=Strict; "
+                                 f"Path=/api/memory/browser-access; Max-Age={BROWSER_MEMORY_MAX_AGE}")
             try:
                 self.end_headers()
                 self.wfile.write(raw)
@@ -88,6 +99,28 @@ def make_server(root, port=8767, master_key=None, market=None):
             if scope == "private" or (not scope and token):
                 return engine.memory.owner(token)
             return engine.memory.local_knowledge_owner()
+
+        def browser_memory_access(self):
+            cookies = SimpleCookie(self.headers.get("Cookie", ""))
+            saved = cookies.get(browser_memory_cookie)
+            saved_key = ""
+            if saved:
+                try:
+                    saved_key = store.cipher.decrypt(saved.value.encode(), ttl=BROWSER_MEMORY_MAX_AGE).decode()
+                except (InvalidToken, UnicodeDecodeError):
+                    pass
+            # Adopt the current tab's existing key when removing the manual UI.
+            for key in (self.headers.get("X-Memory-Key", ""), saved_key):
+                if not key:
+                    continue
+                try:
+                    engine.memory.owner(key)
+                except ServiceError as error:
+                    if error.code != "FORBIDDEN":
+                        raise
+                else:
+                    return key
+            return engine.memory.create_owner()["key"]
 
         def body(self):
             try:
@@ -129,7 +162,8 @@ def make_server(root, port=8767, master_key=None, market=None):
                     return
                 self.guard(method != "GET", a2a=path.startswith("/a2a/") or path == "/.well-known/agent-card.json")
                 if method == "GET" and path == "/api/session":
-                    self.output({"csrf_token": csrf, "temperature_note": "温度控制随机性，不是预测准确率或置信度；默认 0.2。"})
+                    self.output({"csrf_token": csrf, "browser_memory_access": True,
+                                 "temperature_note": "温度控制随机性，不是预测准确率或置信度；默认 0.2。"})
                     return
                 if method == "GET" and path == "/.well-known/agent-card.json":
                     self.output(card(f"http://127.0.0.1:{self.server.server_port}"))
@@ -295,6 +329,10 @@ def make_server(root, port=8767, master_key=None, market=None):
                     return
                 if kind in ("conversations", "memory"):
                     route = parts[2:]
+                    if kind == "memory" and route == ["browser-access"] and method == "POST":
+                        key = self.browser_memory_access()
+                        self.output({"key": key}, browser_key=key)
+                        return
                     if kind == "memory" and route == ["access"] and method == "POST":
                         self.output(engine.memory.create_owner(), 201)
                         return

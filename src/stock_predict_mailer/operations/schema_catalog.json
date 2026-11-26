@@ -95,7 +95,7 @@
     },
     "knowledge.core": {
       "source": "stock_predict_mailer/private_knowledge/service.py",
-      "source_id": "20d9227058b5e6b893f253be0c4d641675304e803ff5f34eaf1a58c1ec7b8fbf",
+      "source_id": "03958d82e49c45cb7778011fa271e548f8db18222271dac29973fdbdef284701",
       "ddl": [
         "CREATE TABLE IF NOT EXISTS owners (owner TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0, config BLOB);",
         "CREATE TABLE IF NOT EXISTS documents (\n                    id TEXT PRIMARY KEY, owner TEXT NOT NULL, logical TEXT NOT NULL, filename TEXT NOT NULL,\n                    hash TEXT NOT NULL, metadata TEXT NOT NULL, uploaded TEXT NOT NULL,\n                    status TEXT NOT NULL, step TEXT NOT NULL, error TEXT, parsed TEXT, draft TEXT,\n                    active INTEGER NOT NULL DEFAULT 0, UNIQUE(owner,logical,hash,metadata));",
@@ -154,7 +154,7 @@
     },
     "knowledge.workers": {
       "source": "stock_predict_mailer/private_knowledge/service.py",
-      "source_id": "20d9227058b5e6b893f253be0c4d641675304e803ff5f34eaf1a58c1ec7b8fbf",
+      "source_id": "03958d82e49c45cb7778011fa271e548f8db18222271dac29973fdbdef284701",
       "ddl": [
         "CREATE TABLE IF NOT EXISTS workers (id TEXT PRIMARY KEY, host TEXT NOT NULL, pid INTEGER NOT NULL,\n                    started TEXT NOT NULL, beat TEXT NOT NULL, state TEXT NOT NULL, current TEXT,\n                    processed INTEGER NOT NULL DEFAULT 0);"
       ],

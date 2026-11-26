@@ -111,6 +111,7 @@ def entity_anchors(query, entity, stock_code, registry, stocks):
 
 
 STATES = ("pending", "processing", "ready", "review", "failed", "rejected", "deleting")
+RETRIEVAL_MODES = ("auto", "lexical")
 # A worker beats at least every ten seconds while idle; ninety seconds of silence
 # means it is gone and the queue is stalled, not merely busy with a large file.
 WORKER_STALE = 90
@@ -716,10 +717,12 @@ class Knowledge:
         # Deletion does not reactivate older versions.
         return {"status": "deleted", "id": did}
 
-    def search(self, owner, query, *, as_of=None, start_date=None, stock_code=None, entity=None, limit=8, domains=None):
+    def search(self, owner, query, *, as_of=None, start_date=None, stock_code=None, entity=None, limit=8, domains=None, retrieval="auto"):
         self.ensure(owner)
         if not isinstance(query, str) or not 1 <= len(query.strip()) <= 4000 or type(limit) is not int or not 1 <= limit <= 20:
             raise ServiceError("INVALID_INPUT", "查询须非空且 limit 为 1–20")
+        if retrieval not in RETRIEVAL_MODES:
+            raise ServiceError("INVALID_INPUT", "检索方式无效")
         as_of = day(as_of or utcnow().date().isoformat())
         start_date = day(start_date) if start_date else None
         # 空列表代表「什么都不许读」，与 None（不限制）必须区分开。
@@ -755,7 +758,8 @@ class Knowledge:
             # 锚点落在槽位上，再映射回本次真正可读的那个版本：否则锚点会指向旧版本。
             anchor_docs = {selected[slot][1] for item in anchors for slot in item["slots"] if slot in selected}
             relations = [dict(r) for r in con.execute("SELECT r.* FROM relations r JOIN documents d ON r.doc=d.id WHERE r.owner=? AND d.owner=?", (owner, owner)) if r["doc"] in selected_ids]
-            active = con.execute("SELECT * FROM generations WHERE owner=? AND status='active'", (owner,)).fetchone()
+            active = (con.execute("SELECT * FROM generations WHERE owner=? AND status='active'", (owner,)).fetchone()
+                      if retrieval == "auto" else None)
             vecs = {r[0]: json.loads(r[1]) for r in con.execute("SELECT chunk,vector FROM vectors WHERE generation=?", (active["id"],))} if active else {}
             eligible = []
             for row in rows:
@@ -799,7 +803,7 @@ class Knowledge:
                     if relation not in edges:
                         edges.append(relation)
                     linked.update((relation["subject"], relation["object"]))
-        vector_ranks, warnings = {}, []
+        vector_ranks, warnings, effective_mode = {}, [], "lexical"
         if active and active["dimension"]:
             try:
                 vector = self.adapter.embed(self.authorized_config(owner, active["config"]), [query])[0]
@@ -808,9 +812,10 @@ class Knowledge:
                 similarities = [(r["id"], sum(a * b for a, b in zip(vector, vecs[r["id"]], strict=True)))
                                 for r in eligible if r["id"] in vecs]
                 vector_ranks = {cid: i + 1 for i, (cid, score) in enumerate(sorted(similarities, key=lambda p: (-p[1], p[0]))) if score > 0}
+                effective_mode = "hybrid"
             except ServiceError as exc:
                 warnings.append(exc.code + "：已降级为关键词与关系检索")
-        else:
+        elif retrieval == "auto":
             warnings.append("未启用语义向量索引，当前为关键词与关系检索")
         if unmatched:
             warnings.append("主体名称没有匹配到任何可读资料；若填的是简称，请改用公司全称或股票代码")
@@ -888,6 +893,7 @@ class Knowledge:
         chosen_ids = {r["chunk_id"] for r in chosen}
         return {"query": query, "aliases": aliases, "anchors": anchors, "as_of": as_of, "start_date": start_date, "results": chosen,
                 "groups": [g for g in groups if g["shown"]], "logical_total": len(groups), "limit": limit,
+                "retrieval_mode": effective_mode,
                 "domains": sorted(allowed_domains) if allowed_domains is not None else None,
                 "relations": [r for r in edges if r["chunk"] in chosen_ids], "warnings": warnings}
 

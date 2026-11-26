@@ -366,6 +366,12 @@ class EmbeddingTests(unittest.TestCase):
         self.assertNotIn('fixture-key', json.dumps(kb.config(owner)))
         self.assertNotIn(b'fixture-key', (kb.root / 'knowledge.sqlite3').read_bytes())
         self.assertTrue(kb.search(owner, 'risk')['results'])
+        self.assertEqual(kb.search(owner, 'risk')['retrieval_mode'], 'hybrid')
+        calls = len(EmbedServer.requests)
+        lexical = kb.search(owner, 'risk', retrieval='lexical')
+        self.assertEqual(lexical['retrieval_mode'], 'lexical')
+        self.assertTrue(lexical['results'])
+        self.assertEqual(len(EmbedServer.requests), calls)
         self.assertEqual(kb.indexes(owner)[1]['status'], 'failed')
         EmbedServer.dimension = 2
         self.assertTrue(any('DIMENSION' in warning for warning in kb.search(owner, 'risk')['warnings']))

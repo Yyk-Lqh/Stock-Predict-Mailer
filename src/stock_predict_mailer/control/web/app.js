@@ -375,7 +375,6 @@ async function refresh() {
   if ($('workspace-health')) $('workspace-health').textContent = settings.default_model_id ? '分析模型已配置' : '尚未选择分析模型';
   window.DesktopSettings?.refresh();
 }
-
 globalThis.refreshConsole = refresh;
 
 /* ---------- models ---------- */
@@ -489,103 +488,12 @@ $('model-form').onsubmit = async event => {
   finally { window.DesktopSettings?.endSave('model'); }
 };
 
-/* ---------- mcp ---------- */
-function renderServers() {
-  empty($('mcp-list'), servers.length ? '' : '尚未添加 MCP 服务。连接测试可以列出它提供的工具与资源。');
-  for (const s of servers) {
-    const meta = `${s.transport === 'stdio' ? 'stdio 进程' : s.url} · ${s.enabled ? '已启用' : '已停用'} · ${s.allowed_tools.length} 个工具已授权`;
-    const a = record($('mcp-list'), s.name, meta);
-    a.append(
-      action('编辑', () => editServer(s)),
-      action('测试与发现', async () => renderDiscovery(await api(`mcp/${s.id}/test`, 'POST', {}), s)),
-      action(s.enabled ? '停用' : '启用', async () => {
-        await api(`mcp/${s.id}`, 'PUT', {...s, enabled: !s.enabled});
-        await refresh();
-      }),
-      action('清除凭据', async () => {
-        await api(`mcp/${s.id}`, 'PUT', {...s, clear_secrets: ['auth_token', 'env']});
-        await refresh();
-        notice('服务凭据已清除。');
-      }),
-      action('删除', async () => {
-        if (!window.confirm(`删除服务「${s.name}」？被角色或邮件引用的服务需要先解除引用。`)) return;
-        await api(`mcp/${s.id}`, 'DELETE');
-        await refresh();
-      })
-    );
-  }
-}
-function editServer(s, saved = false) {
-  if (!saved && window.DesktopSettings?.saving('mcp')) return;
-  $('mcp-id').value = s.id;
-  for (const [id, key] of Object.entries({'mcp-name': 'name', 'mcp-transport': 'transport', 'mcp-url': 'url', 'mcp-command': 'command', 'mcp-timeout': 'timeout_seconds'})) $(id).value = s[key];
-  $('mcp-token').value = '';
-  $('mcp-env').value = '';
-  $('mcp-args').value = JSON.stringify(s.args);
-  $('mcp-tools').value = s.allowed_tools.join(',');
-  $('mcp-effects').value = JSON.stringify(s.effects, null, 2);
-  $('mcp-resources').value = s.allowed_resources.join('\n');
-  connectionFields();
-  window.DesktopSettings?.mcpFields();
-}
-function connectionFields() {
-  $('mcp-http').hidden = $('mcp-transport').value !== 'streamable_http';
-  $('mcp-stdio').hidden = $('mcp-transport').value !== 'stdio';
-}
-$('mcp-transport').onchange = connectionFields;
-$('mcp-new').onclick = () => {
-  $('mcp-form').reset();
-  $('mcp-id').value = '';
-  connectionFields();
-  window.DesktopSettings?.mcpFields();
-};
-$('mcp-form').onsubmit = async event => {
-  event.preventDefault();
-  if (window.DesktopSettings && !window.DesktopSettings.beginSave('mcp')) return;
-  try {
-    const id = $('mcp-id').value;
-    const old = servers.find(s => s.id === id);
-    const body = {
-      name: $('mcp-name').value, transport: $('mcp-transport').value, url: $('mcp-url').value,
-      command: $('mcp-command').value, args: JSON.parse($('mcp-args').value), timeout_seconds: num('mcp-timeout'),
-      allowed_tools: csv($('mcp-tools').value), effects: JSON.parse($('mcp-effects').value),
-      allowed_resources: lines($('mcp-resources').value), auth_token: $('mcp-token').value,
-      enabled: old?.enabled ?? true
-    };
-    if ($('mcp-env').value.trim()) body.env = JSON.parse($('mcp-env').value);
-    const saved = await api('mcp' + (id ? '/' + id : ''), id ? 'PUT' : 'POST', body);
-    $('mcp-token').value = '';
-    $('mcp-env').value = '';
-    window.DesktopSettings?.mcpSaved(saved);
-    await refresh();
-    notice('MCP 服务已保存，可以测试连接并发现工具。');
-  } catch (error) { window.DesktopSettings?.mcpError(error.message); notice(error.message, true); }
-  finally { window.DesktopSettings?.endSave('mcp'); }
-};
-function renderDiscovery(data, s) {
-  const parent = $('discovery');
-  parent.replaceChildren();
-  text(parent, 'h3', `${s.name} · 协议 ${data.protocol_version}`);
-  if (!data.tools.length) text(parent, 'p', '这个服务没有提供工具。', 'muted');
-  for (const t of data.tools) {
-    text(parent, 'p', `${t.name} · ${s.allowed_tools.includes(t.name) ? '已授权' : '未授权'}`);
-    const d = document.createElement('details');
-    text(d, 'summary', '输入 / 输出 Schema');
-    text(d, 'pre', JSON.stringify({input: t.inputSchema, output: t.outputSchema}, null, 2));
-    parent.append(d);
-  }
-  for (const r of data.resources) {
-    text(parent, 'p', `资源 ${r.name} · ${r.uri}`);
-    if (s.allowed_resources.includes(r.uri)) {
-      parent.append(action('读取资源', async () => {
-        const result = await api(`mcp/${s.id}/read`, 'POST', {uri: r.uri});
-        text(parent, 'pre', JSON.stringify(result, null, 2));
-      }));
-    }
-  }
-  notice(`发现 ${data.tools.length} 个工具、${data.resources.length} 个资源。发现不等于授权。`);
-  window.DesktopSettings?.discovery(data, s);
-}
+/* ---------- MCP data ---------- */
+// MCP configuration is managed by the tools center. The settings page still
+// reads this collection to populate the mail transport selector and role
+// summaries, so refresh keeps the server data in memory without rendering a
+// second editor.
+function renderServers() {}
 
 /* ---------- settings ---------- */
 function renderSettings() {
@@ -896,7 +804,7 @@ function renderVitals() {
   const allow = allowlistSentence(settings.mail.recipient_allowlist, settings.mail.transport);
   const rows = [
     ['默认模型', defaultModel ? defaultModel.name : '未配置', defaultModel ? 'ok' : 'warn', defaultModel ? '' : '分析前必须先有模型', defaultModel ? null : 'models'],
-    ['外部工具', servers.length ? `${servers.length} 个服务 · ${tools} 个工具已授权` : '未连接', servers.length ? 'ok' : 'off', servers.length ? '' : '可选，不连接也能分析', null],
+    ['工具中心', servers.length ? `${servers.length} 个 MCP 服务 · ${tools} 个工具已授权` : '未连接', servers.length ? 'ok' : 'off', servers.length ? '' : '可选，不连接也能分析', 'tools'],
     ['邮件通道', transport, allow.tone ? 'warn' : 'ok', allow.text, allow.tone === 'danger' ? 'settings' : null],
     ['上游数据', '通过本页填写', 'ok', '控制台不做定时拉取', null]
   ];
@@ -2152,9 +2060,9 @@ $('try-sample').onclick = async () => {
     else resetPredictionInput();
     renderSteps();
     await window.Workbench?.init();
-    const view = ['overview', 'analysis', 'records', 'settings', 'memory', 'knowledge', 'tools'].includes(initial) ? initial : 'analysis';
+    const view = initial === 'mcp' ? 'tools' : ['overview', 'analysis', 'records', 'settings', 'memory', 'knowledge', 'tools'].includes(initial) ? initial : 'analysis';
     showView(view);
-    const panel = {models: 'models', mcp: 'mcp', collab: 'settings'}[initial];
+    const panel = {models: 'models', collab: 'settings'}[initial];
     if (panel) {
       showView('settings');
       showPanel(panel);

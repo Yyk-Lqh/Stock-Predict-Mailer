@@ -5956,7 +5956,7 @@ window.DesktopSettings = (() => {
   const overview=make('section',null,'desktop-settings-overview'); overview.setAttribute('aria-label','已保存配置');
   overview.append(make('h2','已保存配置'));
   const summary=make('dl',null,'desktop-config-summary');
-  for(const [id,title] of [['model','默认模型'],['tools','外部能力'],['mail','邮件通道']]) { const row=make('div'); row.append(make('dt',title)); const value=make('dd'); value.id='desktop-saved-'+id; row.append(value); summary.append(row); }
+  for(const [id,title] of [['model','默认模型'],['tools','工具中心'],['mail','邮件通道']]) { const row=make('div'); row.append(make('dt',title)); const value=make('dd'); value.id='desktop-saved-'+id; row.append(value); summary.append(row); }
   overview.append(summary); pane.querySelector('.page-head').after(overview);
 
   const form=$('model-form'), basic=make('div',null,'grid-3 desktop-model-basic'), remote=make('div',null,'grid-2 desktop-model-remote');
@@ -5970,12 +5970,11 @@ window.DesktopSettings = (() => {
   for(const node of prior) if(node.tagName==='DIV' && !node.classList.contains('section-head') && !node.classList.contains('submit-bar') && !node.querySelector('input,select,textarea,button')) node.hidden=true;
   const modelInfo=feedback('desktop-model-feedback',form);
   const remoteHint=make('p','测试真实服务会发起推理请求并可能计费。密钥留空保留已保存值；保存不会自动测试。','hint'); remote.append(remoteHint);
-  const mcpInfo=feedback('desktop-mcp-feedback',$('mcp-form'));
 
   function reveal(field,message) {
     for(let parent=field.parentElement;parent;parent=parent.parentElement) { if(parent.tagName==='DETAILS')parent.open=true; if(parent.dataset.desktopConditional)parent.hidden=false; }
     field.setAttribute('aria-invalid','true'); field.focus(); field.scrollIntoView({block:'center'});
-    if(message)status(field.closest('form')===form?'desktop-model-feedback':'desktop-mcp-feedback',message,true);
+    if(message)status('desktop-model-feedback',message,true);
   }
   function validateObject(field, empty=false) {
     if(empty&&!field.value.trim())return;
@@ -6043,38 +6042,15 @@ window.DesktopSettings = (() => {
     paintTests(); preview();
   }
 
-  function mcpFields() { status('desktop-mcp-feedback','保存连接配置后，再按需测试与发现。发现工具不会自动授权。'); if(lastDiscovery)discovery(lastDiscovery.data,lastDiscovery.server); }
   function saveState(kind,active) {
     const editor=$(kind+'-form');editor.inert=active;editor.setAttribute('aria-busy',String(active));
     editor.querySelector('button[type="submit"]').disabled=active;$(kind+'-new').disabled=active;
     if(active)pending.add(kind);else pending.delete(kind);
   }
-  function discovery(data,server) {
-    lastDiscovery={data,server}; $('discovery').querySelector('.desktop-permission-editor')?.remove();
-    const root=make('section',null,'desktop-permission-editor'); root.append(make('h3','待保存的工具权限'),make('p','工具白名单与权限类型需要同时满足；下面的修改只更新表单，点击保存 MCP 服务后才生效。','hint'));
-    if($('mcp-id').value!==server.id)root.append(button('编辑该服务权限',()=>{editServer(server);discovery(data,server);}));
-    else {
-      let allowed,effects;
-      try {allowed=new Set(csv($('mcp-tools').value));effects=JSON.parse($('mcp-effects').value||'{}');if(!effects||typeof effects!=='object'||Array.isArray(effects))throw Error();}
-      catch(_){root.append(make('p','权限 JSON 无法解析，请先修正高级字段。','error-text'));$('discovery').append(root);return;}
-      for(const tool of data.tools) {
-        const row=make('div',null,'desktop-permission-row'), check=make('input');check.type='checkbox';check.checked=allowed.has(tool.name);check.setAttribute('aria-label',`允许工具 ${tool.name}`);
-        const text=make('span',tool.name),effect=make('select'); effect.setAttribute('aria-label',`${tool.name} 权限类型`);
-        for(const[value,title]of [['deny','拒绝'],['read','只读'],['email','邮件（另需授权）']])effect.add(new Option(title,value));effect.value=effects[tool.name]||'deny';
-        const update=()=>{try{const current=new Set(csv($('mcp-tools').value)), map=JSON.parse($('mcp-effects').value||'{}');if(!map||typeof map!=='object'||Array.isArray(map))throw Error();if(check.checked)current.add(tool.name);else current.delete(tool.name);$('mcp-tools').value=[...current].join(',');$('mcp-effects').value=JSON.stringify({...map,[tool.name]:effect.value},null,2);status('desktop-mcp-feedback','权限已更新到表单，尚未保存。');}catch(_){status('desktop-mcp-feedback','权限 JSON 无法解析，现有输入已保留。',true);}};
-        check.onchange=effect.onchange=update;row.append(check,text,effect);root.append(row);
-      }
-    }
-    $('discovery').append(root);
-  }
-  $('mcp-form').addEventListener('input',()=>status('desktop-mcp-feedback','连接或权限表单有未保存修改。'));
-  $('mcp-form').addEventListener('submit',event=>{try{validateObject($('mcp-effects'));validateObject($('mcp-env'),true);const args=JSON.parse($('mcp-args').value);if(!Array.isArray(args))throw {field:$('mcp-args'),message:'启动参数需要 JSON 数组。'};}catch(error){event.preventDefault();event.stopImmediatePropagation();reveal(error.field||$('mcp-args'),error.message||'请修正启动参数 JSON。');}},true);
-  modelFields();mcpFields();refresh();
+  modelFields();refresh();
   return {refresh,modelFields,modelSaved,mockMode:()=>$('model-provider').value==='mock',modelError:message=>status('desktop-model-feedback','保存失败：'+message+'。当前输入已保留。',true),
     modelTest(profile,value,error) {tests.set(profile.id,{signature:signature(profile),error:Boolean(error),message:error||value?.message||'测试完成'});paintTests();},
-    saving:kind=>pending.has(kind),beginSave(kind){if(pending.has(kind))return false;saveState(kind,true);return true;},endSave(kind){saveState(kind,false);},
-    mcpError:message=>status('desktop-mcp-feedback','保存失败：'+message+'。当前输入已保留。',true),
-    mcpFields,discovery,mcpSaved(server){editServer(server,true);status('desktop-mcp-feedback','服务已保存；测试发现与授权状态分别生效。');if(lastDiscovery?.server.id===server.id)renderDiscovery(lastDiscovery.data,server);}
+    saving:kind=>pending.has(kind),beginSave(kind){if(pending.has(kind))return false;saveState(kind,true);return true;},endSave(kind){saveState(kind,false);}
   };
 })();
 

@@ -318,13 +318,13 @@
   </section>
 
   <section class="view" data-view-pane="settings" hidden>
-    <div class="page-head">
+    <div class="page-head section-head">
       <h1>设置</h1>
+      <div class="actions"><button type="button" class="btn quiet" data-goto="tools">打开工具中心</button></div>
     </div>
 
     <div class="subnav" role="tablist">
       <button type="button" data-panel="models" class="active">模型服务</button>
-      <button type="button" data-panel="mcp">外部工具</button>
       <button type="button" data-panel="settings">协作与邮件</button>
       <button type="button" data-panel="appearance">界面</button>
     </div>
@@ -384,56 +384,6 @@
           <button type="submit" class="btn primary">保存模型</button>
           <span class="hint grow">保存成功不代表已设为默认，默认模型在「协作与邮件」里选。</span>
         </div>
-      </form>
-    </section>
-
-    <section id="mcp" class="panel" hidden>
-      <div class="section-head">
-        <h2>已连接服务</h2>
-        <span class="hint">发现工具不等于授权调用，默认拒绝</span>
-        <button type="button" id="mcp-new" class="btn quiet">新建</button>
-      </div>
-      <div id="mcp-list" class="record-list"></div>
-      <div id="discovery" class="discovery mt-24">
-        <p class="muted">保存服务后点「测试与发现」。</p>
-      </div>
-
-      <form class="mt-26" id="mcp-form">
-        <div class="section-head"><h2>服务配置</h2></div>
-        <input id="mcp-id" type="hidden">
-        <div class="grid-2">
-          <label class="field"><span>服务名称</span><input id="mcp-name" required placeholder="股票数据服务"></label>
-          <label class="field"><span>连接方式</span>
-            <select id="mcp-transport">
-              <option value="streamable_http">Streamable HTTP</option>
-              <option value="stdio">本地 stdio 进程</option>
-            </select>
-          </label>
-        </div>
-        <div class="mt-14" id="mcp-http">
-          <div class="grid-2">
-            <label class="field"><span>服务地址</span><input id="mcp-url" value="http://127.0.0.1:8766/mcp"></label>
-            <label class="field"><span>Bearer token</span><input id="mcp-token" type="password" autocomplete="new-password" placeholder="留空保留已有值"></label>
-          </div>
-        </div>
-        <div class="mt-14" id="mcp-stdio" hidden>
-          <div class="grid-2">
-            <label class="field"><span>启动程序</span><input id="mcp-command" placeholder="完整程序路径，例如 python.exe"></label>
-            <label class="field"><span>启动参数（JSON 数组）</span><textarea id="mcp-args" class="mono" rows="2">[]</textarea></label>
-          </div>
-          <label class="field mt-14"><span>进程环境变量（加密保存）</span><textarea id="mcp-env" class="mono" rows="2" placeholder='{"SERVICE_TOKEN":"…"}'></textarea></label>
-          <p class="hint mt-6">只运行你信任的程序；凭据走环境变量，不写进启动参数。</p>
-        </div>
-        <div class="grid-3 mt-14">
-          <label class="field"><span>超时（秒）</span><input id="mcp-timeout" type="number" min="1" max="120" value="15"></label>
-          <label class="field"><span>允许工具（逗号分隔）</span><input id="mcp-tools" placeholder="get_context,send_email"></label>
-          <label class="field"><span>允许资源 URI（每行一个）</span><textarea id="mcp-resources" class="mono" rows="2"></textarea></label>
-        </div>
-        <label class="field mt-14"><span>每个工具的权限类型（JSON）</span>
-          <textarea id="mcp-effects" class="mono" rows="2" placeholder='{"get_context":"read","send_email":"email"}'>{}</textarea>
-          <span class="hint hint-block">read：只读工具；email：还需收件人授权；未声明等同 deny。</span>
-        </label>
-        <div class="submit-bar"><button type="submit" class="btn primary">保存 MCP 服务</button></div>
       </form>
     </section>
 

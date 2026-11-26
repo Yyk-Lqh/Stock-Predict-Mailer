@@ -362,8 +362,6 @@ window.Workbench = (() => {
     const details = document.createElement('details'); details.className = 'input-editor';
     text(details, 'summary', title.textContent); card.before(details); details.append(card);
   });
-  const settingsNav = document.querySelector('[data-view-pane="settings"] .subnav');
-  settingsNav.append(action('记忆与访问', () => showView('memory')), action('知识处理与索引', () => { showView('knowledge'); window.KnowledgeUI?.processing(); }));
   const form = $('task-form');
   const cards = [...form.querySelectorAll(':scope > .card')].filter(card => !card.classList.contains('forecast-editor'));
   for (const [index, card] of cards.entries()) {

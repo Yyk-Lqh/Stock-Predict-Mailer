@@ -353,6 +353,58 @@ function showPanel(id) {
   document.querySelectorAll('.view:not([hidden]) .panel').forEach(el => { el.hidden = el.id !== id; });
   document.querySelectorAll('.subnav [data-panel]').forEach(el => el.classList.toggle('active', el.dataset.panel === id));
 }
+function openToolsFallback(kind, cause) {
+  const titles = {mcp: '添加 MCP 服务请求', custom: '创建自定义工具', plugin: '添加插件'};
+  const dialog = document.createElement('dialog');
+  dialog.className = 'tools-dialog tools-dialog-fallback';
+  const header = document.createElement('header'); header.className = 'tools-dialog-head';
+  const copy = document.createElement('div');
+  text(copy, 'p', '工具中心', 'tools-kicker'); text(copy, 'h2', titles[kind] || '添加工具');
+  text(copy, 'p', cause ? `工具中心正在恢复，${cause.message || '请填写并提交表单。'}` : '填写信息后提交。', 'tools-dialog-subtitle');
+  const close = document.createElement('button'); close.type = 'button'; close.className = 'tools-dialog-close'; close.textContent = '×'; close.setAttribute('aria-label', '关闭');
+  close.onclick = () => dialog.close(); header.append(copy, close); dialog.append(header);
+  const form = document.createElement('form'); form.className = 'tools-dialog-form';
+  const body = document.createElement('section'); body.className = 'tools-form-section';
+  const field = (label, control) => { const wrap = document.createElement('label'); wrap.className = 'tools-field'; text(wrap, 'span', label, 'tools-field-label'); wrap.append(control); return wrap; };
+  const input = (type, placeholder) => { const control = document.createElement('input'); control.type = type; control.className = 'tools-input'; control.placeholder = placeholder; return control; };
+  const name = input('text', '工具名称'); name.required = true;
+  const url = input('url', kind === 'mcp' ? 'https://example.com/mcp' : 'https://github.com/owner/repo'); url.required = true;
+  const schema = document.createElement('textarea'); schema.className = 'tools-schema-editor'; schema.rows = 10; schema.placeholder = '输入 OpenAPI 或 Swagger Schema';
+  if (kind === 'mcp') { body.append(field('名称', name), field('服务端点 URL', url)); }
+  else if (kind === 'plugin') body.append(field('GitHub 仓库地址', url));
+  else body.append(field('名称', name), field('OpenAPI Schema', schema));
+  const status = document.createElement('p'); status.className = 'tools-dialog-status';
+  const footer = document.createElement('footer'); footer.className = 'tools-dialog-foot';
+  const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'tools-secondary-button'; cancel.textContent = '取消'; cancel.onclick = () => dialog.close();
+  const submit = document.createElement('button'); submit.type = 'submit'; submit.className = 'tools-primary-button'; submit.textContent = kind === 'mcp' ? '添加服务' : kind === 'plugin' ? '添加插件' : '保存工具';
+  footer.append(status, document.createElement('span'), cancel, submit); form.append(body, footer); dialog.append(form); document.body.append(dialog);
+  dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+  dialog.addEventListener('close', () => dialog.remove(), {once: true});
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); submit.disabled = true; status.textContent = '正在保存…';
+    try {
+      if (kind === 'mcp') await api('mcp', 'POST', {name: name.value.trim(), transport: 'streamable_http', url: url.value.trim(), timeout_seconds: 30, allowed_tools: [], allowed_resources: [], effects: {}});
+      else if (kind === 'plugin') await api('plugins/github', 'POST', {url: url.value.trim()});
+      else {
+        const items = JSON.parse(localStorage.getItem('stock_predict_mailer.tools.center.v1') || '[]');
+        items.unshift({id: `custom-${crypto.randomUUID()}`, name: name.value.trim(), icon: 'spark', schemaTitle: name.value.trim(), schemaVersion: '—', tools: [], tags: [], auth: 'none', privacy: '', disclaimer: '', createdAt: new Date().toISOString()});
+        localStorage.setItem('stock_predict_mailer.tools.center.v1', JSON.stringify(items));
+      }
+      await window.refreshConsole?.(); await window.ToolsCenter?.refresh?.();
+      status.textContent = '已保存。'; setTimeout(() => dialog.close(), 400);
+    } catch (error) { status.textContent = `保存失败。${error.message}`; submit.disabled = false; }
+  });
+  dialog.showModal(); (kind === 'custom' ? name : url).focus();
+  return dialog;
+}
+globalThis.openToolsFallback = openToolsFallback;
+globalThis.openToolsAction = function openToolsAction(kind) {
+  try {
+    const dialog = window.ToolsCenter?.openAction?.(kind);
+    if (dialog) return dialog;
+  } catch (error) { return openToolsFallback(kind, error); }
+  return openToolsFallback(kind);
+};
 document.querySelectorAll('.nav [data-view]').forEach(el => { el.onclick = () => showView(el.dataset.view); });
 document.querySelectorAll('.subnav [data-panel]').forEach(el => { el.onclick = () => showPanel(el.dataset.panel); });
 document.addEventListener('click', event => {
@@ -360,6 +412,11 @@ document.addEventListener('click', event => {
   if (goto) {
     showView(goto.dataset.goto);
     if (goto.dataset.panel) showPanel(goto.dataset.panel);
+  }
+  const toolAction = event.target.closest('[data-tools-action]');
+  if (toolAction && !event.defaultPrevented) {
+    event.preventDefault();
+    globalThis.openToolsAction(toolAction.dataset.toolsAction);
   }
 });
 

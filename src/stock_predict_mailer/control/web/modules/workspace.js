@@ -270,6 +270,8 @@ window.Workbench = (() => {
   function view(name) {
     if (name !== 'analysis') document.body.classList.remove('analysis-composer-visible');
     else document.body.classList.add('analysis-composer-visible');
+    document.body.classList.toggle('dify-knowledge-view', name === 'knowledge');
+    if (name === 'knowledge') document.body.classList.remove('desktop-nav-collapsed');
     $('session-menu').open = false;
     window.PonyOffice?.view(name);
     document.body.dataset.view = name;

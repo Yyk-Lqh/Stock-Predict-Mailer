@@ -58,8 +58,9 @@ window.DesktopLibrary = (() => {
     const actions = make('div', null, 'actions');
     actions.append(make('strong', '版本与处理阶段'), button('返回资料列表', () => {
       window.KnowledgeUI.close();
-      const row = [...$('knowledge-list').querySelectorAll('.document-row')].find(node => node.dataset.documentId === item.id && !node.hidden);
-      const target = row?.querySelector('button') || $('desktop-knowledge-query'); target.focus(); target.scrollIntoView({block:'center'});
+      const row = [...$('knowledge-documents-list').querySelectorAll('[data-document-id]')].find(node => node.dataset.documentId === item.id);
+      const target = row?.querySelector('button') || $('knowledge-documents-refresh');
+      target.focus(); target.scrollIntoView({block:'center'});
     }, 'btn tiny'));
     if (review) actions.append(button('核对待审阅候选', () => {
       review.querySelector('input[type="checkbox"]:not(:disabled)')?.focus({preventScroll:true});

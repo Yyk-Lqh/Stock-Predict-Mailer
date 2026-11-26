@@ -21,9 +21,8 @@ window.KnowledgeUI = (() => {
   }
   const safe = fn => async event => { try { await fn(event); } catch (error) { notice(error.message, true); } };
   const section = document.createElement('section');
-  section.className = 'view'; section.dataset.viewPane = 'knowledge'; section.hidden = true;
+  section.className = 'view knowledge-shell'; section.dataset.viewPane = 'knowledge'; section.hidden = true;
   section.innerHTML = `
-    <div class="page-head"><h1>知识库</h1></div>
     <label class="field"><span>资料库</span><select id="knowledge-scope"><option value="local">本机资料库</option><option value="private">旧版私有资料</option></select></label>
     <div id="knowledge-access" class="note" hidden><p>恢复原访问密钥后即可查看旧版私有资料。</p><button type="button" data-goto="memory" class="btn">恢复原访问密钥</button></div>
     <div id="knowledge-body" hidden>
@@ -40,12 +39,157 @@ window.KnowledgeUI = (() => {
           <div><button type="submit" class="btn primary">上传并排队</button></div>
         </form></details>
         <div id="knowledge-queue" class="queue-bar"></div>
-        <div id="knowledge-list"></div><div id="knowledge-detail" class="knowledge-detail" hidden></div>
+        <div id="knowledge-list"></div>
       </div>
       <div data-kb-pane="search" hidden><form id="knowledge-search" class="stack"><label class="field"><span>查找证据</span><input id="knowledge-query" required maxlength="4000" placeholder="例如：营业收入、客户关系、供应链风险"></label><div class="grid-4"><label class="field"><span>截止日期</span><input id="knowledge-asof" type="date"></label><label class="field"><span>文档日期不早于</span><input id="knowledge-start" type="date"></label><label class="field"><span>股票代码</span><input id="knowledge-stock" placeholder="600000.SH"></label><label class="field"><span>主体名称</span><input id="knowledge-entity" maxlength="200"></label></div><div class="grid-2"><label class="field"><span>返回片段数</span><select id="knowledge-limit"><option value="5">5 段</option><option value="8" selected>8 段</option><option value="12">12 段</option><option value="20">20 段</option></select></label><div class="field"><span class="hint">汇总不是模型结论，只按「摘录 → 关系 → 推断」顺序拼接</span><div class="actions"><button type="submit" class="btn primary">检索证据</button><button type="button" id="knowledge-answer" class="btn">汇总并回答</button></div></div></div><p class="hint">截止日期决定「当时能看到什么」：晚于该日期才可用的资料不参与检索；「文档日期不早于」用于排除过旧资料，文档日期未知的条目会被一并排除。</p></form><div id="knowledge-results" class="mt-26"></div><div id="knowledge-answer-result" class="mt-26"></div></div>
-      <div data-kb-pane="processing" hidden><p class="hint">规则清洗和关键词检索无需模型。语义清洗模型与向量模型独立配置；保存配置不会自动执行资料处理。</p><div id="knowledge-configs"></div><div class="section-head mt-26"><h2>索引版本</h2><button id="knowledge-rebuild" type="button" class="btn">重建索引</button></div><div id="knowledge-indexes"></div></div>
+      <div data-kb-pane="pipeline" hidden><div class="knowledge-pipeline-card"><div><p class="eyebrow">DOCUMENT PROCESSING</p><h2>转换为知识流水线</h2><p class="lede">将当前知识库交给可编辑的处理流程。新的处理方式会应用到后续添加的所有文档。</p><button type="button" class="btn primary" id="knowledge-pipeline-convert">转换</button><span class="hint">此操作无法撤销。</span></div><div class="knowledge-pipeline-preview"><div class="pipeline-node">文件上传</div><span>→</span><div class="pipeline-node">文档解析</div><span>→</span><div class="pipeline-node">通用切分</div></div></div></div>
+      <div data-kb-pane="processing" hidden><div class="knowledge-settings-summary"><div><h2>知识库设置</h2><p class="hint">控制资料库名称、分段方式和检索策略。模型配置仍通过现有处理设置保存。</p></div><div class="knowledge-settings-grid"><div><span>名称和图标</span><strong>预测资料库</strong></div><div><span>可见权限</span><strong>只有我</strong></div><div><span>分段模式</span><strong>通用</strong></div><div><span>索引模式</span><strong>经济</strong></div><div><span>检索设置</span><strong>倒排索引 · Top K 2</strong></div><div><span>文档来源</span><strong>文件上传</strong></div></div></div><p class="hint">规则清洗和关键词检索无需模型。语义清洗模型与向量模型独立配置；保存配置不会自动执行资料处理。</p><div id="knowledge-configs"></div><div class="section-head mt-26"><h2>索引版本</h2><button id="knowledge-rebuild" type="button" class="btn">重建索引</button></div><div id="knowledge-indexes"></div></div>
     </div>`;
+  const knowledgeContent = document.createElement('div');
+  knowledgeContent.className = 'knowledge-dify-main';
+  while (section.firstChild) knowledgeContent.append(section.firstChild);
+  let surface = 'catalog';
+  const knowledgeLanding = document.createElement('div');
+  knowledgeLanding.className = 'knowledge-dify-main knowledge-landing-main';
+  knowledgeLanding.innerHTML = `
+    <div class="knowledge-catalog-toolbar">
+      <div class="knowledge-header-actions">
+        <button type="button" class="btn primary" id="knowledge-create-landing">＋ 创建知识库</button>
+      </div>
+    </div>
+    <div class="knowledge-catalog-grid">
+      <aside class="knowledge-create-panel">
+        <button type="button" id="knowledge-create-panel">＋ 创建知识库</button>
+        <button type="button" id="knowledge-pipeline-panel">▦ 通过知识流水线创建知识库</button>
+      </aside>
+      <button type="button" class="knowledge-base-card" id="knowledge-open-card">
+        <span class="knowledge-base-icon" aria-hidden="true">▣</span>
+        <span class="knowledge-base-copy">
+          <strong>预测资料库</strong>
+          <small class="hint" id="knowledge-card-count">正在读取</small>
+        </span>
+      </button>
+    </div>`;
+  const knowledgeCreate = document.createElement('div');
+  knowledgeCreate.className = 'knowledge-dify-main knowledge-create-main'; knowledgeCreate.hidden = true;
+  knowledgeCreate.innerHTML = '<div class="knowledge-step-head"><button type="button" class="btn" data-knowledge-back>← 知识库</button><div class="knowledge-steps"><strong>上传文档</strong></div></div><div class="knowledge-create-body"><h1>选择数据源</h1><div class="knowledge-source-options"><button type="button" class="selected" data-knowledge-source="upload">▤ 导入已有文本</button><button type="button" data-knowledge-source="notion">▣ 同步自 Notion 内容</button><button type="button" data-knowledge-source="web">◉ 同步自 Web 站点</button></div><h2>上传文本文件</h2><div class="knowledge-dropzone">☁&nbsp; <button type="button" id="knowledge-upload-from-create">选择文件</button><input id="knowledge-create-file" type="file" accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.json" multiple hidden><p>选择后会直接上传到当前知识库。支持 PDF、DOCX、TXT、Markdown、CSV、XLSX、JSON，每次最多 5 个文件，每个不超过 10 MiB。</p><p id="knowledge-create-status" class="hint" aria-live="polite"></p></div><button type="button" class="btn primary knowledge-next-upload" id="knowledge-next-upload">选择文件并上传</button></div>';
+  const knowledgeDocuments = document.createElement('div');
+  knowledgeDocuments.className = 'knowledge-dify-main knowledge-documents-main'; knowledgeDocuments.hidden = true;
+  knowledgeDocuments.innerHTML = `
+    <div class="knowledge-documents-head">
+      <h1>文档</h1>
+      <button type="button" class="btn primary" id="knowledge-documents-add">＋ 添加文件</button>
+    </div>
+    <div class="knowledge-documents-toolbar">
+      <button type="button" class="btn tiny" id="knowledge-documents-refresh">刷新</button>
+    </div>
+    <div id="knowledge-documents-list" class="knowledge-documents-list"></div>
+    <section id="knowledge-detail" class="knowledge-detail" hidden></section>`;
+  knowledgeLanding.querySelector('.knowledge-catalog-toolbar').prepend(knowledgeContent.querySelector('#knowledge-scope').closest('label'));
+  knowledgeLanding.querySelector('.knowledge-catalog-grid').before(knowledgeContent.querySelector('#knowledge-access'));
+  const knowledgeHeader = document.createElement('header');
+  knowledgeHeader.className = 'knowledge-dify-header';
+  knowledgeHeader.innerHTML = '<div class="knowledge-brand"><span class="knowledge-brand-mark">▣</span><span>知识库</span><span class="knowledge-brand-sep">/</span><strong>预测资料库</strong></div><div class="knowledge-header-actions"><button type="button" class="btn quiet" id="knowledge-api">◉ 服务 API</button></div>';
+  const knowledgeSidebar = document.createElement('aside');
+  knowledgeSidebar.className = 'knowledge-dify-sidebar';
+  knowledgeSidebar.innerHTML = `
+    <button type="button" class="btn tiny" data-knowledge-back>← 返回知识库</button>
+    <div class="knowledge-sidebar-card">
+      <div class="knowledge-sidebar-icon" aria-hidden="true">▣</div><strong>预测资料库</strong>
+    </div>
+    <nav class="knowledge-sidebar-actions" aria-label="知识库导航">
+      <button type="button" class="active" data-dify-kb-tab="documents">▤ 文档</button>
+      <button type="button" data-dify-kb-tab="pipeline">⌘ 流水线</button>
+      <button type="button" data-dify-kb-tab="search">◎ 召回测试</button>
+      <button type="button" data-dify-kb-tab="processing">☷ 设置</button>
+    </nav>
+    <div class="knowledge-sidebar-foot"><span id="knowledge-sidebar-count"></span><small>文档版本</small></div>`;
+  const knowledgeLayout = document.createElement('div');
+  knowledgeLayout.className = 'knowledge-dify-layout';
+  knowledgeLayout.append(knowledgeSidebar, knowledgeLanding, knowledgeCreate, knowledgeDocuments, knowledgeContent);
+  section.append(knowledgeHeader, knowledgeLayout);
   document.querySelector('main').append(section);
+  function renderLanding() {
+    $('knowledge-card-count').textContent = `${catalog.total || documents.length || 0} 个资料版本 · ${catalog.review || 0} 待审阅`;
+    $('knowledge-sidebar-count').textContent = catalog.total;
+  }
+  function showSurface(name) {
+    if (surface === 'documents' && name !== 'documents') closeDetail();
+    surface = name;
+    section.classList.toggle('knowledge-catalog-mode', name === 'catalog');
+    section.classList.toggle('knowledge-create-mode', name === 'create');
+    knowledgeLanding.hidden = name !== 'catalog';
+    knowledgeCreate.hidden = name !== 'create';
+    knowledgeDocuments.hidden = name !== 'documents';
+    knowledgeContent.hidden = name !== 'tools';
+    if (name === 'documents') renderDifyDocuments();
+  }
+  async function openDocuments(id = '') {
+    if (surface !== 'documents') {
+      selectTab('documents');
+    }
+    if (id) await detail(id);
+  }
+  const goCatalog = () => showSurface('catalog');
+  const goCreate = () => showSurface('create');
+  $('knowledge-create-landing').onclick = goCreate;
+  $('knowledge-create-panel').onclick = goCreate;
+  $('knowledge-pipeline-panel').onclick = goCreate;
+  $('knowledge-open-card').onclick = safe(() => openDocuments());
+  section.querySelectorAll('[data-knowledge-back]').forEach(button => { button.onclick = goCatalog; });
+  $('knowledge-documents-add').onclick = goCreate;
+  $('knowledge-documents-refresh').onclick = safe(() => load());
+  const openCreatePicker = () => $('knowledge-create-file').click();
+  $('knowledge-upload-from-create').onclick = openCreatePicker;
+  $('knowledge-next-upload').onclick = openCreatePicker;
+  async function uploadCreateFiles(files) {
+    if (!files.length) return;
+    const picker = $('knowledge-upload-from-create');
+    const action = $('knowledge-next-upload');
+    const status = $('knowledge-create-status');
+    if (picker.disabled) return;
+    if (files.length > 5) {
+      status.textContent = '每次最多选择 5 个文件。';
+      return;
+    }
+    const key = identity();
+    if (!key) {
+      status.textContent = '请先恢复原访问密钥，或返回并选择本机资料库。';
+      return;
+    }
+    let uploaded = 0;
+    const failures = [];
+    picker.disabled = true; action.disabled = true;
+    try {
+      for (const [index, file] of files.entries()) {
+        if (key !== identity()) break;
+        status.textContent = `正在上传 ${index + 1}/${files.length}：${file.name}`;
+        try {
+          await uploadDocumentFile(file, {key});
+          ++uploaded;
+        } catch (error) {
+          failures.push(`${file.name}：${error.message}`);
+        }
+      }
+      if (key !== identity()) return;
+      const message = `已上传 ${uploaded} 个文件${failures.length ? `，${failures.length} 个失败。 ${failures.join('；')}` : '，资料已排队处理。'}`;
+      status.textContent = message;
+      if (uploaded) await load();
+      notice(message, Boolean(failures.length));
+      if (surface === 'create' && uploaded && !failures.length) goCatalog();
+    } finally {
+      picker.disabled = false; action.disabled = false;
+    }
+  }
+  $('knowledge-create-file').onchange = safe(async event => {
+    const input = event.currentTarget;
+    const files = [...input.files];
+    input.value = '';
+    await uploadCreateFiles(files);
+  });
+  showSurface('catalog');
+  $('knowledge-api').onclick = () => notice('服务 API 入口将在当前资料库作用域内使用现有接口。');
+  $('knowledge-pipeline-convert').onclick = () => notice('流水线转换需要先完成当前知识库的处理配置。');
   const selectionEditor = document.createElement('details'); selectionEditor.className = 'input-editor';
   selectionEditor.innerHTML = `<summary>知识资料 · 为本轮检索证据</summary><div class="card stack"><label class="field"><span>检索问题</span><input id="task-knowledge-query" maxlength="4000" placeholder="留空时不使用知识库"></label><label class="check"><input type="checkbox" id="task-knowledge-consent"> 允许将本轮检索资料发送给已配置的分析模型</label><p class="hint">从当前选择的资料库检索已发布资料，截止时间采用预测生成日期。只有明确勾选后，证据才会进入模型输入。</p><button type="button" class="btn tiny" data-goto="knowledge">管理资料与版本</button></div>`;
   $('facts-editor').after(selectionEditor);
@@ -54,20 +198,35 @@ window.KnowledgeUI = (() => {
     scope = event.currentTarget.value;
     sessionStorage.setItem(scopeKey, scope);
     identityReset();
-    tab('documents');
     await load();
   });
-  function tab(name) {
-    section.querySelectorAll('[data-kb-pane]').forEach(el => { el.hidden = el.dataset.kbPane !== name; });
+  function selectTab(name) {
+    section.querySelectorAll('[data-kb-pane]').forEach(el => {
+      el.hidden = name === 'documents' || el.dataset.kbPane !== name;
+    });
     section.querySelectorAll('[data-kb-tab]').forEach(el => el.classList.toggle('active', el.dataset.kbTab === name));
+    section.querySelectorAll('[data-dify-kb-tab]').forEach(el => el.classList.toggle('active', el.dataset.difyKbTab === name));
+    showSurface(name === 'documents' ? 'documents' : 'tools');
   }
-  section.querySelectorAll('[data-kb-tab]').forEach(el => { el.onclick = safe(async () => { tab(el.dataset.kbTab); if (el.dataset.kbTab === 'processing') await configs(); }); });
+  async function openTab(name) {
+    if (name === 'documents') return openDocuments();
+    selectTab(name);
+    if (name === 'processing' && identity()) await configs();
+  }
+  section.querySelectorAll('[data-kb-tab], [data-dify-kb-tab]').forEach(el => {
+    el.onclick = safe(() => openTab(el.dataset.kbTab || el.dataset.difyKbTab));
+  });
+  function closeDetail() {
+    ++detailRequest;
+    $('knowledge-detail').hidden = true;
+  }
   function reset() { $('task-knowledge-query').value = ''; $('task-knowledge-consent').checked = false; }
   function identityReset() {
     ++detailRequest; ++searchRequest; desktopStatus = ''; window.DesktopLibrary?.resetKnowledge();
-    ++epoch; clearTimeout(timer); clearTimeout(queueTimer); waiting = null; documents = [];
+    ++epoch; clearTimeout(timer); clearTimeout(queueTimer); waiting = null;
+    documents = []; catalog = {total: 0, review: 0};
     for (const id of ['knowledge-list', 'knowledge-results', 'knowledge-answer-result', 'knowledge-configs', 'knowledge-indexes', 'knowledge-detail', 'knowledge-queue']) $(id).replaceChildren();
-    $('knowledge-detail').hidden = true; reset();
+    closeDetail(); reset(); renderLanding(); renderDifyDocuments();
   }
   function selection() { return {knowledge_query: $('task-knowledge-query').value.trim(), knowledge_to_model: $('task-knowledge-consent').checked}; }
   function restore(value) { $('task-knowledge-query').value = value.knowledge_query || ''; $('task-knowledge-consent').checked = Boolean(value.knowledge_to_model); }
@@ -84,6 +243,32 @@ window.KnowledgeUI = (() => {
     row.append(status, action(item.status === 'review' ? '审阅候选' : '查看资料', () => detail(item.id)));
     return row;
   }
+  function renderDifyDocuments() {
+    const host = $('knowledge-documents-list'); host.replaceChildren();
+    if (documents.length) renderDocumentsTable(host, documents);
+    else text(host, 'p', '尚未上传文档。', 'empty');
+    if (documents.length < catalog.total) host.append(action('加载更多文档', () => load(true)));
+  }
+  function renderDocumentsTable(host, items) {
+    const table = document.createElement('table'); table.className = 'knowledge-documents-table';
+    table.innerHTML = '<thead><tr><th scope="col">名称</th><th scope="col">来源</th><th scope="col">上传时间</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead>';
+    const body = document.createElement('tbody');
+    for (const item of items) {
+      const row = document.createElement('tr');
+      row.dataset.documentId = item.id;
+      const name = document.createElement('td');
+      name.append(action(item.logical || item.filename, () => detail(item.id)));
+      if (item.logical !== item.filename) text(name, 'small', item.filename, 'hint');
+      row.append(name);
+      text(row, 'td', item.metadata?.source || '用户上传');
+      text(row, 'td', fmt(item.uploaded));
+      text(row, 'td', STATE[item.status] || item.status);
+      const operations = document.createElement('td');
+      operations.append(action('查看详情', () => detail(item.id)));
+      row.append(operations); body.append(row);
+    }
+    table.append(body); host.append(table);
+  }
   function renderDocuments(items) {
     const host = $('knowledge-list');
     for (const item of items) host.append(documentRow(item));
@@ -94,6 +279,7 @@ window.KnowledgeUI = (() => {
       button.id = 'knowledge-more'; host.append(button);
     }
     if (!documents.length) text(host, 'p', desktopStatus && matchMedia('(min-width: 761px)').matches ? '这个状态暂无资料，可切换状态或上传资料。' : '上传第一份资料，建立可追溯的证据库。', 'empty');
+    renderLanding(); renderDifyDocuments();
     window.DesktopLibrary?.knowledge({items:documents, catalog, status:desktopStatus});
   }
   function shortAge(seconds) {
@@ -156,7 +342,13 @@ window.KnowledgeUI = (() => {
     const requestEpoch = ++epoch;
     const key = identity();
     $('knowledge-access').hidden = Boolean(key); $('knowledge-body').hidden = !key;
-    if (!key) { documents = []; $('knowledge-list').replaceChildren(); $('knowledge-detail').hidden = true; $('knowledge-queue').replaceChildren(); clearTimeout(queueTimer); waiting = null; window.DesktopLibrary?.resetKnowledge(); return; }
+    if (!key) {
+      documents = []; catalog = {total: 0, review: 0};
+      $('knowledge-list').replaceChildren(); $('knowledge-queue').replaceChildren();
+      closeDetail(); clearTimeout(queueTimer); waiting = null;
+      renderLanding(); renderDifyDocuments(); window.DesktopLibrary?.resetKnowledge();
+      return;
+    }
     window.DesktopLibrary?.knowledgeLoading(desktopStatus);
     queueStatus(false);
     try {
@@ -191,12 +383,19 @@ window.KnowledgeUI = (() => {
   }
   async function detail(id) {
     const key = identity();
-    const desktop = matchMedia('(min-width: 761px)').matches, request = ++detailRequest;
-    const current = () => key === identity() && (!desktop || request === detailRequest);
+    const request = ++detailRequest;
+    const current = () => key === identity() && request === detailRequest;
     const [item, versions] = await Promise.all([api('knowledge/documents/' + id), api(`knowledge/documents/${id}/versions`)]);
     if (!current()) return;
+    const summary = documents.find(doc => doc.id === id);
+    if (summary && (summary.status !== item.status || summary.active !== item.active)) {
+      Object.assign(summary, {status: item.status, active: item.active, step: item.step});
+      renderLanding(); renderDifyDocuments();
+    }
     const host = $('knowledge-detail'); host.replaceChildren(); host.hidden = false;
     text(host, 'h2', item.logical);
+    text(host, 'p', `${item.filename} · 上传于 ${fmt(item.uploaded)} · ${item.chunks?.length || 0} 个片段`, 'hint');
+    if (item.error_message) text(host, 'p', item.error_message, 'error-text');
     text(host, 'p', `${STATE[item.status] || item.status} · ${item.active ? '活动版本' : '非活动版本'} · ${item.id}`, 'hint');
     text(host, 'p', `来源：${item.metadata.source} · 文档日期 ${item.metadata.document_date || '未知'} · 可用日期 ${item.metadata.available_date} · 失效日期 ${item.metadata.valid_to || '未声明'}`, 'hint');
     const tags = TAGS.filter(([key]) => (item.metadata[key] || []).length);
@@ -209,6 +408,7 @@ window.KnowledgeUI = (() => {
     }
     for (const warning of item.warnings || []) text(host, 'p', typeof warning === 'string' ? warning : JSON.stringify(warning), 'note warn');
     const actions = document.createElement('div'); actions.className = 'actions mt-16';
+    const close = action('关闭详情', closeDetail); close.classList.add('knowledge-detail-close'); actions.append(close);
     actions.append(action('下载原件', async () => {
       const original = await api(`knowledge/documents/${id}/original`);
       const raw = Uint8Array.from(atob(original.data), char => char.charCodeAt(0));
@@ -472,21 +672,27 @@ window.KnowledgeUI = (() => {
     const today = localInput(new Date()).slice(0, 10);
     $('knowledge-available').value = today; $('knowledge-asof').value = today;
   }
+  async function uploadDocumentFile(file, options = {}) {
+    if (!file || !file.size || file.size > 10 * 1024 * 1024) throw new Error('请选择 1 字节至 10 MiB 的受支持文件');
+    const key = options.key ?? identity();
+    const bytes = new Uint8Array(await file.arrayBuffer()); let binary = '';
+    for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+    const metadata = {source: '用户上传', available_date: localInput(new Date()).slice(0, 10), ...(options.metadata || {})};
+    if (!key || key !== identity()) throw new Error('资料库已切换，请重新上传');
+    await api('knowledge/documents', 'POST', {filename: file.name, data: btoa(binary), logical: options.logical || file.name, metadata});
+  }
   $('knowledge-refresh').onclick = safe(() => load());
   $('knowledge-upload').onsubmit = safe(async event => {
     event.preventDefault();
     const button = event.currentTarget.querySelector('[type=submit]'); button.disabled = true;
     try {
       const file = $('knowledge-file').files[0];
-      if (!file || !file.size || file.size > 10 * 1024 * 1024) throw new Error('请选择 1 字节至 10 MiB 的受支持文件');
-      const bytes = new Uint8Array(await file.arrayBuffer()); let binary = '';
-      for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
       const metadata = {source: $('knowledge-source').value || '用户上传', available_date: $('knowledge-available').value};
       if ($('knowledge-date').value) metadata.document_date = $('knowledge-date').value;
       if ($('knowledge-valid').value) metadata.valid_to = $('knowledge-valid').value;
       for (const [key, id] of TAGS) { const values = tagValues(id); if (values.length) metadata[key] = values; }
-      await api('knowledge/documents', 'POST', {filename: file.name, data: btoa(binary), logical: $('knowledge-logical').value || file.name, metadata});
-      $('knowledge-file').value = ''; notice('资料已排队，等待独立清洗进程处理。'); await load();
+      await uploadDocumentFile(file, {logical: $('knowledge-logical').value || file.name, metadata});
+      $('knowledge-file').value = ''; notice('资料已排队，等待独立清洗进程处理。'); await load(); goCatalog();
     } finally { button.disabled = false; }
   });
   function searchFilters() {
@@ -527,5 +733,5 @@ window.KnowledgeUI = (() => {
     const button = $('knowledge-rebuild'); button.disabled = true;
     try { await api('knowledge/rebuild', 'POST', {}); notice('索引重建完成。'); await configs(); } finally { button.disabled = false; }
   });
-  return {init, load, reset, identityReset, scope: () => scope, restore, selection, evidence, open:detail, close:() => { ++detailRequest; $('knowledge-detail').hidden = true; }, filter:filterStatus, filterStatus:() => desktopStatus, processing: () => { tab('processing'); configs().catch(error => notice(error.message, true)); }};
+  return {init, load, reset, identityReset, scope: () => scope, restore, selection, evidence, open:openDocuments, close:closeDetail, filter:filterStatus, filterStatus:() => desktopStatus, processing: safe(() => openTab('processing'))};
 })();

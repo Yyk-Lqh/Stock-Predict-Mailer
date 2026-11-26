@@ -1556,8 +1556,7 @@ window.KnowledgeUI = (() => {
       await api(`knowledge/documents/${id}/retire`, 'POST', {}); await load(); await detail(id);
     }));
     actions.append(action('永久删除', async () => {
-      const badge = id.slice(0, 8);
-      if (prompt(`永久删除会销毁加密原件、片段与全部索引，无法恢复。输入资料 ID 前 8 位（${badge}）确认：`) !== badge) return;
+      if (!confirm(`确定永久删除「${item.filename}」的这个版本？删除后无法恢复。`)) return;
       await api('knowledge/documents/' + id, 'DELETE'); host.hidden = true; await load();
     }));
     host.append(actions);

@@ -2944,10 +2944,10 @@ globalThis.PonyHall=(()=>{
       const low=Math.min(...all.map(p=>p.value)),high=Math.max(...all.map(p=>p.value)),first=Math.min(...all.map(p=>Date.parse(p.at))),lastTime=Math.max(...all.map(p=>Date.parse(p.at)));
       const x=p=>16+(Date.parse(p.at)-first)/(lastTime-first||1)*658,y=v=>62-(v-low)/(high-low||1)*48;
       const line=points=>points.map((p,i)=>`${i?'L':'M'}${x(p).toFixed(2)} ${y(p.value).toFixed(2)}`).join('');
-      let paths='<path d="M16 14H674M16 38H674M16 62H674" stroke="#28424f" fill="none"/>';
+      let paths='<path d="M16 14H674M16 38H674M16 62H674" stroke="var(--rule)" fill="none"/>';
       if(candles.length){const maxVolume=Math.max(1,...candles.map(p=>p.volume||0));for(const p of candles){const color=p.close>=p.open?'var(--market-up)':'var(--market-down)',xx=x(p);paths+=`<path d="M${xx} ${y(p.high)}V${y(p.low)}" stroke="${color}"/><rect x="${xx-2}" y="${Math.min(y(p.open),y(p.close))}" width="4" height="${Math.max(1,Math.abs(y(p.open)-y(p.close)))}" fill="${color}"/>`;if(p.volume!=null)paths+=`<rect x="${xx-2}" y="${75-p.volume/maxVolume*9}" width="4" height="${p.volume/maxVolume*9}" fill="${color}" opacity=".45"/>`;}}
-      else paths+=`<path d="${line(observed)}" fill="none" stroke="#9adbe8" stroke-width="1.8"/>`;
-      if(predicted.length){const interval=predicted.filter(p=>Number.isFinite(p.lower)&&Number.isFinite(p.upper));if(interval.length>1)paths+=`<path d="${line(interval.map(p=>({...p,value:p.upper})))} ${line(interval.slice().reverse().map(p=>({...p,value:p.lower}))).replace(/^M/,'L')}Z" fill="#bda26d" opacity=".15"/>`;paths+=`<path d="${line(predicted)}" fill="none" stroke="#e3bd79" stroke-dasharray="5 4" stroke-width="1.8"/>`;}
+      else paths+=`<path d="${line(observed)}" fill="none" stroke="var(--accent)" stroke-width="1.8"/>`;
+      if(predicted.length){const interval=predicted.filter(p=>Number.isFinite(p.lower)&&Number.isFinite(p.upper));if(interval.length>1)paths+=`<path d="${line(interval.map(p=>({...p,value:p.upper})))} ${line(interval.slice().reverse().map(p=>({...p,value:p.lower}))).replace(/^M/,'L')}Z" fill="var(--warn-soft)"/>`;paths+=`<path d="${line(predicted)}" fill="none" stroke="var(--warn)" stroke-dasharray="5 4" stroke-width="1.8"/>`;}
       const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 690 76');svg.setAttribute('role','img');svg.setAttribute('aria-label',subject?'上游历史实线与预测虚线':data.market.demo?'演示走势，非真实行情':'来源提供的历史行情');svg.innerHTML=paths;target.append(svg);
       find('.market-chart-note').textContent=subject?'历史实线 · 预测虚线 · 区间仅取上游数据':data.market.demo?'演示走势 · 非实时行情':candles.length?`K线 · ${data.market.source} 日线`:`历史收盘 · ${data.market.source}`;
     }

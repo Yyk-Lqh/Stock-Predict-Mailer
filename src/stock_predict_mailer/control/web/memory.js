@@ -3693,7 +3693,7 @@ window.ComposerControls = (() => {
         if(window.MailRecipients)window.MailRecipients.open();
         else show('permission',permission);
       }],
-      ...servers.map(server=>[server.name,server.enabled?'已启用':'已停用',()=>{settingsPage('mcp');editServer(server);}]),
+      ...servers.map(server=>[server.name,server.enabled?'已启用':'已停用',()=>{close();showView('tools');}]),
     ];
     function filter() {
       const query=search.value.trim().toLocaleLowerCase();
@@ -3705,7 +3705,7 @@ window.ComposerControls = (() => {
       if (!list.childElementCount) text(list,'p','没有找到匹配的连接器。','hint');
     }
     search.oninput=filter;host.append(search,list);filter();
-    row('管理外部工具…',()=>settingsPage('mcp'),false,host);
+    row('管理工具中心…',()=>{close();showView('tools');},false,host);
   }
   function categories() {
     panel.setAttribute('aria-label','对话工具');

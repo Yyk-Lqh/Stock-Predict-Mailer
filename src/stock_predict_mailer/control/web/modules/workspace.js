@@ -279,7 +279,7 @@ window.Workbench = (() => {
     if (name !== 'analysis') inspector(false);
     else if (displayed && !document.body.classList.contains('report-dismissed') && !$('report-open').disabled) inspector(true);
     if (name === 'knowledge') window.KnowledgeUI?.load();
-    const titles = {records: '任务记录', settings: '设置', memory: '记忆与访问', knowledge: '知识库', overview: '使用引导'};
+    const titles = {records: '任务记录', settings: '设置', memory: '记忆与访问', knowledge: '知识库', overview: '使用引导', tools: '工具中心'};
     $('workspace-title').textContent = titles[name] || $('analysis-title').textContent;
   }
   function saveFile(value, filename) {

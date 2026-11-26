@@ -17,6 +17,7 @@
     <button type="button" data-view="records">任务记录</button>
     <button type="button" data-view="overview">使用引导</button>
     <button type="button" data-view="settings">设置</button>
+    <button type="button" data-view="tools">工具中心</button>
     <button type="button" data-view="memory">记忆与访问</button>
   </nav>
   <button type="button" id="theme-toggle" class="theme-toggle" aria-label="界面主题：深色主题。按下切换为跟随系统。" title="界面主题：深色主题｜点击切换为跟随系统">
@@ -592,6 +593,58 @@
       </div>
     </div>
   </section>
+
+  <section class="view tools-page" data-view-pane="tools" hidden>
+    <div id="tools-center" class="tools-shell" aria-labelledby="tools-center-title">
+      <header class="tools-page-head">
+        <div>
+          <p class="tools-kicker">工作区工具</p>
+          <h1 id="tools-center-title">工具中心</h1>
+          <p class="tools-page-copy">将 MCP、插件、工作流和自定义工具集中管理，并在需要时添加到分析流程。</p>
+        </div>
+        <div class="tools-page-meta" aria-live="polite"><span id="tools-resource-count">正在读取</span><button type="button" class="tools-icon-button" data-tools-refresh aria-label="刷新工具中心">↻</button></div>
+      </header>
+
+      <div class="tools-toolbar">
+        <div class="tools-tabs" role="tablist" aria-label="工具类别">
+          <button type="button" role="tab" aria-selected="true" data-tools-tab="all">工具</button>
+          <button type="button" role="tab" aria-selected="false" data-tools-tab="custom">自定义</button>
+          <button type="button" role="tab" aria-selected="false" data-tools-tab="workflow">工作流</button>
+          <button type="button" role="tab" aria-selected="false" data-tools-tab="mcp">MCP</button>
+          <button type="button" role="tab" aria-selected="false" data-tools-tab="plugin">插件</button>
+        </div>
+        <div class="tools-filters">
+          <label class="tools-search"><span class="sr-only">搜索工具</span><span aria-hidden="true">⌕</span><input type="search" data-tools-search placeholder="搜索工具、描述或标签" autocomplete="off"></label>
+          <label class="tools-tag-filter"><span class="sr-only">标签筛选</span><select data-tools-tag><option value="">全部标签</option></select></label>
+        </div>
+      </div>
+
+      <section class="tools-actions-grid" aria-label="添加工具">
+        <button type="button" class="tools-action-card" data-tools-action="mcp">
+          <span class="tools-action-icon tools-action-icon-mcp" aria-hidden="true">⌁</span>
+          <span><strong>添加 MCP 服务请求</strong><small>连接外部 MCP 服务并配置授权</small></span>
+          <span class="tools-action-arrow" aria-hidden="true">→</span>
+        </button>
+        <button type="button" class="tools-action-card" data-tools-action="custom">
+          <span class="tools-action-icon tools-action-icon-custom" aria-hidden="true">✦</span>
+          <span><strong>创建自定义工具</strong><small>通过 OpenAPI Schema 创建可复用工具</small></span>
+          <span class="tools-action-arrow" aria-hidden="true">→</span>
+        </button>
+        <button type="button" class="tools-action-card" data-tools-action="plugin">
+          <span class="tools-action-icon tools-action-icon-plugin" aria-hidden="true">▣</span>
+          <span><strong>添加插件</strong><small>从 GitHub 安装声明式插件</small></span>
+          <span class="tools-action-arrow" aria-hidden="true">→</span>
+        </button>
+      </section>
+
+      <section class="tools-resource-section" aria-labelledby="tools-resource-title">
+        <div class="tools-section-head"><div><p class="tools-kicker">资源目录</p><h2 id="tools-resource-title">可用工具</h2></div><span id="tools-filter-status" class="tools-filter-status" role="status"></span></div>
+        <div id="tools-resource-grid" class="tools-resource-grid"></div>
+        <div id="tools-empty" class="tools-empty" hidden><span class="tools-empty-mark" aria-hidden="true">∅</span><strong>没有匹配的工具</strong><p>调整搜索词或先添加一个工具。</p><button type="button" class="tools-secondary-button" data-tools-action="custom">创建自定义工具</button></div>
+      </section>
+      <p id="tools-status" class="tools-status" role="status" aria-live="polite"></p>
+    </div>
+  </section>
 </main>
 
 <aside id="report-inspector" class="report-inspector" aria-label="报告与证据" hidden>
@@ -600,6 +653,6 @@
 </aside>
 
 <script src="/app.js" defer></script>
-<script src="/memory.js" defer></script>
+<script src="/memory.js?v=20261126-tools-center" defer></script>
 </body>
 </html>

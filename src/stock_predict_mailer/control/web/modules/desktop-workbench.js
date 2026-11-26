@@ -75,7 +75,7 @@ window.DesktopWorkbench = (() => {
 
   } catch (_) { /* Invalid or unavailable local storage keeps system defaults. */ }
 
-  const NAV_ICONS = {'new-analysis': '+', analysis: '⌂', knowledge: '▦', records: '▤', overview: '?', settings: '⚙', memory: '◌'};
+  const NAV_ICONS = {'new-analysis': '+', analysis: '⌂', knowledge: '▦', records: '▤', overview: '?', settings: '⚙', tools: '✦', memory: '◌'};
   const navCollapsed = () => { try { return localStorage.getItem('stock_predict_mailer.desktop.nav.collapsed.v1') === '1'; } catch (_) { return false; } };
 
   const put = (id, value) => { const node = $(id); if (node && node.textContent !== value) node.textContent = value; };

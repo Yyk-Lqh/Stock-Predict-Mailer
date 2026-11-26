@@ -347,6 +347,7 @@ function showView(name) {
   if (name === 'records' && !recordLoaded) loadRecords();
   if (name === 'records') window.ForecastUI?.load(true);
   window.Workbench?.view(name);
+  window.ToolsCenter?.view(name);
 }
 function showPanel(id) {
   document.querySelectorAll('.view:not([hidden]) .panel').forEach(el => { el.hidden = el.id !== id; });
@@ -374,6 +375,8 @@ async function refresh() {
   if ($('workspace-health')) $('workspace-health').textContent = settings.default_model_id ? '分析模型已配置' : '尚未选择分析模型';
   window.DesktopSettings?.refresh();
 }
+
+globalThis.refreshConsole = refresh;
 
 /* ---------- models ---------- */
 function record(container, title, description) {
@@ -2149,7 +2152,7 @@ $('try-sample').onclick = async () => {
     else resetPredictionInput();
     renderSteps();
     await window.Workbench?.init();
-    const view = ['overview', 'analysis', 'records', 'settings', 'memory', 'knowledge'].includes(initial) ? initial : 'analysis';
+    const view = ['overview', 'analysis', 'records', 'settings', 'memory', 'knowledge', 'tools'].includes(initial) ? initial : 'analysis';
     showView(view);
     const panel = {models: 'models', mcp: 'mcp', collab: 'settings'}[initial];
     if (panel) {

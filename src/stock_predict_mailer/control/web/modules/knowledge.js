@@ -55,12 +55,15 @@ window.KnowledgeUI = (() => {
     <div class="knowledge-catalog-toolbar">
       <div class="knowledge-header-actions">
         <button type="button" class="btn primary" id="knowledge-create-landing">＋ 创建知识库</button>
+        <button type="button" class="btn" id="knowledge-connect-landing">⚙ 连接外部知识库</button>
       </div>
     </div>
     <div class="knowledge-catalog-grid">
       <aside class="knowledge-create-panel">
         <button type="button" id="knowledge-create-panel">＋ 创建知识库</button>
         <button type="button" id="knowledge-pipeline-panel">▦ 通过知识流水线创建知识库</button>
+        <div class="knowledge-create-divider"></div>
+        <button type="button" id="knowledge-external-panel">⚙ 连接外部知识库</button>
       </aside>
       <button type="button" class="knowledge-base-card" id="knowledge-open-card">
         <span class="knowledge-base-icon" aria-hidden="true">▣</span>
@@ -73,6 +76,9 @@ window.KnowledgeUI = (() => {
   const knowledgeCreate = document.createElement('div');
   knowledgeCreate.className = 'knowledge-dify-main knowledge-create-main'; knowledgeCreate.hidden = true;
   knowledgeCreate.innerHTML = '<div class="knowledge-step-head"><button type="button" class="btn" data-knowledge-back>← 知识库</button><div class="knowledge-steps"><strong>上传文档</strong></div></div><div class="knowledge-create-body"><h1>选择数据源</h1><div class="knowledge-source-options"><button type="button" class="selected" data-knowledge-source="upload">▤ 导入已有文本</button><button type="button" data-knowledge-source="notion">▣ 同步自 Notion 内容</button><button type="button" data-knowledge-source="web">◉ 同步自 Web 站点</button></div><h2>上传文本文件</h2><div class="knowledge-dropzone">☁&nbsp; <button type="button" id="knowledge-upload-from-create">选择文件</button><input id="knowledge-create-file" type="file" accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.json" multiple hidden><p>选择后会直接上传到当前知识库。支持 PDF、DOCX、TXT、Markdown、CSV、XLSX、JSON，每次最多 5 个文件，每个不超过 10 MiB。</p><p id="knowledge-create-status" class="hint" aria-live="polite"></p></div><button type="button" class="btn primary knowledge-next-upload" id="knowledge-next-upload">选择文件并上传</button></div>';
+  const knowledgeConnect = document.createElement('div');
+  knowledgeConnect.className = 'knowledge-dify-main knowledge-connect-main'; knowledgeConnect.hidden = true;
+  knowledgeConnect.innerHTML = '<div class="knowledge-connect-layout"><form id="knowledge-external-form" class="knowledge-connect-form"><button type="button" class="btn" data-knowledge-back>← 返回知识库</button><h1>连接外部知识库</h1><p class="lede">通过 API 和知识库 ID 连接外部知识库。目前仅支持检索功能。</p><label class="field"><span>外部知识库名称</span><input id="knowledge-external-name" placeholder="请输入外部知识库名称"></label><label class="field"><span>知识库描述</span><textarea id="knowledge-external-description" rows="3" placeholder="描述知识库内容（可选）"></textarea></label><label class="field"><span>外部知识库 API</span><input id="knowledge-external-api" placeholder="点击此处创建或选择 API"></label><label class="field"><span>外部知识库 ID</span><input id="knowledge-external-id" placeholder="请输入外部知识库 ID"></label><div class="knowledge-connect-actions"><button type="button" class="btn" data-knowledge-back>取消</button><button type="submit" class="btn primary">连接 →</button></div></form><aside class="knowledge-connect-help"><div class="knowledge-sidebar-icon">▣</div><h2>如何连接外部知识库</h2><p>需要先创建一个外部 API，再填写对应的知识库 ID。连接后可以直接进入召回测试。</p><a href="#knowledge" data-knowledge-help>了解更多</a></aside></div>';
   const knowledgeDocuments = document.createElement('div');
   knowledgeDocuments.className = 'knowledge-dify-main knowledge-documents-main'; knowledgeDocuments.hidden = true;
   knowledgeDocuments.innerHTML = `
@@ -89,7 +95,7 @@ window.KnowledgeUI = (() => {
   knowledgeLanding.querySelector('.knowledge-catalog-grid').before(knowledgeContent.querySelector('#knowledge-access'));
   const knowledgeHeader = document.createElement('header');
   knowledgeHeader.className = 'knowledge-dify-header';
-  knowledgeHeader.innerHTML = '<div class="knowledge-brand"><span class="knowledge-brand-mark">▣</span><span>知识库</span><span class="knowledge-brand-sep">/</span><strong>预测资料库</strong></div><div class="knowledge-header-actions"><button type="button" class="btn quiet" id="knowledge-api">◉ 服务 API</button></div>';
+  knowledgeHeader.innerHTML = '<div class="knowledge-brand"><span class="knowledge-brand-mark">▣</span><span>知识库</span><span class="knowledge-brand-sep">/</span><strong>预测资料库</strong></div><div class="knowledge-header-actions"><button type="button" class="btn quiet" id="knowledge-api">◉ 服务 API</button><button type="button" class="btn quiet" id="knowledge-external">⚙ 外部知识库 API</button></div>';
   const knowledgeSidebar = document.createElement('aside');
   knowledgeSidebar.className = 'knowledge-dify-sidebar';
   knowledgeSidebar.innerHTML = `
@@ -106,7 +112,7 @@ window.KnowledgeUI = (() => {
     <div class="knowledge-sidebar-foot"><span id="knowledge-sidebar-count"></span><small>文档版本</small></div>`;
   const knowledgeLayout = document.createElement('div');
   knowledgeLayout.className = 'knowledge-dify-layout';
-  knowledgeLayout.append(knowledgeSidebar, knowledgeLanding, knowledgeCreate, knowledgeDocuments, knowledgeContent);
+  knowledgeLayout.append(knowledgeSidebar, knowledgeLanding, knowledgeCreate, knowledgeConnect, knowledgeDocuments, knowledgeContent);
   section.append(knowledgeHeader, knowledgeLayout);
   document.querySelector('main').append(section);
   function renderLanding() {
@@ -118,8 +124,10 @@ window.KnowledgeUI = (() => {
     surface = name;
     section.classList.toggle('knowledge-catalog-mode', name === 'catalog');
     section.classList.toggle('knowledge-create-mode', name === 'create');
+    section.classList.toggle('knowledge-connect-mode', name === 'connect');
     knowledgeLanding.hidden = name !== 'catalog';
     knowledgeCreate.hidden = name !== 'create';
+    knowledgeConnect.hidden = name !== 'connect';
     knowledgeDocuments.hidden = name !== 'documents';
     knowledgeContent.hidden = name !== 'tools';
     if (name === 'documents') renderDifyDocuments();
@@ -132,9 +140,12 @@ window.KnowledgeUI = (() => {
   }
   const goCatalog = () => showSurface('catalog');
   const goCreate = () => showSurface('create');
+  const goConnect = () => showSurface('connect');
   $('knowledge-create-landing').onclick = goCreate;
   $('knowledge-create-panel').onclick = goCreate;
   $('knowledge-pipeline-panel').onclick = goCreate;
+  $('knowledge-connect-landing').onclick = goConnect;
+  $('knowledge-external-panel').onclick = goConnect;
   $('knowledge-open-card').onclick = safe(() => openDocuments());
   section.querySelectorAll('[data-knowledge-back]').forEach(button => { button.onclick = goCatalog; });
   $('knowledge-documents-add').onclick = goCreate;
@@ -187,8 +198,13 @@ window.KnowledgeUI = (() => {
     input.value = '';
     await uploadCreateFiles(files);
   });
+  $('knowledge-external-form').onsubmit = event => {
+    event.preventDefault();
+    notice('外部知识库连接暂未接入。', true);
+  };
   showSurface('catalog');
   $('knowledge-api').onclick = () => notice('服务 API 入口将在当前资料库作用域内使用现有接口。');
+  $('knowledge-external').onclick = goConnect;
   $('knowledge-pipeline-convert').onclick = () => notice('流水线转换需要先完成当前知识库的处理配置。');
   const selectionEditor = document.createElement('details'); selectionEditor.className = 'input-editor';
   selectionEditor.innerHTML = `<summary>知识资料 · 为本轮检索证据</summary><div class="card stack"><label class="field"><span>检索问题</span><input id="task-knowledge-query" maxlength="4000" placeholder="留空时不使用知识库"></label><label class="check"><input type="checkbox" id="task-knowledge-consent"> 允许将本轮检索资料发送给已配置的分析模型</label><p class="hint">从当前选择的资料库检索已发布资料，截止时间采用预测生成日期。只有明确勾选后，证据才会进入模型输入。</p><button type="button" class="btn tiny" data-goto="knowledge">管理资料与版本</button></div>`;

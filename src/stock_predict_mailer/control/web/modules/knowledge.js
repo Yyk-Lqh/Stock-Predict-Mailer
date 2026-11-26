@@ -7,6 +7,10 @@ window.KnowledgeUI = (() => {
   const identity = () => scope === 'local' ? 'local' : (memoryKey ? 'private:' + memoryKey : '');
   sessionStorage.setItem(scopeKey, scope);
   let desktopStatus = '', detailRequest = 0, searchRequest = 0;
+  const LIBRARY_DEFAULTS = {name: '预测资料库', description: '', icon: 'library', top_k: 8, retrieval: 'auto'};
+  const LIBRARY_ICONS = {library: '▣', reports: '▤', notes: '✎', research: '◎'};
+  const FILTER_FIELDS = {as_of: 'knowledge-asof', start_date: 'knowledge-start', stock_code: 'knowledge-stock', entity: 'knowledge-entity'};
+  let profile = null, profileRequest = null, activeModel = '', historyPage = 1, historyRequest = 0;
   const STATE = {pending: '已排队', processing: '处理中', ready: '已发布', review: '待审阅', failed: '处理失败', rejected: '已拒绝', deleting: '等待删除'};
   const STEP = {received: '已接收', parsed: '已解析', chunked: '已切分', extracted: '已提取', reviewed: '已审阅', published: '已发布'};
   // 与后端 metadata() 白名单一致：四类标签键与对应的表单字段。
@@ -41,12 +45,93 @@ window.KnowledgeUI = (() => {
         <div id="knowledge-queue" class="queue-bar"></div>
         <div id="knowledge-list"></div>
       </div>
-      <div data-kb-pane="search" hidden><form id="knowledge-search" class="stack"><label class="field"><span>查找证据</span><input id="knowledge-query" required maxlength="4000" placeholder="例如：营业收入、客户关系、供应链风险"></label><div class="grid-4"><label class="field"><span>截止日期</span><input id="knowledge-asof" type="date"></label><label class="field"><span>文档日期不早于</span><input id="knowledge-start" type="date"></label><label class="field"><span>股票代码</span><input id="knowledge-stock" placeholder="600000.SH"></label><label class="field"><span>主体名称</span><input id="knowledge-entity" maxlength="200"></label></div><div class="grid-2"><label class="field"><span>返回片段数</span><select id="knowledge-limit"><option value="5">5 段</option><option value="8" selected>8 段</option><option value="12">12 段</option><option value="20">20 段</option></select></label><div class="field"><span class="hint">汇总不是模型结论，只按「摘录 → 关系 → 推断」顺序拼接</span><div class="actions"><button type="submit" class="btn primary">检索证据</button><button type="button" id="knowledge-answer" class="btn">汇总并回答</button></div></div></div><p class="hint">截止日期决定「当时能看到什么」：晚于该日期才可用的资料不参与检索；「文档日期不早于」用于排除过旧资料，文档日期未知的条目会被一并排除。</p></form><div id="knowledge-results" class="mt-26"></div><div id="knowledge-answer-result" class="mt-26"></div></div>
+      <section data-kb-pane="search" hidden aria-labelledby="knowledge-recall-title">
+        <div class="kb-recall-grid">
+          <div class="kb-query-column">
+            <header class="kb-pane-head"><h1 id="knowledge-recall-title">召回测试</h1><p>输入查询，核对知识库返回的原文和来源。</p></header>
+            <form id="knowledge-search" class="kb-query">
+              <div class="kb-query-header"><label for="knowledge-query">查询文本</label><button type="button" class="btn tiny" id="knowledge-retrieval-label" title="打开知识库的检索设置">关键词与关系</button></div>
+              <textarea id="knowledge-query" rows="6" required maxlength="4000" placeholder="例如：这份季度报告中有哪些供应链风险？"></textarea>
+              <div class="kb-query-footer"><span id="knowledge-query-count" class="hint">0 / 4000</span><button type="button" id="knowledge-answer" class="btn tiny">汇总证据</button><button type="submit" class="btn primary">运行测试</button></div>
+              <details id="knowledge-search-filters" class="kb-filters"><summary>检索条件 <span id="knowledge-limit-label" class="hint">Top K 8</span></summary>
+                <div class="kb-filter-grid">
+                  <label class="field"><span>截止日期</span><input id="knowledge-asof" type="date"></label>
+                  <label class="field"><span>文档日期不早于</span><input id="knowledge-start" type="date"></label>
+                  <label class="field"><span>股票代码</span><input id="knowledge-stock" maxlength="100" placeholder="600000.SH"></label>
+                  <label class="field"><span>主体名称</span><input id="knowledge-entity" maxlength="200"></label>
+                  <label class="field"><span>Top K</span><input id="knowledge-limit" type="number" min="1" max="20" value="8" required></label>
+                  <label class="field"><span>本次检索方式</span><select id="knowledge-query-mode" disabled><option value="">使用默认</option><option value="auto">自动选择</option><option value="lexical">关键词与关系</option></select></label>
+                </div>
+              </details>
+              <p id="knowledge-search-status" role="status" class="hint kb-search-status" hidden></p>
+            </form>
+          </div>
+          <section class="kb-history" aria-labelledby="knowledge-history-title">
+            <h2 id="knowledge-history-title">查询记录</h2>
+            <p id="knowledge-history-status" class="hint" role="status">正在读取记录…</p>
+            <table id="knowledge-history-table" hidden><thead><tr><th scope="col">查询内容</th><th scope="col">命中</th><th scope="col">测试时间</th></tr></thead><tbody id="knowledge-history"></tbody></table>
+            <div id="knowledge-history-pages" class="kb-history-pages" hidden>
+              <button type="button" class="btn tiny" id="knowledge-history-prev">上一页</button>
+              <span id="knowledge-history-page" class="hint"></span>
+              <button type="button" class="btn tiny" id="knowledge-history-next">下一页</button>
+            </div>
+          </section>
+          <section class="kb-results" aria-labelledby="knowledge-results-title">
+            <header><h2 id="knowledge-results-title">召回结果</h2><p id="knowledge-results-summary" class="hint" role="status">运行测试后查看命中片段。</p></header>
+            <div id="knowledge-results"></div>
+            <div id="knowledge-answer-result"></div>
+          </section>
+        </div>
+      </section>
       <div data-kb-pane="pipeline" hidden><div class="knowledge-pipeline-card"><div><p class="eyebrow">DOCUMENT PROCESSING</p><h2>转换为知识流水线</h2><p class="lede">将当前知识库交给可编辑的处理流程。新的处理方式会应用到后续添加的所有文档。</p><button type="button" class="btn primary" id="knowledge-pipeline-convert">转换</button><span class="hint">此操作无法撤销。</span></div><div class="knowledge-pipeline-preview"><div class="pipeline-node">文件上传</div><span>→</span><div class="pipeline-node">文档解析</div><span>→</span><div class="pipeline-node">通用切分</div></div></div></div>
-      <div data-kb-pane="processing" hidden><div class="knowledge-settings-summary"><div><h2>知识库设置</h2><p class="hint">控制资料库名称、分段方式和检索策略。模型配置仍通过现有处理设置保存。</p></div><div class="knowledge-settings-grid"><div><span>名称和图标</span><strong>预测资料库</strong></div><div><span>可见权限</span><strong>只有我</strong></div><div><span>分段模式</span><strong>通用</strong></div><div><span>索引模式</span><strong>经济</strong></div><div><span>检索设置</span><strong>倒排索引 · Top K 2</strong></div><div><span>文档来源</span><strong>文件上传</strong></div></div></div><p class="hint">规则清洗和关键词检索无需模型。语义清洗模型与向量模型独立配置；保存配置不会自动执行资料处理。</p><div id="knowledge-configs"></div><div class="section-head mt-26"><h2>索引版本</h2><button id="knowledge-rebuild" type="button" class="btn">重建索引</button></div><div id="knowledge-indexes"></div></div>
+      <section data-kb-pane="processing" hidden aria-labelledby="knowledge-settings-title">
+        <header class="kb-pane-head"><h1 id="knowledge-settings-title">知识库设置</h1><p>管理资料库信息、索引和召回测试默认值。</p></header>
+        <div class="kb-settings">
+          <form id="knowledge-profile">
+            <section class="kb-settings-row" aria-labelledby="knowledge-properties-title">
+              <h2 id="knowledge-properties-title">基本信息</h2>
+              <div class="kb-settings-fields">
+                <div class="kb-name-row">
+                  <label class="field"><span>名称</span><input id="knowledge-name" maxlength="80" required></label>
+                  <label class="field"><span>图标</span><select id="knowledge-icon"><option value="library">▣ 资料库</option><option value="reports">▤ 报告</option><option value="notes">✎ 笔记</option><option value="research">◎ 研究</option></select></label>
+                </div>
+                <label class="field"><span>描述</span><textarea id="knowledge-description" rows="3" maxlength="500" placeholder="例如：季度报告和行业研究资料"></textarea></label>
+                <div class="kb-setting-meta"><strong>可见权限</strong><span id="knowledge-visibility"></span></div>
+              </div>
+            </section>
+            <section class="kb-settings-row" aria-labelledby="knowledge-segment-title">
+              <h2 id="knowledge-segment-title">分段模式</h2>
+              <div class="kb-setting-card"><strong>通用分段</strong><p>按文档结构切分，召回时返回命中的原文片段。</p></div>
+            </section>
+            <section class="kb-settings-row" aria-labelledby="knowledge-index-title">
+              <h2 id="knowledge-index-title">索引模式</h2>
+              <div class="kb-setting-card"><strong id="knowledge-active-mode">正在读取索引</strong><p id="knowledge-active-model" class="hint"></p><button type="button" id="knowledge-configure-index" class="btn tiny">配置向量索引</button></div>
+            </section>
+            <section class="kb-settings-row" aria-labelledby="knowledge-retrieval-title">
+              <h2 id="knowledge-retrieval-title">检索设置</h2>
+              <div class="kb-setting-card kb-settings-fields">
+                <label class="field"><span>召回测试默认检索方式</span><select id="knowledge-retrieval"><option value="auto">自动选择</option><option value="lexical">关键词与关系</option></select></label>
+                <p class="hint">自动选择会在向量索引可用时使用混合检索。</p>
+                <label for="knowledge-top-k">默认返回上限（Top K）</label>
+                <div class="kb-top-k">
+                  <input id="knowledge-top-k" type="number" min="1" max="20" required value="8">
+                  <input id="knowledge-top-range" type="range" min="1" max="20" value="8" aria-label="默认返回上限滑块">
+                </div>
+              </div>
+            </section>
+            <div class="kb-settings-row kb-settings-save"><span id="knowledge-profile-status" class="hint" role="status"></span><button type="submit" class="btn primary" disabled>保存设置</button></div>
+          </form>
+          <details id="knowledge-advanced" class="kb-advanced">
+            <summary>模型配置与索引版本</summary>
+            <div id="knowledge-configs"></div>
+            <div class="section-head"><h2>索引版本</h2><button id="knowledge-rebuild" type="button" class="btn tiny">重建索引</button></div>
+            <div id="knowledge-indexes"></div>
+          </details>
+        </div>
+      </section>
     </div>`;
   const knowledgeContent = document.createElement('div');
-  knowledgeContent.className = 'knowledge-dify-main';
+  knowledgeContent.className = 'knowledge-dify-main knowledge-tools-main';
   while (section.firstChild) knowledgeContent.append(section.firstChild);
   let surface = 'catalog';
   const knowledgeLanding = document.createElement('div');
@@ -69,6 +154,7 @@ window.KnowledgeUI = (() => {
         <span class="knowledge-base-icon" aria-hidden="true">▣</span>
         <span class="knowledge-base-copy">
           <strong>预测资料库</strong>
+          <small class="hint" id="knowledge-card-description" hidden></small>
           <small class="hint" id="knowledge-card-count">正在读取</small>
         </span>
       </button>
@@ -123,6 +209,15 @@ window.KnowledgeUI = (() => {
   section.append(knowledgeHeader, knowledgeLayout);
   document.querySelector('main').append(section);
   function renderLanding() {
+    const library = profile || LIBRARY_DEFAULTS;
+    for (const selector of ['.knowledge-base-copy strong', '.knowledge-sidebar-card strong', '.knowledge-brand strong']) {
+      section.querySelector(selector).textContent = library.name;
+    }
+    for (const selector of ['.knowledge-base-icon', '.knowledge-sidebar-icon', '.knowledge-brand-mark']) {
+      section.querySelector(selector).textContent = LIBRARY_ICONS[library.icon];
+    }
+    $('knowledge-card-description').textContent = library.description;
+    $('knowledge-card-description').hidden = !library.description;
     $('knowledge-card-count').textContent = `${catalog.total || documents.length || 0} 个资料版本 · ${catalog.review || 0} 待审阅`;
     $('knowledge-sidebar-count').textContent = catalog.total;
     const host = $('knowledge-document-catalog-list'); host.replaceChildren();
@@ -264,13 +359,20 @@ window.KnowledgeUI = (() => {
       el.hidden = name === 'documents' || el.dataset.kbPane !== name;
     });
     section.querySelectorAll('[data-kb-tab]').forEach(el => el.classList.toggle('active', el.dataset.kbTab === name));
-    section.querySelectorAll('[data-dify-kb-tab]').forEach(el => el.classList.toggle('active', el.dataset.difyKbTab === name));
+    for (const button of section.querySelectorAll('[data-dify-kb-tab]')) {
+      const active = button.dataset.difyKbTab === name;
+      button.classList.toggle('active', active);
+      if (active) button.setAttribute('aria-current', 'page');
+      else button.removeAttribute('aria-current');
+    }
     showSurface(name === 'documents' ? 'documents' : 'tools');
   }
   async function openTab(name) {
     if (name === 'documents') return openDocuments();
     selectTab(name);
-    if (name === 'processing' && identity()) await configs();
+    if (!identity()) return;
+    if (name === 'processing') await Promise.all([loadProfile(), configs()]);
+    if (name === 'search') await Promise.all([loadProfile(), loadHistory(historyPage), loadActiveIndex()]);
   }
   section.querySelectorAll('[data-kb-tab], [data-dify-kb-tab]').forEach(el => {
     el.onclick = safe(() => openTab(el.dataset.kbTab || el.dataset.difyKbTab));
@@ -281,10 +383,16 @@ window.KnowledgeUI = (() => {
   }
   function reset() { $('task-knowledge-query').value = ''; $('task-knowledge-consent').checked = false; }
   function identityReset() {
-    ++detailRequest; ++searchRequest; desktopStatus = ''; window.DesktopLibrary?.resetKnowledge();
+    ++detailRequest; ++searchRequest; ++historyRequest; desktopStatus = ''; window.DesktopLibrary?.resetKnowledge();
     ++epoch; clearTimeout(timer); clearTimeout(queueTimer); waiting = null;
     documents = []; catalog = {total: 0, review: 0};
-    for (const id of ['knowledge-list', 'knowledge-results', 'knowledge-answer-result', 'knowledge-configs', 'knowledge-indexes', 'knowledge-detail', 'knowledge-queue']) $(id).replaceChildren();
+    profile = profileRequest = null; activeModel = ''; historyPage = 1;
+    for (const id of ['knowledge-list', 'knowledge-configs', 'knowledge-indexes', 'knowledge-detail', 'knowledge-queue']) $(id).replaceChildren();
+    clearRecall();
+    $('knowledge-profile').reset();
+    $('knowledge-profile').querySelector('[type="submit"]').disabled = true;
+    $('knowledge-profile-status').textContent = '';
+    applyProfile();
     closeDetail(); reset(); renderLanding(); renderDifyDocuments();
   }
   function selection() { return {knowledge_query: $('task-knowledge-query').value.trim(), knowledge_to_model: $('task-knowledge-consent').checked}; }
@@ -412,6 +520,10 @@ window.KnowledgeUI = (() => {
     }
     window.DesktopLibrary?.knowledgeLoading(desktopStatus);
     queueStatus(false);
+    if (surface === 'tools') {
+      const tab = section.querySelector('[data-dify-kb-tab].active')?.dataset.difyKbTab;
+      if (tab === 'search' || tab === 'processing') openTab(tab).catch(error => notice(error.message, true));
+    } else if (!profile) loadProfile();
     try {
       const offset = extend ? documents.length : 0;
       const limit = extend ? PAGE : Math.min(500, Math.max(PAGE, documents.length));
@@ -685,10 +797,90 @@ window.KnowledgeUI = (() => {
     renderEvidence(host, data); host.scrollIntoView({block: 'start'});
   }
   const CONFIG_LABELS = {provider: '服务类型', base_url: '服务地址', model: '模型名称', version: '模型版本', timeout_seconds: '单次超时（秒）', allow_external: '允许向远程服务发送资料与查询', mode: '处理范围', document_timeout_seconds: '每份资料总超时（秒）', max_calls: '每份资料最大调用次数', max_input_chars: '单次输入字符上限', max_output_tokens: '单次输出 Token 上限', budget_usd: '每份资料预算（美元）', input_usd_per_million: '每百万输入 Token 单价（美元）', output_usd_per_million: '每百万输出 Token 单价（美元）'};
+  function renderIndex(embedding) {
+    activeModel = embedding.active_model || '';
+    $('knowledge-active-mode').textContent = activeModel ? '向量索引已启用' : '本地全文索引';
+    $('knowledge-active-model').textContent = activeModel ? `${activeModel} · ${embedding.dimension} 维`
+      : '使用 SQLite 全文索引和资料关系，无需调用模型。';
+    updateRecallLabels();
+  }
+  async function loadActiveIndex() {
+    const key = identity();
+    const embedding = await api('knowledge/config');
+    if (key === identity()) renderIndex(embedding);
+  }
+  function applyProfile() {
+    const current = profile || LIBRARY_DEFAULTS;
+    $('knowledge-name').value = current.name;
+    $('knowledge-description').value = current.description;
+    $('knowledge-icon').value = current.icon;
+    $('knowledge-top-k').value = $('knowledge-top-range').value = current.top_k;
+    $('knowledge-retrieval').value = current.retrieval;
+    $('knowledge-visibility').textContent = scope === 'local' ? '本机工作区' : '当前私有空间';
+    $('knowledge-limit').value = current.top_k;
+    $('knowledge-query-mode').disabled = !profile;
+    $('knowledge-query-mode').value = '';
+    updateRecallLabels();
+    renderLanding();
+  }
+  function loadProfile() {
+    if (profile) return Promise.resolve();
+    if (!profileRequest) {
+      const key = identity(), status = $('knowledge-profile-status');
+      const pending = api('knowledge/profile').then(data => {
+        if (profileRequest !== pending || key !== identity()) return;
+        profile = data;
+        applyProfile();
+        $('knowledge-profile').querySelector('[type="submit"]').disabled = false;
+        status.textContent = '';
+      }).catch(error => {
+        if (profileRequest !== pending || key !== identity()) return;
+        status.textContent = error.message.startsWith('NOT_FOUND')
+          ? '请重启控制台以启用知识库设置。' : `读取设置失败 · ${error.message}`;
+      }).finally(() => { if (profileRequest === pending) profileRequest = null; });
+      profileRequest = pending;
+    }
+    return profileRequest;
+  }
+  $('knowledge-configure-index').onclick = () => {
+    const advanced = $('knowledge-advanced');
+    advanced.open = true;
+    const editor = $('knowledge-configs').querySelector('details');
+    if (editor) editor.open = true;
+    advanced.scrollIntoView({block: 'nearest'});
+    advanced.querySelector('summary').focus({preventScroll: true});
+  };
+  $('knowledge-top-range').oninput = event => { $('knowledge-top-k').value = event.target.value; };
+  $('knowledge-top-k').oninput = event => {
+    if (event.target.validity.valid && event.target.value) $('knowledge-top-range').value = event.target.value;
+  };
+  $('knowledge-profile').onsubmit = safe(async event => {
+    event.preventDefault();
+    const key = identity(), button = event.currentTarget.querySelector('[type="submit"]');
+    const status = $('knowledge-profile-status');
+    button.disabled = true;
+    status.textContent = '正在保存…';
+    try {
+      const data = await api('knowledge/profile', 'PUT', {
+        name: $('knowledge-name').value, description: $('knowledge-description').value, icon: $('knowledge-icon').value,
+        top_k: Number($('knowledge-top-k').value), retrieval: $('knowledge-retrieval').value
+      });
+      if (key !== identity()) return;
+      profile = data;
+      applyProfile();
+      searchForm.dispatchEvent(new Event('input'));
+      status.textContent = '设置已保存。';
+    } catch (error) {
+      if (key === identity()) status.textContent = `保存失败 · ${error.message}`;
+    } finally {
+      if (key === identity()) button.disabled = false;
+    }
+  });
   async function configs() {
     const key = identity();
     const [embedding, cleaner, indexes] = await Promise.all([api('knowledge/config'), api('knowledge/cleaner/config'), api('knowledge/indexes')]);
     if (key !== identity()) return;
+    renderIndex(embedding);
     const host = $('knowledge-configs'); host.replaceChildren();
     for (const [title, path, cfg] of [['语义检索 · Embedding', 'knowledge/config', embedding], ['语义清洗 · 候选提取', 'knowledge/cleaner/config', cleaner]]) {
       const details = document.createElement('details'); details.className = 'input-editor'; text(details, 'summary', title);
@@ -755,39 +947,165 @@ window.KnowledgeUI = (() => {
       $('knowledge-file').value = ''; notice('资料已排队，等待独立清洗进程处理。'); await load(); goCatalog();
     } finally { button.disabled = false; }
   });
+  const retrievalMode = () => $('knowledge-query-mode').value || profile?.retrieval || LIBRARY_DEFAULTS.retrieval;
+  const searchForm = $('knowledge-search');
+  const searchButton = searchForm.querySelector('[type="submit"]');
+  function updateRecallLabels() {
+    $('knowledge-query-count').textContent = `${$('knowledge-query').value.length} / ${$('knowledge-query').maxLength}`;
+    $('knowledge-limit-label').textContent = `Top K ${$('knowledge-limit').value || '—'}`;
+    $('knowledge-retrieval-label').textContent = retrievalMode() === 'auto' && activeModel ? '混合检索' : '关键词与关系';
+  }
+  function searchStatus(message) {
+    const node = $('knowledge-search-status');
+    node.textContent = message;
+    node.hidden = !message;
+  }
+  function clearResults(summary = '运行测试后查看命中片段。') {
+    $('knowledge-results-title').textContent = '召回结果';
+    $('knowledge-results-summary').textContent = summary;
+    $('knowledge-results').replaceChildren();
+    $('knowledge-answer-result').replaceChildren();
+  }
+  function clearRecall() {
+    searchForm.reset();
+    $('knowledge-asof').value = localInput(new Date()).slice(0, 10);
+    $('knowledge-history').replaceChildren();
+    $('knowledge-history-table').hidden = $('knowledge-history-pages').hidden = true;
+    $('knowledge-history-status').textContent = '正在读取记录…';
+    searchStatus('');
+    clearResults();
+  }
+  function restoreRecall(filters) {
+    ++searchRequest;
+    $('knowledge-query-mode').value = filters.retrieval || '';
+    $('knowledge-query').value = filters.query;
+    $('knowledge-limit').value = filters.limit;
+    for (const [name, id] of Object.entries(FILTER_FIELDS)) $(id).value = filters[name] || '';
+    $('knowledge-search-filters').open = true;
+    searchForm.dispatchEvent(new Event('input'));
+    searchStatus('');
+    clearResults('已载入记录中的条件。运行测试可查看当前结果。');
+    $('knowledge-query').focus();
+  }
+  async function loadHistory(page) {
+    const key = identity(), request = ++historyRequest;
+    const current = () => key === identity() && request === historyRequest;
+    const status = $('knowledge-history-status');
+    try {
+      const data = await api(`knowledge/recall-history?page=${page}`);
+      if (!current()) return;
+      const host = $('knowledge-history');
+      host.replaceChildren();
+      for (const item of data.items) {
+        const row = document.createElement('tr');
+        const button = action(item.filters.query, () => restoreRecall(item.filters));
+        button.className = 'kb-history-query';
+        button.title = item.filters.query;
+        text(row, 'td', '').append(button);
+        text(row, 'td', String(item.hits));
+        text(row, 'td', fmt(item.at));
+        host.append(row);
+      }
+      historyPage = data.page;
+      const pages = Math.max(1, Math.ceil(data.total / data.page_size));
+      $('knowledge-history-table').hidden = !data.items.length;
+      $('knowledge-history-pages').hidden = pages === 1;
+      $('knowledge-history-page').textContent = `${historyPage} / ${pages}`;
+      $('knowledge-history-prev').disabled = historyPage <= 1;
+      $('knowledge-history-next').disabled = historyPage >= pages;
+      status.textContent = data.total ? '' : '暂无查询记录。';
+    } catch (error) {
+      if (current()) status.textContent = error.message.startsWith('NOT_FOUND')
+        ? '重启控制台后可保存查询记录。' : `读取记录失败 · ${error.message}`;
+    }
+  }
+  $('knowledge-history-prev').onclick = () => loadHistory(historyPage - 1);
+  $('knowledge-history-next').onclick = () => loadHistory(historyPage + 1);
+  $('knowledge-limit').addEventListener('invalid', () => { $('knowledge-search-filters').open = true; });
+  $('knowledge-retrieval-label').onclick = safe(() => openTab('processing'));
+  searchForm.addEventListener('input', () => {
+    updateRecallLabels();
+    if (searchButton.disabled || $('knowledge-results').childElementCount || $('knowledge-answer-result').childElementCount) {
+      searchStatus('查询条件已更改，请重新运行测试。');
+    }
+  });
+  function renderRecall(data) {
+    const host = $('knowledge-results');
+    const found = data.results || [];
+    const mode = data.retrieval_mode === 'hybrid' ? '混合检索' : '关键词与关系';
+    clearResults(`${mode} · Top K ${data.limit} · 截止 ${data.as_of}`);
+    $('knowledge-results-title').textContent = `${found.length} 个召回片段`;
+    aliasHint(host, data);
+    anchorHint(host, data);
+    if (!found.length) text(host, 'p', '没有匹配的片段。可调整查询条件，或确认文档已发布。', 'hint');
+    for (const item of found) {
+      const card = document.createElement('article'); card.className = 'kb-hit';
+      const heading = document.createElement('div'); heading.className = 'kb-hit-header';
+      const ordinal = Number(item.citation_id.split(':').at(-1)) + 1;
+      text(heading, 'span', `片段 ${ordinal} · ${[...item.text].length} 字符`);
+      text(heading, 'span', `得分 ${item.score.toFixed(4)}`).title = '检索排序分数';
+      card.append(heading);
+      const excerpt = document.createElement('details');
+      text(excerpt, 'summary', item.text.slice(0, 260) + (item.text.length > 260 ? '…' : ''), 'source-text');
+      text(excerpt, 'p', item.text, 'source-text');
+      const date = item.metadata?.document_date || '未知';
+      text(excerpt, 'p', `文档日期 ${date} · 来源定位 ${JSON.stringify(item.location || {})}`, 'hint');
+      card.append(excerpt);
+      const tags = [...new Set(TAGS.flatMap(([name]) => item.metadata?.[name] || []))].slice(0, 5);
+      if (tags.length) text(card, 'p', tags.join(' · '), 'hint');
+      for (const warning of item.warnings || []) text(card, 'p', warning, 'hint');
+      const source = document.createElement('footer');
+      text(source, 'span', item.filename);
+      source.append(action('打开文档', () => openDocuments(item.document_id)));
+      card.append(source); host.append(card);
+    }
+    for (const warning of data.warnings || []) text(host, 'p', warning, 'hint');
+    window.DesktopLibrary?.searchRendered(host, data);
+  }
   function searchFilters() {
-    const body = {query: $('knowledge-query').value, limit: Number($('knowledge-limit').value) || 8};
-    for (const [name, id] of [['as_of', 'knowledge-asof'], ['start_date', 'knowledge-start'], ['stock_code', 'knowledge-stock'], ['entity', 'knowledge-entity']]) if ($(id).value) body[name] = $(id).value;
+    const body = {query: $('knowledge-query').value.trim(), limit: Number($('knowledge-limit').value)};
+    for (const [name, id] of Object.entries(FILTER_FIELDS)) if ($(id).value.trim()) body[name] = $(id).value.trim();
+    if (profile) body.retrieval = retrievalMode();
     return body;
   }
-  $('knowledge-search').onsubmit = safe(async event => {
-    event.preventDefault(); const button = event.currentTarget.querySelector('[type=submit]'); button.disabled = true;
+  async function runRecall(answer) {
+    if (!searchForm.reportValidity() || !$('knowledge-query').value.trim()) {
+      $('knowledge-query').focus();
+      return;
+    }
+    const answerButton = $('knowledge-answer');
+    if (searchButton.disabled) return;
+    searchButton.disabled = answerButton.disabled = true;
     const key = identity(), request = ++searchRequest, filters = searchFilters(), signature = JSON.stringify(filters);
-    window.DesktopLibrary?.searchLoading('检索');
+    const current = () => key === identity() && request === searchRequest;
+    const label = answer ? '汇总证据' : '检索';
+    searchStatus(`正在${label}…`);
+    window.DesktopLibrary?.searchLoading(label);
     try {
-      const data = await api('knowledge/search', 'POST', filters);
-      if (key === identity() && (!matchMedia('(min-width: 761px)').matches || request === searchRequest && signature === JSON.stringify(searchFilters()))) renderEvidence($('knowledge-results'), data);
-      else if (key === identity() && request === searchRequest) window.DesktopLibrary?.searchDiscarded();
+      const record = Boolean(profile) && !answer;
+      const data = await api(answer ? 'knowledge/answer' : 'knowledge/search', 'POST', record ? {...filters, record} : filters);
+      if (current()) {
+        if (signature === JSON.stringify(searchFilters())) {
+          searchStatus('');
+          if (answer) {
+            clearResults('已汇总当前查询的证据。');
+            renderAnswer($('knowledge-answer-result'), data);
+          } else renderRecall(data);
+        } else window.DesktopLibrary?.searchDiscarded();
+      }
+      if (record && key === identity()) await loadHistory(1);
     } catch (error) {
-      if (key === identity() && request === searchRequest) window.DesktopLibrary?.searchError(error.message);
-      throw error;
-    } finally { button.disabled = false; }
+      if (current()) {
+        searchStatus(`读取失败 · ${error.message}`);
+        window.DesktopLibrary?.searchError(error.message);
+      }
+    } finally { searchButton.disabled = answerButton.disabled = false; }
+  }
+  searchForm.onsubmit = safe(event => {
+    event.preventDefault();
+    return runRecall(false);
   });
-  $('knowledge-answer').onclick = safe(async () => {
-    const button = $('knowledge-answer'), host = $('knowledge-answer-result');
-    if (!$('knowledge-query').value.trim()) { notice('先填写要查的问题。', true); $('knowledge-query').focus(); return; }
-    button.disabled = true;
-    const key = identity(), request = ++searchRequest, filters = searchFilters(), signature = JSON.stringify(filters);
-    window.DesktopLibrary?.searchLoading('规则汇总');
-    try {
-      const data = await api('knowledge/answer', 'POST', filters);
-      if (key === identity() && (!matchMedia('(min-width: 761px)').matches || request === searchRequest && signature === JSON.stringify(searchFilters()))) renderAnswer(host, data);
-      else if (key === identity() && request === searchRequest) window.DesktopLibrary?.searchDiscarded();
-    } catch (error) {
-      if (key === identity() && request === searchRequest) window.DesktopLibrary?.searchError(error.message);
-      throw error;
-    } finally { button.disabled = false; }
-  });
+  $('knowledge-answer').onclick = safe(() => runRecall(true));
   $('knowledge-rebuild').onclick = safe(async () => {
     if (!confirm('按已保存的配置重建索引？启用远程 Embedding 时会发送资料并可能计费，失败时保留旧索引。')) return;
     const button = $('knowledge-rebuild'); button.disabled = true;

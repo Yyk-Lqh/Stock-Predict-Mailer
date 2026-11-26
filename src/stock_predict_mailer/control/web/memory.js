@@ -1143,6 +1143,7 @@ window.KnowledgeUI = (() => {
           <small class="hint" id="knowledge-card-count">正在读取</small>
         </span>
       </button>
+      <div id="knowledge-document-catalog-list"></div>
     </div>`;
   const knowledgeCreate = document.createElement('div');
   knowledgeCreate.className = 'knowledge-dify-main knowledge-create-main'; knowledgeCreate.hidden = true;
@@ -1195,6 +1196,19 @@ window.KnowledgeUI = (() => {
   function renderLanding() {
     $('knowledge-card-count').textContent = `${catalog.total || documents.length || 0} 个资料版本 · ${catalog.review || 0} 待审阅`;
     $('knowledge-sidebar-count').textContent = catalog.total;
+    const host = $('knowledge-document-catalog-list'); host.replaceChildren();
+    for (const item of documents) {
+      const card = document.createElement('button'); card.type = 'button'; card.className = 'knowledge-document-catalog-card';
+      text(card, 'span', '▤', 'knowledge-document-icon').setAttribute('aria-hidden', 'true');
+      const copy = document.createElement('span');
+      text(copy, 'strong', item.logical || item.filename);
+      if (item.filename !== item.logical) text(copy, 'small', item.filename, 'hint');
+      text(copy, 'small', `${STATE[item.status] || item.status} · ${fmt(item.uploaded)}`, 'hint');
+      card.append(copy);
+      card.onclick = safe(() => openDocuments(item.id));
+      host.append(card);
+    }
+    if (documents.length < catalog.total) host.append(action('加载更多文档', () => load(true)));
   }
   function showSurface(name) {
     if (surface === 'documents' && name !== 'documents') closeDetail();

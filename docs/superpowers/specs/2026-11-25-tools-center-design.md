@@ -168,5 +168,4 @@
 - `src/stock_predict_mailer/control/web/memory.js`
 - `scripts/build_console.py` 仅在模块注册需要时调整
 
-本次新增工具中心会增加 bundle 和样式体积，构建增长预算同步调整为 `memory.js` 2,010,000 字节和 `style.css` 178,000 字节。预算只用于防止无界增长，不改变静态资源路由或运行时契约。
-
+工具中心和知识库页面共用控制台构建预算。`memory.js` 上限为 2,015,000 字节，`style.css` 上限为 178,000 字节。预算用于构建检查，静态资源路由保持现有契约。

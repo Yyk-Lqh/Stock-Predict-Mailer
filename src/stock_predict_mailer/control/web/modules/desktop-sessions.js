@@ -19,7 +19,7 @@ window.DesktopSessions=(()=>{
       const hidden=!entry.name.includes(query);if(entry.node.hidden!==hidden)entry.node.hidden=hidden;if(!hidden)shown++;nodes.push(entry.node);
     }
     for(const[id]of rows)if(!ids.has(id))rows.delete(id);
-    if(!items.length){const empty=document.createElement('p');empty.className='hint';empty.textContent=!memoryKey?'新建分析后会创建会话空间，也可在「记忆与访问」恢复已有密钥。':feedback.dataset.state==='failed'?'会话暂未读取成功，请重试。':feedback.dataset.state==='loading'?'正在读取会话…':'这里还没有会话，点击「新建分析」开始。';nodes.push(empty);}
+    if(!items.length){const empty=document.createElement('p');empty.className='hint';empty.textContent=feedback.dataset.state==='failed'?'会话暂未读取成功，请重试。':feedback.dataset.state==='loading'?'正在读取会话…':'这里还没有会话，点击「新建分析」开始。';nodes.push(empty);}
     const focused=host.contains(document.activeElement)?document.activeElement:null;let position=host.firstChild;
     for(const node of nodes){if(position===node)position=position.nextSibling;else host.insertBefore(node,position);}while(position){const next=position.nextSibling;position.remove();position=next;}
     if(focused?.isConnected&&!focused.hidden&&document.activeElement!==focused)focused.focus({preventScroll:true});

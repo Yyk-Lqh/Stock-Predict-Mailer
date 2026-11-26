@@ -53,7 +53,7 @@ window.Workbench = (() => {
     const host = $('sidebar-sessions');
     if (!memoryKey) {
       host.replaceChildren();
-      text(host, 'p', '新建分析时创建会话空间，也可在「记忆与访问」恢复已有密钥。', 'hint');
+      text(host, 'p', '点击「新建分析」打开本机的会话空间。', 'hint');
       $('sessions-more').hidden = true;
       return;
     }
@@ -152,16 +152,9 @@ window.Workbench = (() => {
       throw error;
     } finally { if (epoch === selectionEpoch) { $('task-form').inert = false;window.DesktopInteractions?.finish(id); } }
   }
-  async function ensureAccess() {
-    if (memoryKey) return;
-    const access = await api('memory/access', 'POST', {});
-    await useMemoryKey(access.key);
-    $('memory-key').value = access.key;
-    $('access-recovery').hidden = false;
-  }
   async function newAnalysis() {
     saveDraft();
-    await ensureAccess();
+    await ensureBrowserMemory();
     const item = await api('conversations', 'POST', {});
     await refreshMemory();
     await select(item.id, {save: false});
@@ -172,7 +165,7 @@ window.Workbench = (() => {
     if (!$('conversation-id').value) {
       const snapshot = draftSnapshot();
       const knowledge = window.KnowledgeUI?.selection();
-      await ensureAccess();
+      await ensureBrowserMemory();
       const item = await api('conversations', 'POST', {});
       await refreshMemory();
       $('conversation-id').add(new Option('新分析会话', item.id));
@@ -281,7 +274,7 @@ window.Workbench = (() => {
     if (name !== 'analysis') inspector(false);
     else if (displayed && !document.body.classList.contains('report-dismissed') && !$('report-open').disabled) inspector(true);
     if (name === 'knowledge') window.KnowledgeUI?.load();
-    const titles = {records: '任务记录', settings: '设置', memory: '记忆与访问', knowledge: '知识库', overview: '使用引导', tools: '工具中心'};
+    const titles = {records: '任务记录', settings: '设置', memory: '记忆', knowledge: '知识库', overview: '使用引导', tools: '工具中心'};
     $('workspace-title').textContent = titles[name] || $('analysis-title').textContent;
   }
   function saveFile(value, filename) {
@@ -340,18 +333,6 @@ window.Workbench = (() => {
     window.DesktopInteractions?.afterDelete();
   }));
   $('analysis-title').closest('.page-head').after(tools);
-  $('memory-access-actions').append(action('复制当前访问密钥', async () => {
-    if (!memoryKey) throw new Error('请先创建或使用已有访问密钥');
-    $('memory-key').value = memoryKey;
-    try { await navigator.clipboard.writeText(memoryKey); notice('访问密钥已复制，请保存在安全位置。'); }
-    catch (_) { $('memory-key').type = 'text'; $('memory-key').select(); notice('请复制已选中的访问密钥并妥善保存。'); }
-  }), action('撤销当前访问密钥', async () => {
-    if (!memoryKey) throw new Error('当前没有访问密钥');
-    if (!confirm('撤销后无法用此密钥恢复资料。请先完成导出或清理；此操作不会删除已有资料。继续？')) return;
-    await api('memory/access', 'DELETE');
-    memoryKey = ''; sessionStorage.removeItem('spm_memory_key'); $('memory-key').value = '';
-    identityChanged(); await refreshMemory(); notice('访问密钥已撤销。');
-  }));
   const execution = document.createElement('details'); execution.className = 'advanced execution-details';
   const executionTitle = document.createElement('summary'); executionTitle.textContent = '执行详情 · 阶段、调用与事件';
   execution.append(executionTitle, $('execution-plan'), $('execution-events'));
@@ -388,10 +369,6 @@ window.Workbench = (() => {
   while (runCard.firstElementChild && runCard.firstElementChild !== composer) optionsBody.append(runCard.firstElementChild);
   runCard.prepend(runOptions); runOptions.append(optionsBody);
   $('prediction-editor').open = false;
-  const recovery = document.createElement('div'); recovery.id = 'access-recovery'; recovery.className = 'note warn'; recovery.hidden = true;
-  text(recovery, 'p', '已创建私有会话空间。访问密钥仅在当前标签页保留，请到「记忆与访问」复制并妥善保存，以便重新打开后恢复。');
-  recovery.append(action('保存访问密钥', () => showView('memory')));
-  $('tasks').prepend(recovery);
   $('new-analysis').onclick = safe(async () => {
     $('new-analysis').disabled = true;
     try { await newAnalysis(); } finally { $('new-analysis').disabled = false; }

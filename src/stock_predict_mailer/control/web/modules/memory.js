@@ -1,11 +1,15 @@
 async function refreshMemory() {
   const active = Boolean(memoryKey);
-  $('memory-details').hidden = !active;
-  $('conversation-fields').hidden = !active;
-  if (!active) return;
+  if (!active) {
+    $('memory-details').hidden = true;
+    $('conversation-fields').hidden = true;
+    return;
+  }
   const [conversations, entries, config, pending] = await Promise.all([
     api('conversations'), api('memory'), api('memory/settings'), api('memory/pending')
   ]);
+  $('memory-details').hidden = false;
+  $('conversation-fields').hidden = false;
   const selector = $('conversation-id');
   const selected = selector.value;
   selector.replaceChildren(new Option('独立任务', ''));
@@ -61,7 +65,6 @@ async function useMemoryKey(key) {
   memoryKey = key;
   try {
     await refreshMemory();
-    $('memory-key').type = 'password';
     currentTask = null;
     $('conversation-id').value = '';
     sessionStorage.setItem('spm_memory_key', memoryKey);
@@ -76,19 +79,44 @@ async function useMemoryKey(key) {
   }
 }
 
-$('memory-access-actions').append(
-  action('创建记忆访问密钥', async () => {
-    const access = await api('memory/access', 'POST', {});
-    await useMemoryKey(access.key);
-    $('memory-key').value = access.key;
-    notice('已创建独立记忆空间。请保存密钥以便下次恢复。');
-  }),
-  action('使用已有密钥', async () => {
-    await useMemoryKey($('memory-key').value.trim());
-    $('memory-key').value = '';
-    notice('已切换记忆空间。');
-  })
-);
+let browserMemoryReady;
+const memoryRestartHint = '当前控制台还在运行旧版本。请用原启动方式重启服务，再重新加载本页。';
+
+function showMemoryStatus(message, reload = false) {
+  $('memory-status').hidden = !message;
+  $('memory-status-text').textContent = message;
+  $('memory-reload').hidden = !reload;
+}
+
+$('memory-reload').onclick = () => location.reload();
+
+function ensureBrowserMemory() {
+  if (!browserMemoryReady) {
+    showMemoryStatus('正在打开记忆空间…');
+    browserMemoryReady = (async () => {
+      const session = await api('session');
+      csrf = session.csrf_token;
+      if (!session.browser_memory_access) {
+        // Older servers read static files from disk but need restarting to add new API routes.
+        if (!memoryKey) throw new Error(memoryRestartHint);
+        await refreshMemory();
+        showMemoryStatus('已打开当前标签页的记忆。重启控制台后，新标签页也能自动恢复。', true);
+        return;
+      }
+      const restore = () => api('memory/browser-access', 'POST');
+      // Coordinate the first visit if the same workspace opens in several tabs.
+      const access = await (navigator.locks ? navigator.locks.request('spm-browser-memory', restore) : restore());
+      if (access.key === memoryKey) await refreshMemory();
+      else await useMemoryKey(access.key);
+      showMemoryStatus('');
+    })().catch(error => {
+      browserMemoryReady = null;
+      showMemoryStatus(error.message === memoryRestartHint ? memoryRestartHint : '暂时无法打开记忆空间。请重新加载本页重试。', true);
+      throw error;
+    });
+  }
+  return browserMemoryReady;
+}
 $('memory-settings-actions').append(action('保存记忆设置', async () => {
   await api('memory/settings', 'PUT', {
     enabled:$('memory-enabled').checked, context_bytes:Number($('memory-threshold').value),
@@ -123,4 +151,3 @@ $('conversation-id').onchange = async event => {
     notice(error.message, true);
   }
 };
-refreshMemory().catch(error => notice(error.message, true));

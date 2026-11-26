@@ -24,7 +24,7 @@ window.KnowledgeUI = (() => {
   section.className = 'view knowledge-shell'; section.dataset.viewPane = 'knowledge'; section.hidden = true;
   section.innerHTML = `
     <label class="field"><span>资料库</span><select id="knowledge-scope"><option value="local">本机资料库</option><option value="private">旧版私有资料</option></select></label>
-    <div id="knowledge-access" class="note" hidden><p>恢复原访问密钥后即可查看旧版私有资料。</p><button type="button" data-goto="memory" class="btn">恢复原访问密钥</button></div>
+    <div id="knowledge-access" class="note" hidden><p>暂时无法打开旧版私有资料。请打开记忆页面重试，或切换到本机资料库。</p><button type="button" data-goto="memory" class="btn">打开记忆</button></div>
     <div id="knowledge-body" hidden>
       <div class="subnav"><button type="button" data-kb-tab="documents" class="active">资料与版本</button><button type="button" data-kb-tab="search">检索证据</button><button type="button" data-kb-tab="processing">处理与索引设置</button></div>
       <div data-kb-pane="documents">
@@ -195,7 +195,7 @@ window.KnowledgeUI = (() => {
     }
     const key = identity();
     if (!key) {
-      status.textContent = '请先恢复原访问密钥，或返回并选择本机资料库。';
+      status.textContent = '当前资料库暂不可用。请返回并选择本机资料库。';
       return;
     }
     let uploaded = 0;

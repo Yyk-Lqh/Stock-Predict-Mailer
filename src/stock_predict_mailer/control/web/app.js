@@ -2104,15 +2104,12 @@ $('try-sample').onclick = async () => {
 (async () => {
   try {
     // The following bundle installs the workbench and composer. A fast local
-    // API must not finish boot before those scripts have executed.
-    // Deferred scripts run while readyState is interactive, before the next
-    // deferred bundle has necessarily loaded. Desktop must await that bundle.
-    const desktopBoot = matchMedia('(min-width: 761px)').matches;
-    if (document.readyState === 'loading' || (desktopBoot && document.readyState === 'interactive')) {
+    // Wait for the deferred bundle before restoring the browser's memory space.
+    if (document.readyState === 'loading' || document.readyState === 'interactive') {
       await new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, {once:true}));
     }
     const initial = location.hash.replace('#', '');
-    csrf = (await api('session')).csrf_token;
+    await ensureBrowserMemory().catch(() => { /* The memory page shows the status and recovery action. */ });
     await refresh();
     if (draftRestore()) updatePredictionTemplate();
     else resetPredictionInput();

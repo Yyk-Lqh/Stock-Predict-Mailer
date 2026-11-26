@@ -18,7 +18,7 @@
     <button type="button" data-view="overview">使用引导</button>
     <button type="button" data-view="settings">设置</button>
     <button type="button" data-view="tools">工具中心</button>
-    <button type="button" data-view="memory">记忆与访问</button>
+    <button type="button" data-view="memory">记忆</button>
   </nav>
   <button type="button" id="theme-toggle" class="theme-toggle" aria-label="界面主题：浅色主题。按下切换为固定深色。" title="界面主题：浅色主题｜点击切换为固定深色">
     <span class="theme-orb" aria-hidden="true"><i class="theme-orb-eye"></i><i class="theme-orb-eye"></i></span>
@@ -518,15 +518,13 @@
   <section class="view" data-view-pane="memory" hidden>
     <div id="memory" class="panel">
       <div class="page-head">
-        <h1>记忆与访问</h1>
+        <h1>记忆</h1>
       </div>
 
-      <div class="card">
-        <label class="field"><span>记忆访问密钥</span><input id="memory-key" type="password" autocomplete="new-password"></label>
-        <p class="hint mt-10">用原密钥恢复会话、长期记忆和旧版私有资料。密钥仅保留在当前标签页。</p>
-        <div id="memory-access-actions" class="actions mt-12"></div>
+      <div id="memory-status" class="note" role="status">
+        <p id="memory-status-text">正在打开记忆空间…</p>
+        <button type="button" class="btn tiny mt-6" id="memory-reload" hidden>重新加载</button>
       </div>
-
       <div class="mt-16" id="memory-details" hidden>
         <div class="card">
           <div class="section-head"><h2>记忆策略</h2><span class="hint">压缩阈值越大，保留的原文越多</span></div>

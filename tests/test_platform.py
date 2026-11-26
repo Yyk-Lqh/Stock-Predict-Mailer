@@ -1,8 +1,10 @@
+import os
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from stock_predict_mailer.contracts import prepare_rows, read_contract
@@ -51,6 +53,37 @@ class PlatformBehaviourTests(unittest.TestCase):
         self.assertEqual(target.read_text(encoding="utf-8"), "内容")
         atomic_write(target, "更新".encode())
         self.assertEqual(target.read_text(encoding="utf-8"), "更新")
+
+    def test_atomic_write_survives_sustained_windows_sharing_contention(self):
+        target = self.root / "manifest.json"
+        atomic_write(target, b'{"a": 1}')
+        replace = os.replace
+        failures = 0
+        elapsed = 0.0
+
+        def pause(delay):
+            nonlocal elapsed
+            elapsed += delay
+
+        def replace_when_reader_closes(source, destination):
+            nonlocal failures
+            if elapsed < .45:
+                failures += 1
+                self.assertEqual(target.read_bytes(), b'{"a": 1}')
+                error = PermissionError("reader still holds the destination")
+                error.winerror = 5
+                raise error
+            replace(source, destination)
+
+        with patch("stock_predict_mailer.core.time") as clock:
+            clock.monotonic.side_effect = lambda: elapsed
+            clock.sleep.side_effect = pause
+            with patch("stock_predict_mailer.core.os.replace", side_effect=replace_when_reader_closes):
+                atomic_write(target, b'{"a": 2}')
+
+        self.assertGreater(failures, 0)
+        self.assertEqual(target.read_bytes(), b'{"a": 2}')
+        self.assertFalse(list(self.root.glob(".pending-*")))
 
     def test_cutoff_in_another_timezone_still_uses_the_contract_zone(self):
         """A UTC cutoff must select the same Shanghai session, not the UTC date."""

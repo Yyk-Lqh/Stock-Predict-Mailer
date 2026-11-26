@@ -30,16 +30,20 @@ def atomic_write(path: Path, data: bytes) -> None:
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-        # On Windows a reader holding the old file briefly blocks the replace;
-        # retry a bounded number of times instead of failing a long job.
-        for attempt in range(10):
+        # A Windows handle without delete sharing can block an atomic replace.
+        # Give readers time to close while keeping persistent failures bounded.
+        deadline = time.monotonic() + 2
+        delay = .01
+        while True:
             try:
                 os.replace(name, path)
                 return
-            except PermissionError:
-                if attempt == 9:
+            except PermissionError as error:
+                remaining = deadline - time.monotonic()
+                if getattr(error, "winerror", None) not in (5, 32, 33) or remaining <= 0:
                     raise
-                time.sleep(0.025)
+                time.sleep(min(delay, remaining))
+                delay = min(delay * 1.5, .10)
     finally:
         Path(name).unlink(missing_ok=True)
 

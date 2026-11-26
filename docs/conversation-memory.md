@@ -8,7 +8,7 @@
 
 ## 控制台
 
-在「会话记忆」创建访问密钥。将密钥保存在自己的安全位置，重新打开控制台时可以输入原密钥恢复。密钥在当前浏览器标签页使用 sessionStorage 保存。控制台的本机信任边界仍适用。用户归属由服务端从密钥解析，独立于浏览器提交的任何身份字段。
+打开本机控制台时，浏览器会自动恢复会话和长期记忆。更新前已打开的标签页会沿用当前空间。浏览器通过工作区专用的加密 HttpOnly Cookie 记住该空间，清除网站数据或更换浏览器会打开新空间。后端仍按已有的访问凭据区分空间，通过 API 使用原密钥可继续访问对应的旧资料。
 
 在「分析任务」新建会话，提交首次预测、问题与约束。追问时选择原会话并点击「沿用上轮输入」。输入框中的空对象会复用上轮预测、周期和执行条件，允许本轮明确覆盖。沿用的预测仍受有效期约束，过期后提交同标的新预测可保留会话约束。MCP 数据检查点按预测和已授权工具列表匹配，复用时重新验证事实时效。发送邮件须在本轮明确选择。
 
@@ -19,6 +19,7 @@
 以下接口沿用本机 Cookie 和写操作的 CSRF 检查。
 
 - `POST /api/memory/access` 创建所有者并一次性返回 `key`。后续记忆、会话和关联任务请求使用 `X-Memory-Key`。
+- `POST /api/memory/browser-access` 仅用于本机控制台自动打开浏览器的记忆空间。沿用同源会话和 CSRF 校验，请求携带当前标签页的有效凭据时会沿用该空间。
 - `GET/POST /api/conversations` 列出或新建会话。`GET /api/conversations/{id}` 查看近期原始消息、摘要与检查点。
 - `POST /api/tasks` 支持 `conversation_id`、`message`、`constraints`、`report_format`、`fresh_context` 和 `remember`。有会话历史时可省略 `prediction`。传 `fresh_context: true` 可重新查询数据。清空约束时传 `constraints: []`。
 - `GET /api/memory` 查看已保存条目。`PUT/DELETE /api/memory/{id}` 更正或删除。`GET /api/memory/pending` 查看待写条目和原消息引用。

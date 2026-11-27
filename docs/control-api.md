@@ -4,6 +4,35 @@
 
 ## 配置 API 与会话
 
+`GET /api/session` 返回稳定的 `workspace_id`，供浏览器区分同源下的不同工作区。浏览器对会话、任务及记忆请求发送 `X-Analysis-Mode: standard` 或 `professional`。任务响应在 `metadata.mode` 返回归属，会话和记忆条目使用 `mode`。带模式的读取会校验归属，列表按模式过滤。省略请求头可汇总可访问的历史。新会话和维护操作默认使用普通模式，旧的任务提交仍可通过有无 `workflow` 推断模式。未能归类的记录可通过 `legacy` 读取和导出。
+
+专业任务提交包含 `workflow`。两种模式均可在提交时传入 `model_id` 和 `tools`，后者只接受主 Agent 已授权的 MCP 工具。工具配置、模型配置和知识库仍使用原有权限。`DELETE /api/tasks/{id}` 删除指定模式的终态任务及其进度，保留会话消息。取消、删除和邮件回执更正均校验模式及原有权限。
+
+### 专业模式的流程对话
+
+`GET /api/workflows/definitions` 返回当前所有者的命名流程、系统模板、开始节点的参数定义和可运行状态。`POST /api/workflows/definitions` 保存流程，`PUT /api/workflows/definitions/{id}` 使用 `base_revision` 更新，并保留以前的版本。提交 `draft: true` 可保存未通过执行校验的图，`draft_edits` 可保存尚未提交的节点表单。运行前会重新校验所提交的流程快照。
+
+`POST /api/workflows/validate` 接收 `workflow`，可附带本轮 `model_id` 和 `tools`，返回 `runnable` 和 `issues`。问题包含严重级别、原因，以及适用的节点、连线和端口定位信息。错误阻止创建任务，提醒可在运行前核对。
+
+流程定义可带 `image: {mime, data}`。服务端只接受不超过 512 KiB 且文件头匹配的 PNG、JPEG 或 WebP，图像随流程版本持久化。省略图像会保留原图像，传入 `null` 会恢复默认图标。
+
+`POST /api/workflows/definitions/{id}/runs` 接收 `revision`、`key`、`message` 与 `parameters`，可附带 `model_id`、`tools` 和 `reasoning_effort`。响应是既有任务对象，其中 `metadata.workflow` 保存执行图快照、流程归属与本轮选择。同一个提交标识在同一流程内重放会返回原任务。用户主动重试使用新的标识。执行状态、事件、取消和报告沿用 `/api/tasks/{id}` 及其子接口。
+
+`GET /api/workflows/definitions/{id}/runs` 按最近运行分页，使用 `before` 继续读取。`GET /api/workflows/definitions/{id}/runs/{task_id}` 返回该次输入、版本与任务产物。已绑定流程的历史按稳定 ID 归属，早期历史在图版本能唯一匹配时接入。每个流程使用独立的专业会话，普通和画布会话继续使用原有入口。
+
+#### 变量工作流
+
+专业模式的「画布 → 新建流程」可创建以自定义字段开头的变量流程，「分析模板」可打开预测分析画布。仍使用第 2 版流程图。开始节点的 `config.fields` 声明字段 `name`、`label`、`type`、`required` 和可选 `default`。类型包括 `text`、`number`、`boolean`、`object` 和 `list`。已保存定义回显 `fields`。需求正文自动映射为开始节点的 `message` 字段，补充字段放在运行请求的 `parameters` 中。没有 `config.fields` 的旧流程继续使用原有预测参数和报告执行契约。
+
+画布可直接运行变量流程。未保存的图通过 `POST /api/tasks` 提交，附带 `message`、`parameters` 和 `workflow` 图快照。已保存且没有草稿修改的流程使用定义运行接口，结果归入该流程历史。
+
+- 变量引用使用 `节点ID.字段名`。模板与 LLM 提示词使用 `{{节点ID.字段名}}`。服务端检查引用属于上游及类型匹配，实际运行只传递命中路径上的值。
+- 分类器按关键词顺序匹配。条件分支按顺序判断等于、文本包含或变量存在。每个出口有稳定 ID，连线使用 `output` 保存其 ID，默认出口的 ID 为 `default`。普通数据端口可使用字段名，`input` 将数据映射到目标字段，`value` 表示默认依赖。
+- 输出节点可用 `config.fields` 声明结构化返回字段。单值字段可以汇合互斥路径，列表字段按连线顺序收集本轮活跃路径的值。多条可能同时写入同一单值字段的连线会产生校验错误。
+- 聚合器能省略缺失值、保留 `null` 或报错。赋值节点声明本次运行中本节点的输出变量。参数提取器校验 JSON 对象中的声明字段。列表操作支持等值筛选、升序、切片和取值。
+- 知识检索和文档提取沿用本机或私有知识库的运行授权。文档输入为已处理文件的 ID。LLM 沿用配置的模型、调用和费用预算。原有分析型 Agent 支持本地模型的任务指令与显式选择已获授权的只读 MCP 工具。
+- 变量输出写入任务产物的 `workflow_outputs`。每条输出包含节点 ID、名称、格式和值。变量流程执行记录由所属工作区保护，输入独立保存在该次运行内。分析报告仍使用原报告节点与接口。
+
 访问 GET `/` 建立 HttpOnly/SameSite=Strict Cookie。GET `/api/session` 返回 csrf_token；所有 POST/PUT/DELETE 都需要同源 Cookie 及 `X-CSRF-Token`。不开放 CORS；校验 Host/Origin，拒绝 DNS rebinding。控制台假设本机账户可信，不是多租户登录系统，不应反向代理到公网。
 
 - GET `/api/{models|mcp|agents}`：列出配置；POST 同路径创建，返回 201。

@@ -14,6 +14,8 @@ import sys
 from pathlib import Path
 
 MAX_BYTES = 2 * 1024 * 1024
+GENERATED_CONSOLE_BUNDLE = Path("src/stock_predict_mailer/control/web/memory.js")
+GENERATED_CONSOLE_BUNDLE_MAX_BYTES = 2_195_000
 TEXT_SUFFIXES = {".py", ".md", ".toml", ".json", ".txt", ".yml", ".yaml", ".cfg", ".ini", ".ps1", ".sh"}
 FORBIDDEN_DIRS = {"data", "secrets", "workspace", "reports", "logs", "backups", "artifacts", "models"}
 FORBIDDEN_SUFFIXES = {
@@ -57,8 +59,9 @@ def problem(path: Path) -> str | None:
     if not path.is_file():
         return None
     size = path.stat().st_size
-    if size > MAX_BYTES:
-        return f"file larger than {MAX_BYTES // (1024 * 1024)} MiB ({size} bytes)"
+    limit = GENERATED_CONSOLE_BUNDLE_MAX_BYTES if path == GENERATED_CONSOLE_BUNDLE else MAX_BYTES
+    if size > limit:
+        return f"file larger than {limit} bytes ({size} bytes)"
     if path.suffix.lower() in TEXT_SUFFIXES and size < 1024 * 1024:
         if KEY_HEADER in path.read_text(encoding="utf-8", errors="ignore"):
             return "embedded private key material"

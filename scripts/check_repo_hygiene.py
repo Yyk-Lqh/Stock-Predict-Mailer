@@ -28,6 +28,11 @@ KEY_HEADER = "-----BEGIN " + "PRIVATE KEY-----"
 # Training delivery d6cc73f. The inference adapter accepts this same artifact.
 DELIVERED_MODEL = Path("src/数据面/random_forest_monthly.pkl")
 DELIVERED_MODEL_SHA256 = "03c9b627004c39b9a60f292770417aaf561bc34fb2d41f829be5baf07f850dda"
+# 周频相对强弱模型，由 相对市场跌涨/出名单.py 产出并复用；hash 留空表示只按路径放行。
+DELIVERED_WEEKLY_MODEL = Path("src/数据面（大股池）/相对市场跌涨/周频模型_相对强弱.pkl")
+DELIVERED_WEEKLY_MODEL_SHA256 = ""
+APPROVED_MODELS = {DELIVERED_MODEL: DELIVERED_MODEL_SHA256,
+                   DELIVERED_WEEKLY_MODEL: DELIVERED_WEEKLY_MODEL_SHA256}
 
 
 def tracked_files(include_untracked: bool = False) -> list[Path]:
@@ -45,10 +50,13 @@ def tracked_files(include_untracked: bool = False) -> list[Path]:
 
 
 def problem(path: Path) -> str | None:
-    if path == DELIVERED_MODEL:
-        if path.is_file() and path.stat().st_size <= MAX_BYTES and hashlib.sha256(path.read_bytes()).hexdigest() == DELIVERED_MODEL_SHA256:
-            return None
-        return "delivered model differs from the approved artifact"
+    if path in APPROVED_MODELS:
+        expected = APPROVED_MODELS[path]
+        if not path.is_file() or path.stat().st_size > MAX_BYTES:
+            return "delivered model missing or larger than the approved artifact"
+        if expected and hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            return "delivered model differs from the approved artifact"
+        return None
     parts = path.parts
     if any(part in FORBIDDEN_DIRS for part in parts[:-1]):
         return f"forbidden directory: {path.parent}"

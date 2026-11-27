@@ -23,29 +23,42 @@
     const canvas=document.getElementById('desktop-workflow-canvas');
     const send=(target,name,x,y)=>target.dispatchEvent(new PointerEvent(name,{bubbles:true,cancelable:true,pointerId:1,button:0,clientX:x,clientY:y}));
     canvas.setPointerCapture=()=>{}; // The fixture dispatches pointer events without a native pointer.
-    const stored=()=>JSON.parse(localStorage.getItem('stock_predict_mailer.desktop.workflow.v1.draft')).graph.edges[0];
-    const rewire=(end,to)=>{
-      edge().dispatchEvent(new MouseEvent('click',{bubbles:true}));
-      const handle=document.querySelector(`[data-edge-end=${end}]`);
-      assert(handle,'Expected handle for '+end);
-      const bounds=handle.getBoundingClientRect();
-      assert(document.elementFromPoint(bounds.x+bounds.width/2,bounds.y+bounds.height/2)===handle,'Handle cannot receive mouse input');
-      const nodeBounds=document.querySelector(`[data-workflow-node=${to}]`).getBoundingClientRect();
-      const x=nodeBounds.x+nodeBounds.width/2,y=nodeBounds.y+nodeBounds.height/2;
-      assert(document.elementFromPoint(x,y)?.closest('[data-workflow-node]')?.dataset.workflowNode===to,'Drop target is covered');
-      send(handle,'pointerdown',bounds.x+bounds.width/2,bounds.y+bounds.height/2);
+    const stored=()=>AnalysisMode.read('workflow-draft', 'professional').graph.edges[0];
+    edge().dispatchEvent(new MouseEvent('click',{bubbles:true}));
+    assert(edge().classList.contains('selected'),'Click did not select the connection');
+    const circles=[...canvas.querySelectorAll('#desktop-workflow-edge-paths circle')];
+    assert(circles.length===1 && circles[0].closest('[data-edge-insert="sample-link"]'),
+      'A selected connection should only show the insertion control');
+    const rewire=(end,to,{fromPlus=false,port=null,near=false}={})=>{
+      const path=edge(), fraction=end==='source'?.23:.77;
+      const point=path.getPointAtLength(path.getTotalLength()*fraction).matrixTransform(path.getScreenCTM());
+      const plus=document.querySelector('[data-edge-insert="sample-link"] circle')?.getBoundingClientRect();
+      const start=fromPlus?{x:plus.x+plus.width/2,y:plus.y+plus.height/2}:{x:point.x,y:point.y+6};
+      const stroke=document.elementFromPoint(start.x,start.y);
+      assert(fromPlus?stroke?.closest('[data-edge-insert]'):stroke?.dataset.edgeHit==='sample-link',
+        'The connection cannot receive mouse input');
+      const node=document.querySelector(`[data-workflow-node=${to}]`);
+      const bounds=(port?node.querySelector('.desktop-flow-port.'+port):node).getBoundingClientRect();
+      const x=near?bounds.right+14:bounds.x+bounds.width/2,y=near?bounds.bottom-8:bounds.y+bounds.height/2;
+      if(!near)assert(document.elementFromPoint(x,y)?.closest('[data-workflow-node]')?.dataset.workflowNode===to,'Drop target is covered');
+      send(stroke,'pointerdown',start.x,start.y);
       send(canvas,'pointermove',x,y);
-      assert(document.querySelector('.desktop-flow-edge-preview').hasAttribute('d'),'Drag preview missing');
+      const preview=document.querySelector('.desktop-flow-edge-preview');
+      assert(preview.hasAttribute('d'),'Drag preview missing when starting '+(fromPlus?'on the midpoint':'from the line'));
+      const snapping=preview.classList.contains('snapped');
       send(canvas,'pointerup',x,y);
+      return snapping;
     };
-    rewire('target','next');
+    assert(rewire('target','next',{fromPlus:true,near:true}),'Drop near the target card did not snap');
     assert(stored().target==='next'&&stored().condition==='has_facts'&&stored().id==='sample-link','Target did not reconnect');
-    rewire('source','first');
+    assert(rewire('target','first',{port:'out'}),'The explicit output port did not select the source endpoint');
     assert(stored().source==='first'&&stored().target==='next','Source did not reconnect');
-    rewire('target','report');
-    assert(stored().target==='next','Incompatible target replaced the connection');
+    assert(!rewire('target','report'),'Incompatible drop was marked compatible');
+    assert(stored().target==='report' && edge().hasAttribute('data-invalid'),'Incompatible drop was not kept and marked in the draft');
+    document.getElementById('desktop-workflow-undo').click();
+    assert(stored().target==='next','Undo did not restore the compatible destination');
     document.getElementById('desktop-workflow-undo').click();
     assert(stored().source==='start'&&stored().target==='next','Undo did not restore previous endpoints');
-    window.edgeRewireCheck={state:'passed',source:true,target:true,condition:true,rejectedIncompatible:true,undo:true};
+    window.edgeRewireCheck={state:'passed',source:true,target:true,midpoint:true,nearCard:true,condition:true,invalidDraft:true,undo:true};
   })().catch(error=>{window.edgeRewireCheck={state:'failed',error:error.message};});
 })()

@@ -9,6 +9,7 @@ from pathlib import Path
 from time import monotonic
 
 from ..agent_service.contracts import ServiceError, utcnow
+from .modes import TASK_MODE_SQL
 
 SOURCES = {"tasks": "项目任务库", "sqlite": "本机 SQLite 文件"}
 QUERIES = {"completed": "已完成分析", "archived": "已归档预测的分析"}
@@ -237,26 +238,28 @@ def _local_query(store, request, config):
 
 
 def query(store, request, config):
-    """Use the same owner boundary as the console task list."""
+    """Read project task history within the run's owner and mode."""
     if config.get("source") == "sqlite":
         return _local_query(store, request, config)
     subject = request["prediction"]["subject"] if config["scope"] == "subject" else None
+    mode = request.get("_mode")
     with store.db() as con:
         rows = con.execute(
-            """
+            f"""
             SELECT t.id, json_extract(t.body,'$.metadata.request.subject'),
                    json_extract(t.body,'$.status.timestamp'),
                    json_extract(t.body,'$.metadata.request.synthetic'),
                    json_extract(t.body,'$.artifacts[0].parts[0].data.analysis.forecast_evidence.forecast_id')
             FROM tasks t LEFT JOIN memory_tasks m ON m.task=t.id
             WHERE (m.owner IS NULL OR m.owner=?)
+              AND (? IS NULL OR {TASK_MODE_SQL}=?)
               AND json_extract(t.body,'$.status.state')='completed'
               AND json_type(t.body,'$.artifacts[0].parts[0].data.analysis')='object'
               AND (? IS NULL OR json_extract(t.body,'$.metadata.request.subject')=? COLLATE NOCASE)
               AND (?=0 OR json_extract(t.body,'$.artifacts[0].parts[0].data.analysis.forecast_evidence.forecast_id') IS NOT NULL)
             ORDER BY t.rowid DESC LIMIT ?
             """,
-            (request.get("_owner"), subject, subject, config["query"] == "archived", config["limit"] + 1),
+            (request.get("_owner"), mode, mode, subject, subject, config["query"] == "archived", config["limit"] + 1),
         ).fetchall()
     return {
         "source": "本地 SQLite · 任务记录", "query": config["query"], "scope": config["scope"], "subject": subject,

@@ -58,10 +58,12 @@ def addition(identifier, table, column, declaration, *, data_sql=None, effect="a
 
 def build():
     groups = {}
-    def group(name, module, *, objects=None, additions=None, initialize=False):
+    def group(name, module, *, objects=None, exclude_objects=(), additions=None, initialize=False):
         statements = ddl(module)
         if objects is not None:
             statements = [sql for sql in statements if object_name(sql) in objects]
+        if exclude_objects:
+            statements = [sql for sql in statements if object_name(sql) not in exclude_objects]
         if not statements:
             raise ValueError("empty catalogue group: " + name)
         source_id = hashlib.sha256((ROOT / "src" / module).read_text(encoding="utf-8").encode("utf-8")).hexdigest()
@@ -71,7 +73,15 @@ def build():
     group("mail.bindings", "stock_predict_mailer/mail_core/service.py", objects={"mail_binding", "mail_alias", "mail_control"}, initialize=True)
     group("mail.archive", "stock_predict_mailer/mail_core/migration.py")
     group("control.base", "stock_predict_mailer/control/store.py")
-    group("control.memory", "stock_predict_mailer/control/memory.py")
+    memory_module = "stock_predict_mailer/control/memory.py"
+    workflow_objects = {"workflow_conversations", "workflow_conversation_id"}
+    # Memory initializes these objects on startup. Older memory databases may omit both.
+    group("control.memory", memory_module, exclude_objects=workflow_objects, additions=[
+        addition("control.conversations_mode", "conversations", "mode", "TEXT"),
+        addition("control.memory_pending_mode", "memory_pending", "mode", "TEXT"),
+        addition("control.memory_vectors_mode", "memory_vectors", "mode", "TEXT"),
+    ])
+    group("control.workflow_conversations", memory_module, objects=workflow_objects)
     groups["control.receipts"] = {"source": "historical control/orchestrator", "ddl": ["CREATE TABLE IF NOT EXISTS mcp_mail (id TEXT PRIMARY KEY,status TEXT);"],
                                   "additions": [], "initialize_when_absent": False, "target_revision": "1"}
     group("control.knowledge_owners", "stock_predict_mailer/knowledge_api.py")
@@ -106,11 +116,12 @@ def build():
     version_tree = ast.parse((ROOT / "src/stock_predict_mailer/__init__.py").read_text(encoding="utf-8"))
     version = next(node.value.value for node in version_tree.body if isinstance(node, ast.Assign) and
                    any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets))
-    return {"schema_version": "1", "catalogue_revision": "4", "app_version": version,
+    return {"schema_version": "1", "catalogue_revision": "5", "app_version": version,
             "database_markers": {"application_id": 0x53504D31, "user_version": 1}, "groups": groups,
             "stores": {
                 "mail": {"required": ["mail.core"], "groups": ["mail.core", "mail.bindings", "mail.archive"]},
-                "control": {"required": ["control.base"], "groups": ["control.base", "control.memory", "control.receipts", "control.knowledge_owners"]},
+                "control": {"required": ["control.base"], "groups": [
+                    "control.base", "control.memory", "control.workflow_conversations", "control.receipts", "control.knowledge_owners"]},
                 "knowledge": {"required": ["knowledge.core"], "groups": ["knowledge.core", "knowledge.workers", "knowledge.recall"]},
                 "crawler": {"required": ["crawler.jobs"], "groups": ["crawler.jobs"]},
                 "legacy": {"required": ["legacy.runs"], "groups": [name for name in groups if name.startswith("legacy.")]}}}

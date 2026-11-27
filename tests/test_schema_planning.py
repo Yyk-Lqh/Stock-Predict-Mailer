@@ -280,6 +280,19 @@ class SchemaTests(unittest.TestCase):
         feature = next(f for f in value["databases"][0]["features"] if f["name"] == "control.memory")
         self.assertEqual(feature["state"], "not_initialized")
 
+    def test_legacy_memory_mode_upgrade_can_be_rehearsed(self):
+        store = Store(self.app, Fernet.generate_key())
+        self.create("control", "control.memory", additions=())
+
+        before = self.plan("control")
+        self.assertEqual(before["state"], "upgrade_available", before)
+        self.assertEqual(before["changes"], 3)
+        self.assertTrue(self.rehearse("control")["rehearsal"][0]["target_verified"])
+
+        Memory(store)
+        after = self.plan("control")
+        self.assertEqual(after["state"], "current", after)
+
     def test_partial_optional_memory_blocks(self):
         self.create("control", "control.base", "control.memory")
         with database(self.path("control")) as con:

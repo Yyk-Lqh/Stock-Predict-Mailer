@@ -193,8 +193,8 @@ def make_server(root, port=8767, master_key=None, market=None):
                 kind = parts[1]
                 if kind == "workflows":
                     from .workflow import catalog, freeze, workflow_issues
-                    from .workflow_wiring import issue
                     from .workflow_runtime import preview
+                    from .workflow_wiring import issue
 
                     if len(parts) >= 3 and parts[2] == "definitions":
                         require_mode(PROFESSIONAL, self.request_mode())

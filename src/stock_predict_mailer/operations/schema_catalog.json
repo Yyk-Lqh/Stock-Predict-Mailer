@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "catalogue_revision": "4",
+  "catalogue_revision": "5",
   "app_version": "0.6.0",
   "database_markers": {
     "application_id": 1397771569,
@@ -57,7 +57,7 @@
     },
     "control.memory": {
       "source": "stock_predict_mailer/control/memory.py",
-      "source_id": "4448d5d3bb38ed9e3ec6d3b3926eddb28b3c170e3992ab025198d47cf83dbb4a",
+      "source_id": "69253f9af8126701d13c3c7eb887901bee865e5d65bcfdc9951e0db9ad7f3a28",
       "ddl": [
         "CREATE TABLE IF NOT EXISTS memory_owners (id TEXT PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, settings TEXT NOT NULL);",
         "CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, owner TEXT NOT NULL, state BLOB NOT NULL, updated TEXT NOT NULL);",
@@ -69,6 +69,42 @@
         "CREATE INDEX IF NOT EXISTS memory_pending_owner ON memory_pending(owner,conversation);",
         "CREATE TABLE IF NOT EXISTS memory_vectors (id TEXT PRIMARY KEY, owner TEXT NOT NULL, dedup TEXT NOT NULL,\n                    kind TEXT NOT NULL, expires TEXT, body BLOB NOT NULL, vector BLOB NOT NULL, UNIQUE(owner,dedup));",
         "CREATE INDEX IF NOT EXISTS memory_filter ON memory_vectors(owner,kind,expires);"
+      ],
+      "additions": [
+        {
+          "id": "control.conversations_mode",
+          "table": "conversations",
+          "column": "mode",
+          "sql": "ALTER TABLE conversations ADD COLUMN mode TEXT",
+          "data_sql": [],
+          "data_effect": "adds_defaulted_or_nullable_column"
+        },
+        {
+          "id": "control.memory_pending_mode",
+          "table": "memory_pending",
+          "column": "mode",
+          "sql": "ALTER TABLE memory_pending ADD COLUMN mode TEXT",
+          "data_sql": [],
+          "data_effect": "adds_defaulted_or_nullable_column"
+        },
+        {
+          "id": "control.memory_vectors_mode",
+          "table": "memory_vectors",
+          "column": "mode",
+          "sql": "ALTER TABLE memory_vectors ADD COLUMN mode TEXT",
+          "data_sql": [],
+          "data_effect": "adds_defaulted_or_nullable_column"
+        }
+      ],
+      "initialize_when_absent": false,
+      "target_revision": "2"
+    },
+    "control.workflow_conversations": {
+      "source": "stock_predict_mailer/control/memory.py",
+      "source_id": "69253f9af8126701d13c3c7eb887901bee865e5d65bcfdc9951e0db9ad7f3a28",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS workflow_conversations (\n                    owner TEXT NOT NULL, workflow TEXT NOT NULL, conversation TEXT NOT NULL, PRIMARY KEY(owner,workflow));",
+        "CREATE UNIQUE INDEX IF NOT EXISTS workflow_conversation_id ON workflow_conversations(owner,conversation);"
       ],
       "additions": [],
       "initialize_when_absent": false,
@@ -370,6 +406,7 @@
       "groups": [
         "control.base",
         "control.memory",
+        "control.workflow_conversations",
         "control.receipts",
         "control.knowledge_owners"
       ]

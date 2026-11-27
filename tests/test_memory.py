@@ -45,9 +45,9 @@ class MemoryFlowTests(unittest.TestCase):
         other = memory.create_owner()
         with self.server.engine.store.db() as con:
             for i in range(205):
-                con.execute('INSERT INTO memory_pending VALUES (?,?,?,?,?)',
+                con.execute('INSERT INTO memory_pending(id,owner,conversation,turn,body) VALUES (?,?,?,?,?)',
                             (f'pending-{i}', owner, cid, i, memory.seal({'content': f'记忆{i}'})))
-            con.execute('INSERT INTO memory_pending VALUES (?,?,?,?,?)',
+            con.execute('INSERT INTO memory_pending(id,owner,conversation,turn,body) VALUES (?,?,?,?,?)',
                         ('private-other', other['owner'], cid, 999, memory.seal({'content': 'other secret'})))
         legacy = self.client.get('/api/memory/pending').json()
         self.assertIsInstance(legacy, list)
@@ -61,7 +61,7 @@ class MemoryFlowTests(unittest.TestCase):
         seen = page['items'][:]
         with self.server.engine.store.db() as con:
             con.execute('DELETE FROM memory_pending WHERE id=?', ('pending-104',))
-            con.execute('INSERT INTO memory_pending VALUES (?,?,?,?,?)',
+            con.execute('INSERT INTO memory_pending(id,owner,conversation,turn,body) VALUES (?,?,?,?,?)',
                         ('new-pending', owner, cid, 1000, memory.seal({'content': 'new'})))
         while page['next_before'] is not None:
             page = self.client.get('/api/memory/pending', params={'before': page['next_before'], 'limit': 100}).json()
@@ -105,7 +105,7 @@ class MemoryFlowTests(unittest.TestCase):
         owner = memory.owner(self.client.headers['X-Memory-Key'])
         with self.server.engine.store.db() as con:
             for i in range(101):
-                con.execute('INSERT INTO memory_vectors VALUES (?,?,?,?,?,?,?)',
+                con.execute('INSERT INTO memory_vectors(id,owner,dedup,kind,expires,body,vector) VALUES (?,?,?,?,?,?,?)',
                             (str(i), owner, str(i), 'preference', None, memory.seal({'id': str(i)}), memory.seal({})))
         page = self.client.get('/api/memory?limit=100').json()
         tail = self.client.get('/api/memory', params={'before': page['next_before'], 'limit': 100}).json()

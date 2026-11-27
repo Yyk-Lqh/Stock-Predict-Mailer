@@ -14,6 +14,7 @@ from typing import Literal
 from pydantic import Field, ValidationError, model_validator
 
 from ..agent_service.contracts import ServiceError, instant, utcnow
+from .modes import PROFESSIONAL, STANDARD, migrate, require_mode
 from .schemas import Closed
 
 Kind = Literal["user_statement", "preference", "watchlist", "constraint", "prediction", "inference"]
@@ -115,6 +116,9 @@ class Memory:
                 CREATE TABLE IF NOT EXISTS memory_owners (id TEXT PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, settings TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, owner TEXT NOT NULL, state BLOB NOT NULL, updated TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS conversation_owner ON conversations(owner,updated);
+                CREATE TABLE IF NOT EXISTS workflow_conversations (
+                    owner TEXT NOT NULL, workflow TEXT NOT NULL, conversation TEXT NOT NULL, PRIMARY KEY(owner,workflow));
+                CREATE UNIQUE INDEX IF NOT EXISTS workflow_conversation_id ON workflow_conversations(owner,conversation);
                 CREATE TABLE IF NOT EXISTS conversation_turns (seq INTEGER PRIMARY KEY, conversation TEXT NOT NULL, body BLOB NOT NULL);
                 CREATE INDEX IF NOT EXISTS conversation_turn_index ON conversation_turns(conversation,seq);
                 CREATE TABLE IF NOT EXISTS memory_tasks (task TEXT PRIMARY KEY, owner TEXT NOT NULL, conversation TEXT NOT NULL);
@@ -124,6 +128,7 @@ class Memory:
                     kind TEXT NOT NULL, expires TEXT, body BLOB NOT NULL, vector BLOB NOT NULL, UNIQUE(owner,dedup));
                 CREATE INDEX IF NOT EXISTS memory_filter ON memory_vectors(owner,kind,expires);
             """)
+            migrate(con, self.open)
 
     def seal(self, value):
         return self.store.cipher.encrypt(encoded(value))
@@ -163,30 +168,59 @@ class Memory:
                 con.execute("UPDATE memory_owners SET settings=? WHERE id=?", (config.model_dump_json(), owner))
             return json.loads(con.execute("SELECT settings FROM memory_owners WHERE id=?", (owner,)).fetchone()[0])
 
-    def new(self, owner):
+    def new(self, owner, mode=STANDARD):
         cid = uuid.uuid4().hex
-        self.save(owner, cid, {}, create=True)
-        return {"id": cid}
-
-    def conversations(self, owner):
         with self.store.db() as con:
-            return [{"id": cid, "updated": updated, "subject": self.open(body).get("request", {}).get("prediction", {}).get("subject")}
-                    for cid, body, updated in con.execute("SELECT id,state,updated FROM conversations WHERE owner=? ORDER BY updated DESC LIMIT 100", (owner,))]
+            con.execute("INSERT INTO conversations(id,owner,state,updated,mode) VALUES (?,?,?,?,?)",
+                        (cid, owner, self.seal({}), utcnow().isoformat(), mode))
+        return {"id": cid, "mode": mode}
 
-    def state(self, owner, cid):
+    def conversations(self, owner, mode=None):
         with self.store.db() as con:
-            row = con.execute("SELECT state FROM conversations WHERE owner=? AND id=?", (owner, cid)).fetchone()
+            rows = con.execute("""SELECT id,state,updated,mode FROM conversations WHERE owner=? AND (? IS NULL OR mode=?)
+                AND NOT EXISTS (SELECT 1 FROM workflow_conversations w WHERE w.owner=conversations.owner AND w.conversation=conversations.id)
+                ORDER BY updated DESC LIMIT 100""",
+                               (owner, mode, mode)).fetchall()
+        return [{"id": cid, "updated": updated, "mode": scope, "subject": self.open(body).get("request", {}).get("prediction", {}).get("subject")}
+                for cid, body, updated, scope in rows]
+
+    @staticmethod
+    def _flow(con, owner, cid):
+        row = con.execute("SELECT workflow FROM workflow_conversations WHERE owner=? AND conversation=?", (owner, cid)).fetchone()
+        return row[0] if row else None
+
+    def flow_for(self, owner, cid):
+        with self.store.db() as con:
+            return self._flow(con, owner, cid)
+
+    def flow_conversation(self, owner, workflow):
+        with self.store.db() as con:
+            row = con.execute("""SELECT c.id FROM workflow_conversations w JOIN conversations c
+                ON c.id=w.conversation AND c.owner=w.owner WHERE w.owner=? AND w.workflow=?""", (owner, workflow)).fetchone()
+            if row:
+                return row[0]
+            cid = uuid.uuid4().hex
+            con.execute("INSERT INTO conversations(id,owner,state,updated,mode) VALUES (?,?,?,?,?)",
+                        (cid, owner, self.seal({}), utcnow().isoformat(), PROFESSIONAL))
+            con.execute("INSERT OR REPLACE INTO workflow_conversations VALUES (?,?,?)", (owner, workflow, cid))
+            return cid
+
+    def _conversation_row(self, con, owner, cid, mode=None):
+        row = con.execute("SELECT state,mode FROM conversations WHERE owner=? AND id=?", (owner, cid)).fetchone()
         if row is None:
             raise ServiceError("NOT_FOUND", "会话不存在")
+        require_mode(row[1], mode)
+        return row
+
+    def state(self, owner, cid, mode=None):
+        with self.store.db() as con:
+            row = self._conversation_row(con, owner, cid, mode)
         return self.open(row[0])
 
-    def save(self, owner, cid, state, *, create=False):
+    def save(self, owner, cid, state):
         with self.store.db() as con:
-            if create:
-                con.execute("INSERT INTO conversations VALUES (?,?,?,?)", (cid, owner, self.seal(state), utcnow().isoformat()))
-            else:
-                con.execute("UPDATE conversations SET state=?,updated=? WHERE owner=? AND id=?",
-                            (self.seal(state), utcnow().isoformat(), owner, cid))
+            con.execute("UPDATE conversations SET state=?,updated=? WHERE owner=? AND id=?",
+                        (self.seal(state), utcnow().isoformat(), owner, cid))
 
     def task_owner(self, tid):
         with self.store.db() as con:
@@ -194,7 +228,8 @@ class Memory:
         return row[0] if row else None
 
     def begin(self, owner, cid, tid, request, task):
-        state = self.state(owner, cid)
+        mode = request.get("_mode", STANDARD)
+        state = self.state(owner, cid, mode)
         if state.get("task"):
             status = self.store.task(state["task"])["status"]["state"]
             if status in ("working", "submitted"):
@@ -211,7 +246,8 @@ class Memory:
             seq = con.execute("INSERT INTO conversation_turns(conversation,body) VALUES (?,?)", (cid, self.seal(turn))).lastrowid
             con.execute("INSERT INTO memory_tasks VALUES (?,?,?)", (tid, owner, cid))
             for item in request.get("remember", []):
-                con.execute("INSERT INTO memory_pending VALUES (?,?,?,?,?)", (uuid.uuid4().hex, owner, cid, seq, self.seal(item)))
+                con.execute("INSERT INTO memory_pending(id,owner,conversation,turn,body,mode) VALUES (?,?,?,?,?,?)",
+                            (uuid.uuid4().hex, owner, cid, seq, self.seal(item), mode))
             con.execute("UPDATE conversations SET state=?,updated=? WHERE owner=? AND id=?",
                         (self.seal(state), utcnow().isoformat(), owner, cid))
 
@@ -224,66 +260,73 @@ class Memory:
         with self.store.db() as con:
             con.execute("INSERT INTO memory_tasks VALUES (?,?,?)", (tid, owner, cid))
 
-    def _write_vector(self, con, owner, value, *, mid=None):
-        dedup, topic = entry_identity(value)
+    def _write_vector(self, con, owner, value, *, mid=None, mode=STANDARD):
+        identity, topic = entry_identity(value)
+        workflow = self._flow(con, owner, value.get("source_conversation"))
+        dedup = f"{mode}:{workflow}:{identity}" if workflow else f"{mode}:{identity}"
         old = con.execute("SELECT id FROM memory_vectors WHERE owner=? AND dedup=?", (owner, dedup)).fetchone()
         if mid and old and old[0] != mid:
             con.execute("DELETE FROM memory_vectors WHERE owner=? AND id=?", (owner, old[0]))
         mid = mid or (old[0] if old else uuid.uuid4().hex)
         item = {**value, "id": mid, "owner": owner, "recorded_at": utcnow().isoformat()}
         features = vector(" ".join([item["content"], *item["tags"], item["subject"] or "", topic]))
-        con.execute("INSERT OR REPLACE INTO memory_vectors VALUES (?,?,?,?,?,?,?)",
-                    (mid, owner, dedup, item["kind"], item["expires_at"], self.seal(item), self.seal(features)))
+        con.execute("INSERT OR REPLACE INTO memory_vectors(id,owner,dedup,kind,expires,body,vector,mode) VALUES (?,?,?,?,?,?,?,?)",
+                    (mid, owner, dedup, item["kind"], item["expires_at"], self.seal(item), self.seal(features), mode))
         return item
 
-    def entries(self, owner):
+    def entries(self, owner, mode=None):
         with self.store.db() as con:
-            return [self.open(row[0]) for row in con.execute("SELECT body FROM memory_vectors WHERE owner=? ORDER BY rowid DESC LIMIT 100", (owner,))]
+            return [{**self.open(body), "mode": scope} for body, scope in con.execute(
+                "SELECT body,mode FROM memory_vectors WHERE owner=? AND (? IS NULL OR mode=?) ORDER BY rowid DESC LIMIT 100", (owner, mode, mode))]
 
-    def page(self, owner, collection, before=2**63 - 1, limit=100):
+    def page(self, owner, collection, before=2**63 - 1, limit=100, mode=None):
         if type(before) is not int or not 0 <= before <= 2**63 - 1 or type(limit) is not int or not 1 <= limit <= 100:
             raise ServiceError("INVALID_INPUT", "分页参数无效")
         table = {"memory": "memory_vectors", "conversations": "conversations", "pending": "memory_pending"}[collection]
-        columns = {"memory": "rowid,body", "conversations": "rowid,id,state,updated",
-                   "pending": "rowid,id,conversation,turn,body"}[collection]
+        columns = {"memory": "rowid,body,mode", "conversations": "rowid,id,state,updated,mode",
+                   "pending": "rowid,id,conversation,turn,body,mode"}[collection]
+        scoped = ("AND NOT EXISTS (SELECT 1 FROM workflow_conversations w WHERE w.owner=conversations.owner "
+                  "AND w.conversation=conversations.id)") if collection == "conversations" else ""
         with self.store.db() as con:
-            rows = con.execute(f"SELECT {columns} FROM {table} WHERE owner=? AND rowid<? ORDER BY rowid DESC LIMIT ?", (owner, before, limit + 1)).fetchall()
+            rows = con.execute(f"SELECT {columns} FROM {table} WHERE owner=? AND (? IS NULL OR mode=?) AND rowid<? {scoped} ORDER BY rowid DESC LIMIT ?",
+                               (owner, mode, mode, before, limit + 1)).fetchall()
         items = []
         for row in rows[:limit]:
             if collection == "memory":
-                items.append(self.open(row[1]))
+                items.append({**self.open(row[1]), "mode": row[2]})
             elif collection == "pending":
-                items.append({**self.open(row[4]), "id": row[1], "source_conversation": row[2], "source_message": row[3]})
+                items.append({**self.open(row[4]), "id": row[1], "source_conversation": row[2], "source_message": row[3], "mode": row[5]})
             else:
-                items.append({"id": row[1], "updated": row[3], "subject": self.open(row[2]).get("request", {}).get("prediction", {}).get("subject")})
+                items.append({"id": row[1], "updated": row[3], "mode": row[4], "subject": self.open(row[2]).get("request", {}).get("prediction", {}).get("subject")})
         return {"items": items, "next_before": rows[limit - 1][0] if len(rows) > limit else None}
 
-    def pending(self, owner):
+    def pending(self, owner, mode=None):
         with self.store.db() as con:
-            rows = con.execute("SELECT id,conversation,turn,body FROM memory_pending WHERE owner=? ORDER BY rowid LIMIT 100", (owner,)).fetchall()
-        return [{"id": pid, "source_conversation": cid, "source_message": seq, **self.open(body)} for pid, cid, seq, body in rows]
+            rows = con.execute("SELECT id,conversation,turn,body,mode FROM memory_pending WHERE owner=? AND (? IS NULL OR mode=?) ORDER BY rowid LIMIT 100",
+                               (owner, mode, mode)).fetchall()
+        return [{"id": pid, "source_conversation": cid, "source_message": seq, "mode": scope, **self.open(body)} for pid, cid, seq, body, scope in rows]
 
-    def conversation(self, owner, cid, before=2**63 - 1, limit=20):
+    def conversation(self, owner, cid, before=2**63 - 1, limit=20, mode=None):
         if type(before) is not int or not 0 <= before <= 2**63 - 1 or type(limit) is not int or not 1 <= limit <= 100:
             raise ServiceError("INVALID_INPUT", "历史分页参数无效")
-        state = self.state(owner, cid)
         with self.store.db() as con:
+            body, scope = self._conversation_row(con, owner, cid, mode)
             rows = con.execute("SELECT seq,body FROM conversation_turns WHERE conversation=? AND seq<? ORDER BY seq DESC LIMIT ?", (cid, before, limit + 1)).fetchall()
+        state = self.open(body)
         more = len(rows) > limit
         rows = rows[:limit]
-        return {"id": cid, "task": state.get("task"), "summary": state.get("summary", []),
+        return {"id": cid, "mode": scope, "task": state.get("task"), "summary": state.get("summary", []),
                 "next_before": rows[-1][0] if more else None,
                 "completed_step": state.get("checkpoint", {}).get("completed_step"),
                 "messages": [{"seq": seq, **self.open(body)} for seq, body in reversed(rows)]}
 
-    def export_conversation(self, owner, cid):
-        self.state(owner, cid)
-        result = self.conversation(owner, cid, limit=100)
+    def export_conversation(self, owner, cid, mode=None):
+        result = self.conversation(owner, cid, limit=100, mode=mode)
         messages = result["messages"]
         while result["next_before"] is not None:
-            result = self.conversation(owner, cid, result["next_before"], 100)
+            result = self.conversation(owner, cid, result["next_before"], 100, mode)
             messages = result["messages"] + messages
-        return {"id": cid, "messages": messages}
+        return {"id": cid, "mode": result["mode"], "messages": messages}
 
     def revoke(self, owner):
         with self.store.db() as con:
@@ -293,8 +336,10 @@ class Memory:
             con.execute("UPDATE memory_owners SET token_hash=? WHERE id=?", (uuid.uuid4().hex, owner))
         return {"status": "revoked"}
 
-    def delete_conversation(self, owner, cid):
-        state = self.state(owner, cid)
+    def delete_conversation(self, owner, cid, mode=STANDARD):
+        if self.flow_for(owner, cid):
+            raise ServiceError("FORBIDDEN", "流程会话由流程对话工作台管理")
+        state = self.state(owner, cid, mode)
         if state.get("task") and self.store.task(state["task"])["status"]["state"] in ("submitted", "working"):
             raise ServiceError("BUSY", "请先取消会话任务", True)
         with self.store.db() as con:
@@ -304,38 +349,64 @@ class Memory:
         # Keep task ownership bindings: deleting history must not expose private reports.
         return {"status": "deleted"}
 
-    def update(self, owner, mid, raw):
+    def delete_task(self, tid):
+        with self.store.db() as con:
+            binding = con.execute("SELECT owner,conversation FROM memory_tasks WHERE task=?", (tid,)).fetchone()
+            if binding:
+                owner, cid = binding
+                row = con.execute("SELECT state FROM conversations WHERE id=? AND owner=?", (cid, owner)).fetchone()
+                if row:
+                    state = self.open(row[0])
+                    if state.get("task") == tid:
+                        state.pop("task")
+                        con.execute("UPDATE conversations SET state=? WHERE id=?", (self.seal(state), cid))
+                    for seq, body in con.execute("SELECT seq,body FROM conversation_turns WHERE conversation=?", (cid,)).fetchall():
+                        turn = self.open(body)
+                        if turn.get("task") == tid:
+                            turn.pop("task")
+                            con.execute("UPDATE conversation_turns SET body=? WHERE seq=?", (self.seal(turn), seq))
+            con.execute("DELETE FROM task_events WHERE task_id=?", (tid,))
+            con.execute("DELETE FROM memory_tasks WHERE task=?", (tid,))
+            con.execute("DELETE FROM tasks WHERE id=?", (tid,))
+
+    def update(self, owner, mid, raw, mode=STANDARD):
         try:
             value = MemoryEntry.model_validate(raw).model_dump()
         except ValidationError:
             raise ServiceError("INVALID_INPUT", "记忆字段无效") from None
         with self.store.db() as con:
-            row = con.execute("SELECT body FROM memory_vectors WHERE owner=? AND id=?", (owner, mid)).fetchone()
+            row = con.execute("SELECT body,mode FROM memory_vectors WHERE owner=? AND id=?", (owner, mid)).fetchone()
             if not row:
                 raise ServiceError("NOT_FOUND", "记忆不存在")
+            require_mode(row[1], mode)
             old = self.open(row[0])
-            self._discard_replaced_pending(con, owner, entry_identity(old)[0], entry_identity(value)[0])
-            return self._write_vector(con, owner, {**old, **value}, mid=mid)
+            workflow = self._flow(con, owner, old.get("source_conversation"))
+            self._discard_replaced_pending(con, owner, mode, workflow, entry_identity(old)[0], entry_identity(value)[0])
+            return self._write_vector(con, owner, {**old, **value}, mid=mid, mode=mode)
 
-    def delete(self, owner, mid):
+    def delete(self, owner, mid, mode=STANDARD):
         with self.store.db() as con:
-            row = con.execute("SELECT dedup FROM memory_vectors WHERE owner=? AND id=?", (owner, mid)).fetchone()
+            row = con.execute("SELECT dedup,mode,body FROM memory_vectors WHERE owner=? AND id=?", (owner, mid)).fetchone()
             if not row:
                 raise ServiceError("NOT_FOUND", "记忆不存在")
-            self._discard_replaced_pending(con, owner, row[0])
+            require_mode(row[1], mode)
+            workflow = self._flow(con, owner, self.open(row[2]).get("source_conversation"))
+            self._discard_replaced_pending(con, owner, mode, workflow, row[0].rsplit(":", 1)[1])
             con.execute("DELETE FROM memory_vectors WHERE owner=? AND id=?", (owner, mid))
 
-    def _discard_replaced_pending(self, con, owner, *identities):
-        rows = con.execute("SELECT id,body FROM memory_pending WHERE owner=?", (owner,)).fetchall()
+    def _discard_replaced_pending(self, con, owner, mode, workflow, *identities):
+        rows = con.execute("""SELECT p.id,p.body FROM memory_pending p LEFT JOIN workflow_conversations w
+            ON w.owner=p.owner AND w.conversation=p.conversation WHERE p.owner=? AND p.mode=? AND w.workflow IS ?""",
+                           (owner, mode, workflow)).fetchall()
         for pid, body in rows:
             if entry_identity(self.open(body))[0] in identities:
                 con.execute("DELETE FROM memory_pending WHERE id=?", (pid,))
 
-    def flush(self, owner, cid):
+    def flush(self, owner, cid, mode=STANDARD):
         with self.store.db() as con:
-            pending = con.execute("SELECT id,turn,body FROM memory_pending WHERE owner=? AND conversation=? ORDER BY rowid", (owner, cid)).fetchall()
+            pending = con.execute("SELECT id,turn,body FROM memory_pending WHERE owner=? AND conversation=? AND mode=? ORDER BY rowid", (owner, cid, mode)).fetchall()
             for pid, seq, body in pending:
-                self._write_vector(con, owner, {**self.open(body), "source_conversation": cid, "source_message": seq})
+                self._write_vector(con, owner, {**self.open(body), "source_conversation": cid, "source_message": seq}, mode=mode)
                 con.execute("DELETE FROM memory_pending WHERE id=?", (pid,))
             return len(pending)
 
@@ -346,11 +417,15 @@ class Memory:
         query = vector(" ".join([subject, request.get("message", ""), request["goal"], "报告 格式 风险 预测", *request.get("constraints", [])]))
         scored = []
         with self.store.db() as con:
+            workflows = dict(con.execute("SELECT conversation,workflow FROM workflow_conversations WHERE owner=?", (owner,)))
+            selected = workflows.get(request.get("conversation_id"))
             rows = con.execute("""SELECT body,vector FROM memory_vectors
-                WHERE owner=? AND kind IN ('user_statement','preference','watchlist','constraint','prediction','inference')
-                AND (expires IS NULL OR expires>?)""", (owner, utcnow().isoformat())).fetchall()
+                WHERE owner=? AND mode=? AND kind IN ('user_statement','preference','watchlist','constraint','prediction','inference')
+                AND (expires IS NULL OR expires>?)""", (owner, request.get("_mode", STANDARD), utcnow().isoformat())).fetchall()
         for body, features in rows:
             item = self.open(body)
+            if workflows.get(item.get("source_conversation")) != selected:
+                continue
             if not item["confirmed"] or item["subject"] not in (None, subject):
                 continue
             historical = item["kind"] in ("prediction", "inference")
@@ -369,11 +444,12 @@ class Memory:
 
     def context(self, owner, cid, request, size, progress):
         config = self.settings(owner)
-        state = self.state(owner, cid)
+        mode = request.get("_mode", STANDARD)
+        state = self.state(owner, cid, mode)
         failed = False
         if config["enabled"]:
             try:
-                saved = self.flush(owner, cid)
+                saved = self.flush(owner, cid, mode)
                 if saved and progress:
                     progress.emit("memory", label=f"已保存 {saved} 条长期记忆")
             except (sqlite3.Error, OSError, RuntimeError, ServiceError):
@@ -394,9 +470,9 @@ class Memory:
             trim = len(turns) - config["recent_turns"]
             for seq, turn in turns[:trim]:
                 p = turn["prediction"]
-                previous = self.store.task(turn["task"])
+                previous = self.store.task(turn["task"]) if turn.get("task") else {"status": {"state": "deleted"}}
                 steps = {event["step"]: event["status"] for event in self.store.events(turn["task"])
-                         if event["kind"] == "step"}
+                         if event["kind"] == "step"} if turn.get("task") else {}
                 analysis = next((part.get("data", {}).get("analysis", {}) for a in previous.get("artifacts", []) for part in a.get("parts", [])), {})
                 requirements = [s.strip() for s in re.split(r"[。！？\n]", turn["message"])
                                 if 0 < len(s.strip()) <= 240 and re.search(r"请|必须|不要|只|限制|周期|only|must", s, re.I)]

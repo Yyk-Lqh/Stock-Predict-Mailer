@@ -623,7 +623,7 @@ class ConsoleAPITests(unittest.TestCase):
         self.server = make_server(self.f.root, 0, self.f.key)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
-        self.client = httpx.Client(base_url=f"http://127.0.0.1:{self.server.server_port}", trust_env=False)
+        self.client = httpx.Client(base_url=f"http://127.0.0.1:{self.server.server_port}", trust_env=False,timeout=30)
         self.client.get("/")
         self.csrf = self.client.get("/api/session").json()["csrf_token"]
         self.client.headers["X-CSRF-Token"] = self.csrf
@@ -654,7 +654,7 @@ class ConsoleAPITests(unittest.TestCase):
         listing = self.client.get("/api/conversations", headers={"X-Memory-Key": restored.json()["key"]})
         self.assertEqual([item["id"] for item in listing.json()], [conversation])
 
-        with httpx.Client(base_url=self.client.base_url, trust_env=False) as other:
+        with httpx.Client(base_url=self.client.base_url, trust_env=False,timeout=30) as other:
             other.get("/")
             csrf = other.get("/api/session").json()["csrf_token"]
             created = other.post(browser_path, headers={"X-CSRF-Token": csrf})

@@ -3,12 +3,11 @@ from __future__ import annotations
 
 import json
 import re
-from graphlib import CycleError, TopologicalSorter
 
 from ..agent_service.analysis import identity
 from ..agent_service.contracts import ServiceError
 from ..plugins.registry import renderer_options
-from . import workflow_database, workflow_tools
+from . import workflow_database, workflow_tools, workflow_values, workflow_wiring
 
 # Input and output are named ports with one bounded business-object type each.
 NODES = {
@@ -24,6 +23,8 @@ NODES = {
     "delivery": ("report", "receipt", "邮件交付", "仅在启用通知并获得授权时投递已生成报告", "邮件策略与回执"),
     "database": ("context", "context", "数据库", "只读查询本机 SQLite 文件或项目任务库", "本机 SQLite"),
     "tool": ("context", "context", "内置工具", "调用只读检查或查询工具，结果写入运行记录", "工作流内置工具"),
+    **{kind: ("value", None if kind == "output" else "value", label, detail, "变量流程")
+       for kind, (label, detail) in workflow_values.KINDS.items()},
 }
 SYSTEM_STEPS = ("prediction", "evidence", "forecast", "knowledge", "context", "main", "merge", "charts", "report", "delivery")
 SYSTEM_TYPES = ("input", "validation", "forecast", "knowledge", "retrieval", "analysis", "merge", "chart", "report", "delivery")
@@ -45,6 +46,10 @@ def catalog():
     for kind, (incoming, outgoing, label, detail, source) in NODES.items():
         nodes[kind] = {"input": incoming, "output": outgoing, "label": label, "detail": detail, "source": source,
                        "testable": kind not in TEST_BLOCKED, "allow_skip": kind in PASS_THROUGH}
+    nodes["input"]["label"] = "用户输入"
+    nodes["analysis"]["label"] = "Agent"
+    for kind in workflow_values.CONFIG:
+        nodes[kind]["variables"] = True
     graph = {"version": 2, "nodes": [], "edges": []}
     nodes["database"]["options"] = workflow_database.options()
     nodes["tool"]["options"] = workflow_tools.catalog()
@@ -52,7 +57,7 @@ def catalog():
         nodes[kind]["options"] = renderer_options(kind)
     for index, (key, kind) in enumerate(zip(SYSTEM_STEPS, SYSTEM_TYPES, strict=True)):
         graph["nodes"].append({"id": key, "position": system_position(index),
-                               "data": {"type": kind, "label": nodes[kind]["label"], "detail": nodes[kind]["detail"],
+                               "data": {"type": kind, "label": NODES[kind][2], "detail": nodes[kind]["detail"],
                                         "actualKey": STEP_ID[key], "enabled": True, "failurePolicy": "stop", "config": {}}})
         if index:
             graph["edges"].append({"source": SYSTEM_STEPS[index - 1], "target": key, "condition": "always"})
@@ -69,110 +74,125 @@ def condition_matches(condition, state):
     return {"always": True, "has_facts": facts, "no_facts": not facts, "notify": mail, "no_notify": not mail}[condition]
 
 
+def validate_node(item, engine, settings, dataflow):
+    key = item.get("id") if isinstance(item, dict) else None
+    if not isinstance(key, str) or not _IDENT.fullmatch(key):
+        graph_error("节点 ID 重复或格式无效")
+    data = item.get("data")
+    if not isinstance(data, dict):
+        graph_error("节点配置无效", key)
+    kind, label, config = data.get("type"), data.get("label"), data.get("config", {})
+    detail = data.get("detail", "")
+    if not isinstance(kind, str) or kind not in NODES:
+        graph_error("草稿节点缺少执行器，请选择受支持的类型", key)
+    if not isinstance(label, str) or not 1 <= len(label.strip()) <= 80:
+        graph_error("名称须为 1 至 80 个字符", key)
+    if not isinstance(detail, str) or len(detail) > 400:
+        graph_error("节点说明须为不超过 400 个字符的文本", key)
+    enabled, failure = data.get("enabled", True), data.get("failurePolicy", "stop")
+    if type(enabled) is not bool or failure not in ("stop", "skip", "degrade") or (
+        (not enabled or failure == "skip") and kind not in PASS_THROUGH
+    ) or (failure == "degrade" and kind not in ("analysis", "merge", "retrieval")):
+        graph_error("启用状态或失败策略与端口不兼容", key)
+    if not dataflow and kind in workflow_values.KINDS:
+        graph_error("请先在用户输入节点启用自定义输入字段", key)
+    allowed = {"retrieval": {"binding"}, "analysis": {"model", "instruction", "tools"}, "merge": {"model"},
+               "database": workflow_database.FIELDS, "tool": {"tool", "required"},
+               "chart": {"renderer"}, "report": {"renderer"}}.get(kind, set())
+    if dataflow:
+        if not enabled or failure != "stop":
+            graph_error("变量流程节点须启用，失败时停止执行", key)
+        config = workflow_values.validate_config(kind, config, key)
+    elif not isinstance(config, dict) or set(config) - allowed:
+        graph_error("包含未登记的配置项", key)
+    if "renderer" in config and (not isinstance(config["renderer"], str) or config["renderer"] not in renderer_options(kind)):
+        graph_error("请选择与节点类型匹配的内置渲染插件", key)
+    if kind == "database":
+        try:
+            config = workflow_database.config_for(config, engine.store, enabled=enabled)
+        except ServiceError as exc:
+            raise ServiceError(exc.code, f"{key} · {exc.message}") from None
+    if kind == "tool":
+        try:
+            config = workflow_tools.validate(config)
+        except ServiceError as exc:
+            raise ServiceError(exc.code, f"{key} · {exc.message}") from None
+    if "binding" in config:
+        binding = config["binding"]
+        if not isinstance(binding, str) or not _TOOL.fullmatch(binding):
+            graph_error("工具须为已授权的服务 ID:工具名", key)
+        if enabled:
+            check_tool(engine, binding, settings, key)
+    elif kind == "retrieval" and enabled:
+        for binding in settings["agents"]["main"]["tools"]:
+            check_tool(engine, binding, settings, key)
+    if kind == "analysis":
+        instruction, tools = config.get("instruction", ""), config.get("tools", [])
+        if not isinstance(instruction, str) or len(instruction) > 2000:
+            graph_error("任务指令不得超过 2000 字", key)
+        if instruction and not config.get("model") and settings["agents"]["main"]["endpoint_id"]:
+            graph_error("使用任务指令时请选择本工作区的模型", key)
+        if not isinstance(tools, list) or len(tools) > 8 or any(not isinstance(tool, str) or not _TOOL.fullmatch(tool) for tool in tools):
+            graph_error("请选择至多 8 个已授权 MCP 工具", key)
+        if len(tools) != len(set(tools)):
+            graph_error("工具重复", key)
+        for tool in tools:
+            check_tool(engine, tool, settings, key)
+    if "model" in config:
+        model = config["model"]
+        if not isinstance(model, str) or not _IDENT.fullmatch(model):
+            graph_error("模型须为已配置的模型 ID", key)
+        if not profile_for(engine, "models", model, key)["enabled"]:
+            raise ServiceError("PERMISSION_DENIED", f"{key} · 模型已停用")
+    elif kind == "llm":
+        model = settings["agents"]["main"]["model_id"] or settings["default_model_id"]
+        if not model or not profile_for(engine, "models", model, key)["enabled"]:
+            raise ServiceError("MODEL_REQUIRED", f"{key} · 请先选择已启用的模型")
+    elif enabled and kind in ("analysis", "merge") and failure != "degrade":
+        main = settings["agents"]["main"]
+        model = main["model_id"] or settings["default_model_id"]
+        if not main["endpoint_id"] and (not model or not profile_for(engine, "models", model, key)["enabled"]):
+            raise ServiceError("MODEL_REQUIRED", f"{key} · 请先配置启用的主 Agent 模型")
+    xy = item.get("position", {})
+    if not isinstance(xy, dict) or any(type(xy.get(k, 0)) not in (int, float) or not -20000 <= xy.get(k, 0) <= 20000 for k in ("x", "y")):
+        graph_error("位置超出画布范围", key)
+    node = {"id": key, "position": {k: xy.get(k, 0) for k in ("x", "y")},
+            "data": {"type": kind, "label": label.strip(), "detail": detail.strip(), "enabled": enabled,
+                     "failurePolicy": failure, "config": dict(config)}}
+    return node
+
+
 def validate_graph(raw, engine, settings, *, debug=None):
     if not isinstance(raw, dict) or raw.get("version") != 2:
         graph_error("需要第 2 版工作流")
     vertices, edges = raw.get("nodes"), raw.get("edges")
     if not isinstance(vertices, list) or not 1 <= len(vertices) <= 24 or not isinstance(edges, list) or len(edges) > 64:
         graph_error("工作流须包含 1 至 24 个节点和最多 64 条连线")
+    checked = workflow_wiring.draft_graph(raw)
+    vertices, edges = checked["nodes"], checked["edges"]
     graph, nodes = {"version": 2, "nodes": [], "edges": []}, {}
+    dataflow = workflow_values.dataflow(raw)
+    errors = []
     for item in vertices:
-        key = item.get("id") if isinstance(item, dict) else None
-        if not isinstance(key, str) or not _IDENT.fullmatch(key) or key in nodes:
-            graph_error("节点 ID 重复或格式无效")
-        data = item.get("data")
-        if not isinstance(data, dict):
-            graph_error("节点配置无效", key)
-        kind, label, config = data.get("type"), data.get("label"), data.get("config", {})
-        detail = data.get("detail", "")
-        if not isinstance(kind, str) or kind not in NODES:
-            graph_error("草稿节点缺少执行器，请选择受支持的类型", key)
-        if not isinstance(label, str) or not 1 <= len(label.strip()) <= 80:
-            graph_error("名称须为 1 至 80 个字符", key)
-        if not isinstance(detail, str) or len(detail) > 400:
-            graph_error("节点说明须为不超过 400 个字符的文本", key)
-        enabled, failure = data.get("enabled", True), data.get("failurePolicy", "stop")
-        if type(enabled) is not bool or failure not in ("stop", "skip", "degrade") or (
-            (not enabled or failure == "skip") and kind not in PASS_THROUGH
-        ) or (failure == "degrade" and kind not in ("analysis", "merge", "retrieval")):
-            graph_error("启用状态或失败策略与端口不兼容", key)
-        allowed = {"retrieval": {"binding"}, "analysis": {"model"}, "merge": {"model"},
-                   "database": workflow_database.FIELDS, "tool": {"tool", "required"},
-                   "chart": {"renderer"}, "report": {"renderer"}}.get(kind, set())
-        if not isinstance(config, dict) or set(config) - allowed:
-            graph_error("包含未登记的配置项", key)
-        if "renderer" in config and (not isinstance(config["renderer"], str) or config["renderer"] not in renderer_options(kind)):
-            graph_error("请选择与节点类型匹配的内置渲染插件", key)
-        if kind == "database":
-            try:
-                config = workflow_database.config_for(config, engine.store, enabled=enabled)
-            except ServiceError as exc:
-                raise ServiceError(exc.code, f"{key} · {exc.message}") from None
-        if kind == "tool":
-            try:
-                config = workflow_tools.validate(config)
-            except ServiceError as exc:
-                raise ServiceError(exc.code, f"{key} · {exc.message}") from None
-        if "binding" in config:
-            binding = config["binding"]
-            if not isinstance(binding, str) or not _TOOL.fullmatch(binding):
-                graph_error("工具须为已授权的服务 ID:工具名", key)
-            if enabled:
-                check_tool(engine, binding, settings, key)
-        elif kind == "retrieval" and enabled:
-            for binding in settings["agents"]["main"]["tools"]:
-                check_tool(engine, binding, settings, key)
-        if "model" in config:
-            model = config["model"]
-            if not isinstance(model, str) or not _IDENT.fullmatch(model):
-                graph_error("模型须为已配置的模型 ID", key)
-            if not profile_for(engine, "models", model, key)["enabled"]:
-                raise ServiceError("PERMISSION_DENIED", f"{key} · 模型已停用")
-        elif enabled and kind in ("analysis", "merge") and failure != "degrade":
-            main = settings["agents"]["main"]
-            model = main["model_id"] or settings["default_model_id"]
-            if not main["endpoint_id"] and (not model or not profile_for(engine, "models", model, key)["enabled"]):
-                raise ServiceError("MODEL_REQUIRED", f"{key} · 请先配置启用的主 Agent 模型")
-        xy = item.get("position", {})
-        if not isinstance(xy, dict) or any(type(xy.get(k, 0)) not in (int, float) or not -20000 <= xy.get(k, 0) <= 20000 for k in ("x", "y")):
-            graph_error("位置超出画布范围", key)
-        node = {"id": key, "position": {k: xy.get(k, 0) for k in ("x", "y")},
-                "data": {"type": kind, "label": label.strip(), "detail": detail.strip(), "enabled": enabled,
-                         "failurePolicy": failure, "config": dict(config)}}
-        nodes[key] = node
+        try:
+            node = validate_node(item, engine, settings, dataflow)
+        except ServiceError as error:
+            key = item.get("id") if isinstance(item, dict) else None
+            errors.append((workflow_wiring.issue(error.code, error.message, node=key), error.code))
+            continue
+        nodes[node["id"]] = node
         graph["nodes"].append(node)
-
-    parents = {key: [] for key in nodes}
-    seen = set()
-    for edge in edges:
-        if not isinstance(edge, dict):
-            graph_error("连线无效")
-        source, target, condition = edge.get("source"), edge.get("target"), edge.get("condition", "always")
-        if not isinstance(source, str) or not isinstance(target, str) or source not in nodes or target not in nodes:
-            graph_error("连线指向不存在的节点")
-        if source == target or (source, target) in seen:
-            graph_error("自连或重复连线", target)
-        if not isinstance(condition, str) or condition not in CONDITIONS:
-            graph_error("条件未登记", target)
-        outgoing = NODES[nodes[source]["data"]["type"]][1]
-        incoming = NODES[nodes[target]["data"]["type"]][0]
-        if outgoing != incoming or edge.get("output", outgoing) != outgoing or edge.get("input", incoming) != incoming:
-            graph_error(f"端口不匹配（{source}.{outgoing} → {target}.{incoming}）", target)
-        seen.add((source, target))
-        parents[target].append(source)
-        graph["edges"].append({"source": source, "target": target, "condition": condition})
-    try:
-        order = list(TopologicalSorter(parents).static_order())
-    except CycleError as exc:
-        graph_error("存在环路：" + " → ".join(exc.args[1]))
-    roots = [key for key in order if not parents[key]]
-    if len(roots) != 1 or nodes[roots[0]]["data"]["type"] != "input":
-        graph_error("流程应从唯一的资料输入开始。断链节点：" + "、".join(roots))
-    if debug:
-        if debug not in nodes or nodes[debug]["data"]["type"] in TEST_BLOCKED or not nodes[debug]["data"]["enabled"]:
-            graph_error("此节点不可单测", debug)
-    elif sum(node["data"]["type"] == "report" for node in nodes.values()) != 1:
-        graph_error("整图需要一个报告节点")
+    if errors:
+        raise workflow_wiring.WiringError([item for item, _ in errors], errors[0][1])
+    issues, clean, order, parents, bound = workflow_wiring.topology(
+        {**graph, "edges": edges}, NODES, CONDITIONS, debug=debug, strict=True)
+    if any(item["severity"] == "error" for item in issues):
+        raise workflow_wiring.WiringError(issues)
+    graph["edges"] = clean
+    if debug and (debug not in nodes or nodes[debug]["data"]["type"] in TEST_BLOCKED or not nodes[debug]["data"]["enabled"]):
+        graph_error("此节点不可单测", debug)
+    if dataflow:
+        workflow_values.validate_references(nodes, order, parents, bound)
     if sum(node["data"]["type"] == "delivery" for node in nodes.values()) > 1:
         graph_error("整图最多一个邮件交付节点")
     if len(json.dumps(graph, ensure_ascii=True)) > 32_768:
@@ -206,17 +226,59 @@ def bindings(engine, graph, settings):
         config = data.get("config", {})
         if not data["enabled"]:
             continue
-        if data["type"] in ("analysis", "merge"):
-            category = "agents" if main["endpoint_id"] and not config.get("model") else "models"
+        if data["type"] in ("analysis", "merge", "llm"):
+            category = "agents" if data["type"] != "llm" and main["endpoint_id"] and not config.get("model") else "models"
             reference = (main["endpoint_id"] if category == "agents" else
                          config.get("model") or main["model_id"] or settings["default_model_id"])
             if reference:
                 groups[category][reference] = identity(profile_for(engine, category, reference, key))
+            for tool in config.get("tools", []):
+                sid = tool.split(":", 1)[0]
+                groups["mcp"][sid] = identity(profile_for(engine, "mcp", sid, key))
         elif data["type"] == "retrieval":
             for binding in ([config["binding"]] if "binding" in config else main["tools"]):
                 reference = binding.split(":", 1)[0]
                 groups["mcp"][reference] = identity(profile_for(engine, "mcp", reference, key))
     return groups
+
+
+def workflow_issues(value, engine, settings):
+    if isinstance(value, dict) and value.get("mode") == "custom":
+        try:
+            graph = workflow_wiring.draft_graph(value.get("graph"))
+        except ServiceError as error:
+            return [workflow_wiring.issue(error.code, error.message)]
+        issues, _, _, _, _ = workflow_wiring.topology(graph, NODES, CONDITIONS)
+        node_valid = True
+        for node in graph["nodes"]:
+            try:
+                validate_node(node, engine, settings, workflow_values.dataflow(graph))
+            except ServiceError as error:
+                issues.append(workflow_wiring.issue(error.code, error.message, node=node["id"]))
+                node_valid = False
+        if not node_valid or any(item["severity"] == "error" for item in issues):
+            return issues
+    else:
+        graph = None
+    try:
+        spec = freeze(value, engine, settings)
+    except workflow_wiring.WiringError as error:
+        return error.issues
+    except ServiceError as error:
+        key = error.message.split(" · ", 1)[0]
+        node = key if graph and any(item["id"] == key for item in graph["nodes"]) else None
+        return [workflow_wiring.issue(error.code, error.message, node=node)]
+    if graph:
+        issues, _, _, _, _ = workflow_wiring.topology(spec["graph"], NODES, CONDITIONS, strict=True)
+        return issues
+    model = settings["agents"]["main"]["model_id"] or settings["default_model_id"]
+    try:
+        enabled = bool(model and engine.store.get("models", model)["enabled"])
+    except ServiceError:
+        enabled = False
+    if not enabled:
+        return [workflow_wiring.issue("MODEL_REQUIRED", "请先配置或选择启用的主分析模型", node="main")]
+    return []
 
 
 def freeze(value, engine, settings):
@@ -227,8 +289,16 @@ def freeze(value, engine, settings):
         graph_error("执行模式或提交标识无效")
     if debug is not None and (mode != "custom" or not isinstance(debug, str) or not _IDENT.fullmatch(debug)):
         graph_error("调试节点无效")
-    graph, order = (catalog()["system"], list(SYSTEM_STEPS)) if mode == "system" else validate_graph(
-        value.get("graph"), engine, settings, debug=debug)
+    try:
+        graph, order = (catalog()["system"], list(SYSTEM_STEPS)) if mode == "system" else validate_graph(
+            value.get("graph"), engine, settings, debug=debug)
+    except workflow_wiring.WiringError:
+        raise
+    except ServiceError as error:
+        name, separator, _ = error.message.partition(" · ")
+        raise workflow_wiring.WiringError([workflow_wiring.issue(error.code, error.message,
+                                                                 node=name if separator else None)], error.code) from error
     selected = bindings(engine, graph, settings) if mode == "custom" else {}
     return {"mode": mode, "key": key, "debug": debug, "version": identity(graph), "graph": graph, "order": order,
-            "configuration_version": identity([settings, selected]), "bindings": selected}
+            "configuration_version": identity([settings, selected]), "bindings": selected,
+            **({"variables": True} if mode == "custom" and workflow_values.dataflow(graph) else {})}

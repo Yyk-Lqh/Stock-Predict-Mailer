@@ -26,6 +26,7 @@ from .execution import DEFAULT_EFFORT, LABELS, Effort, Progress, envelope
 from .mcp_layer import MCPLayer
 from .memory import LOCAL_KNOWLEDGE_OWNER, Memory, MemoryEntry, ReportFormat, explicit_memory
 from .models import Budget, ModelAdapter
+from .modes import MODES, PROFESSIONAL, STANDARD, require_mode, task_mode
 from .schemas import Closed
 from .workflow import freeze
 
@@ -43,6 +44,8 @@ class TaskRequest(Closed):
     recipients: list[str] = Field(default_factory=list, max_length=50)
     depth: int = Field(default=0, ge=0, le=3)
     reasoning_effort: Effort | None = None
+    model_id: str | None = None
+    tools: list[str] | None = None
     chart_data: dict | None = None
     goal: Literal["overview", "risk", "comparison"] = "overview"
     conversation_id: str | None = None
@@ -76,7 +79,7 @@ def validate_result(raw, role, p, facts, knowledge_ids=()):
             "uncertainty": raw["uncertainty_codes"], "delegate_roles": list(dict.fromkeys(raw["delegate_roles"]))}
 
 
-def a2a_task(tid, state, *, context_id=None, result=None, error=None, brief=None, workflow=None):
+def a2a_task(tid, state, *, context_id=None, result=None, error=None, brief=None, workflow=None, mode=None):
     value = {"kind": "task", "id": tid, "contextId": context_id or tid,
              "status": {"state": state, "timestamp": utcnow().isoformat()}, "artifacts": []}
     if result is not None:
@@ -89,6 +92,8 @@ def a2a_task(tid, state, *, context_id=None, result=None, error=None, brief=None
         metadata["error"] = error
     if workflow:
         metadata["workflow"] = workflow
+    if mode:
+        metadata["mode"] = mode
     if metadata:
         value["metadata"] = metadata
     return value
@@ -100,7 +105,7 @@ def task_brief(request):
             "horizon": p.get("horizon"), "confidence": p.get("confidence"),
             "synthetic": p.get("synthetic"), "notify": bool(request.get("notify")),
             "recipient": request.get("recipient"), "recipients": request.get("recipients", []), "goal": request.get("goal"),
-            "conversation_id": request.get("conversation_id")}
+            "conversation_id": request.get("conversation_id"), "model_id": request.get("model_id")}
 
 
 class Orchestrator:
@@ -112,15 +117,16 @@ class Orchestrator:
         self.accepting = True
         self.lock = threading.RLock()
         with self.store.db() as con:
-            previous_tasks = con.execute("SELECT id,body FROM tasks").fetchall()
+            previous_tasks = con.execute("SELECT id,body FROM tasks WHERE json_valid(body)").fetchall()
         for tid, body in previous_tasks:
             previous = json.loads(body)
             if previous["status"]["state"] in ("working", "submitted"):
                 meta = previous.get("metadata", {})
-                self.store.task(tid, a2a_task(tid, "failed", brief=meta.get("request"), workflow=meta.get("workflow"),
+                self.store.task(tid, a2a_task(tid, "failed", context_id=previous.get("contextId"),
+                                             brief=meta.get("request"), workflow=meta.get("workflow"), mode=task_mode(previous),
                                              error={"code": "INTERRUPTED", "message": "进程重启，中断任务未自动重跑"}))
 
-    def prepare(self, raw, owner=None, *, knowledge_owner=None):
+    def prepare(self, raw, owner=None, *, knowledge_owner=None, mode=STANDARD):
         cid = raw.get("conversation_id")
         state = {}
         if cid is not None:
@@ -128,7 +134,7 @@ class Orchestrator:
                 raise ServiceError("FORBIDDEN", "会话任务需要记忆访问密钥")
             if not isinstance(cid, str):
                 raise ServiceError("INVALID_INPUT", "会话 ID 无效")
-            state = self.memory.state(owner, cid)
+            state = self.memory.state(owner, cid, mode)
         elif raw.get("remember") or raw.get("message"):
             raise ServiceError("INVALID_INPUT", "请先创建会话")
         raw = dict(raw)
@@ -138,7 +144,8 @@ class Orchestrator:
                                                replacement.get("subject") == previous.get("prediction", {}).get("subject"))
         if cid and previous and same_subject:
             for key in ("constraints", "goal", "complexity", "reasoning_effort", "report_format"):
-                raw.setdefault(key, previous[key])
+                if key in previous:
+                    raw.setdefault(key, previous[key])
         if cid and previous and replacement is None:
             raw["prediction"] = previous["prediction"]
             if not raw.get("fresh_context") and "context" not in raw:
@@ -149,6 +156,7 @@ class Orchestrator:
             request = TaskRequest.model_validate(raw).model_dump()
         except ValidationError:
             raise ServiceError("INVALID_INPUT", "任务字段无效") from None
+        request["_mode"] = mode
         if request["knowledge_query"]:
             if not cid and knowledge_owner != LOCAL_KNOWLEDGE_OWNER:
                 raise ServiceError("FORBIDDEN", "引用私有资料需要所属会话")
@@ -198,43 +206,81 @@ class Orchestrator:
             self.accepting = False
             return list(self.active)
 
-    def submit(self, raw, owner=None, *, knowledge_owner=None):
+    def execution_settings(self, settings, model=None, tools=None):
+        main = dict(settings["agents"]["main"])
+        if model is not None:
+            if not isinstance(model, str) or not self.store.get("models", model)["enabled"]:
+                raise ServiceError("MODEL_REQUIRED", "所选模型不可用")
+            main["model_id"] = model
+            settings = {**settings, "default_model_id": model}
+        if tools is not None:
+            if not isinstance(tools, list) or any(not isinstance(tool, str) or tool not in main["tools"] for tool in tools):
+                raise ServiceError("PERMISSION_DENIED", "本轮仅可使用主 Agent 已授权的工具")
+            main["tools"] = list(dict.fromkeys(tools))
+        return {**settings, "agents": {**settings["agents"], "main": main}}
+
+    def submit(self, raw, owner=None, *, knowledge_owner=None, mode=None, workflow_ref=None):
         tid, event = uuid.uuid4().hex, threading.Event()
         raw = dict(raw)
         graph = raw.pop("workflow", None)
-        workflow = settings = None
+        mode = mode or (PROFESSIONAL if graph is not None else STANDARD)
+        if mode not in MODES or (graph is not None) != (mode == PROFESSIONAL):
+            raise ServiceError("INVALID_INPUT", "任务模式与工作流输入不匹配")
+        workflow = None
         with self.lock:
+            if isinstance(raw.get("conversation_id"), str) and owner:
+                self.memory.state(owner, raw["conversation_id"], mode)
+                bound_workflow = self.memory.flow_for(owner, raw["conversation_id"])
+                if bound_workflow != (workflow_ref["id"] if workflow_ref else None):
+                    raise ServiceError("FORBIDDEN", "会话属于其他流程")
             if graph is not None:
                 key = graph.get("key") if isinstance(graph, dict) else None
-                scope = identity([owner, raw.get("conversation_id"), key])
-                fingerprint = identity([raw, graph, knowledge_owner] if knowledge_owner else [raw, graph])
+                scope = identity([owner, "workflow-chat", workflow_ref["id"], key]) if workflow_ref else identity([owner, raw.get("conversation_id"), key])
+                fingerprint = identity([workflow_ref, graph, knowledge_owner] if workflow_ref else
+                                       [raw, graph, knowledge_owner] if knowledge_owner else [raw, graph])
                 if isinstance(key, str):
                     with self.store.db() as con:
                         prior = con.execute("SELECT body FROM tasks WHERE json_extract(body,'$.metadata.workflow.submission')=?",
                                             (scope,)).fetchone()
                     if prior:
                         saved = json.loads(prior[0])
+                        require_mode(task_mode(saved), mode)
                         if saved["metadata"]["workflow"]["fingerprint"] != fingerprint:
                             raise ServiceError("WORKFLOW_CONFLICT", "此提交标识已用于其他输入或流程版本")
                         return saved
-                settings = self.store.settings()
-                workflow = freeze(graph, self, settings)
-                workflow.update(submission=scope, fingerprint=fingerprint)
             if not self.accepting:
                 raise ServiceError("SERVICE_STOPPING", "控制台正在停止，不再接收新的分析任务", True)
             if len(self.active) >= 4:
                 raise ServiceError("BUSY", "最多同时运行 4 个主任务，请稍后再试", True)
-            request = self.prepare(raw, owner, knowledge_owner=knowledge_owner)
+            settings = self.execution_settings(self.store.settings(), raw.get("model_id"), raw.get("tools"))
+            if graph is not None:
+                workflow = freeze(graph, self, settings)
+                workflow.update(submission=scope, fingerprint=fingerprint, started_at=utcnow().isoformat())
+                if workflow_ref:
+                    main = settings["agents"]["main"]
+                    workflow["flow"] = {**workflow_ref, "selection": {
+                        "model_id": main["model_id"] or settings["default_model_id"], "tools": main["tools"],
+                        "knowledge_scope": workflow_ref["choices"].get("knowledge_scope")}}
+            variables = workflow and workflow.get("variables")
+            if variables:
+                from .workflow_values import prepare
+
+                if not owner:
+                    raise ServiceError("FORBIDDEN", "变量流程运行需要所属工作区")
+                request = {**prepare(workflow["graph"], raw, knowledge_owner), "_mode": mode}
+            else:
+                request = self.prepare(raw, owner, knowledge_owner=knowledge_owner, mode=mode)
             brief = task_brief(request)
-            if (cid := request["conversation_id"]) and not (workflow and workflow["debug"]):
+            submitted = a2a_task(tid, "submitted", brief=brief, workflow=workflow, mode=mode)
+            if (cid := request["conversation_id"]) and not (workflow and (workflow["debug"] or variables)):
                 previous = self.memory.state(owner, cid)
                 if previous.get("task") in self.active:
                     raise ServiceError("BUSY", "会话任务正在收尾", True)
-                self.memory.begin(owner, cid, tid, request, a2a_task(tid, "submitted", brief=brief, workflow=workflow))
+                self.memory.begin(owner, cid, tid, request, submitted)
             else:
-                if cid:
-                    self.memory.bind_child(owner, cid, tid)
-                self.store.task(tid, a2a_task(tid, "submitted", brief=brief, workflow=workflow))
+                if cid or variables:
+                    self.memory.bind_child(owner, cid or "", tid)
+                self.store.task(tid, submitted)
             self.active[tid] = {"event": event}
         def worker():
             try:
@@ -245,9 +291,10 @@ class Orchestrator:
         threading.Thread(target=worker, daemon=True, name="analysis-" + tid[:8]).start()
         return self.store.task(tid)
 
-    def cancel(self, tid):
+    def cancel(self, tid, mode=None):
         with self.lock:
             task = self.store.task(tid)
+            require_mode(task_mode(task), mode)
             running = self.active.get(tid)
             if task["status"]["state"] in ("completed", "failed", "canceled"):
                 raise ServiceError("TASK_NOT_CANCELABLE", "任务已经结束")
@@ -259,8 +306,18 @@ class Orchestrator:
             self.store.task(tid, task)
             return task
 
+    def delete_task(self, tid, mode):
+        with self.lock:
+            task = self.store.task(tid)
+            require_mode(task_mode(task), mode)
+            if tid in self.active or task["status"]["state"] in ("submitted", "working"):
+                raise ServiceError("BUSY", "请先取消或等待任务结束", True)
+            self.memory.delete_task(tid)
+        return {"status": "deleted"}
+
     async def execute(self, tid, request, event=None, *, workflow=None, frozen_settings=None):
-        settings = frozen_settings or self.store.settings()
+        settings = frozen_settings or self.execution_settings(self.store.settings(), request.get("model_id"), request.get("tools"))
+        mode = request.get("_mode", STANDARD)
         brief = task_brief(request)
         level = request.get("reasoning_effort") or settings.get("default_reasoning_effort", DEFAULT_EFFORT)
         limits = envelope(level, settings["limits"])
@@ -268,19 +325,23 @@ class Orchestrator:
         budget = Budget(limits, event)
         progress = Progress(self.store, tid, budget)
         budget.progress = progress
-        if cid := request.get("conversation_id"):
+        if (cid := request.get("conversation_id")) and not (workflow and workflow.get("variables")):
             owner = request["_owner"]
             budget.memory_context = lambda size: self.memory.context(owner, cid, request, size, progress)
         if tid in self.active:
             self.active[tid].update(loop=asyncio.get_running_loop(), task=asyncio.current_task())
         def persist(state, **details):
-            self.store.task(tid, a2a_task(tid, state, brief=brief, workflow=workflow, **details))
+            self.store.task(tid, a2a_task(tid, state, brief=brief, workflow=workflow, mode=mode, **details))
 
         try:
             budget.check()
             persist("working")
             async with asyncio.timeout(settings["limits"]["timeout_seconds"]):
-                if workflow and workflow["mode"] == "custom":
+                if workflow and workflow.get("variables"):
+                    from .workflow_values import run
+
+                    output = await run(self, workflow, request, settings, budget, progress)
+                elif workflow and workflow["mode"] == "custom":
                     from .workflow_runtime import run
 
                     output = await run(self, workflow, request, settings, budget, progress)
@@ -559,7 +620,7 @@ class Orchestrator:
                 self.memory.bind_child(owner, cid, child_id)
             child = {"id": child_id, "role": role, "status": "working", "depth": request["depth"] + 1,
                      "tools": [], "data_fields": ["prediction", "facts"]}
-            self.store.task(child_id, a2a_task(child_id, "working", context_id=tid))
+            self.store.task(child_id, a2a_task(child_id, "working", context_id=tid, mode=request.get("_mode", STANDARD)))
             progress.steps += 1
             progress.emit("step", step=role, status="running", label=f"{role} 子 Agent 通过 A2A 分析", child_id=child_id)
             try:
@@ -578,18 +639,18 @@ class Orchestrator:
                         result = validate_result(raw, role, p, facts)
                 results.append(result)
                 child.update(status="completed", result=result)
-                self.store.task(child_id, a2a_task(child_id, "completed", context_id=tid, result=result))
+                self.store.task(child_id, a2a_task(child_id, "completed", context_id=tid, result=result, mode=request.get("_mode", STANDARD)))
                 progress.emit("step", step=role, status="completed", label=f"{role} 子 Agent 已完成", summary=result["conclusions"],
                               duration_ms=round((time.monotonic() - started) * 1000))
             except (ServiceError, TimeoutError) as exc:
                 code = exc.code if isinstance(exc, ServiceError) else "CHILD_TIMEOUT"
                 child.update(status="degraded", error=code)
                 notes.append(f"{role}/{code}：子 Agent 失败，未采纳其结论。")
-                self.store.task(child_id, a2a_task(child_id, "failed", context_id=tid, error={"code": code}))
+                self.store.task(child_id, a2a_task(child_id, "failed", context_id=tid, error={"code": code}, mode=request.get("_mode", STANDARD)))
                 progress.emit("step", step=role, status="degraded", label=notes[-1], code=code,
                               duration_ms=round((time.monotonic() - started) * 1000))
             except asyncio.CancelledError:
-                self.store.task(child_id, a2a_task(child_id, "canceled", context_id=tid))
+                self.store.task(child_id, a2a_task(child_id, "canceled", context_id=tid, mode=request.get("_mode", STANDARD)))
                 progress.emit("step", step=role, status="canceled", label=f"{role} 子 Agent 已取消",
                               duration_ms=round((time.monotonic() - started) * 1000))
                 raise

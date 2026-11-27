@@ -204,9 +204,11 @@ class WorkflowTests(unittest.TestCase):
         for tid, symbol, forecast in (("open", subject, None), ("private", subject, "private-id"),
                                       ("archived", subject, "forecast-id"), ("other", "OTHER", None)):
             analysis = {"forecast_evidence": {"forecast_id": forecast}}
-            self.store.task(tid, a2a_task(tid, "completed", brief={"subject": symbol, "synthetic": True},
+            self.store.task(tid, a2a_task(tid, "completed", mode="professional", brief={"subject": symbol, "synthetic": True},
                                           result={"analysis": analysis}))
         self.engine.memory.bind_child("another-owner", "another-conversation", "private")
+        self.store.task("standard", a2a_task("standard", "completed", mode="standard", brief={"subject": subject},
+                                             result={"analysis": {"forecast_evidence": {"forecast_id": "standard-id"}}}))
         value = graph()
         value["nodes"].append({"id": "db", "data": {"type": "database", "label": "数据库",
                                                    "config": {"query": "archived", "limit": 1, "include_fact": True}}})
@@ -221,7 +223,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse(detail["has_more"])
         result = query(self.store, {"prediction": {"subject": subject}, "_owner": "another-owner"},
                        {**DEFAULTS, "scope": "accessible", "limit": 2})
-        self.assertEqual([row["task_id"] for row in result["rows"]], ["other", "archived"])
+        self.assertEqual([row["task_id"] for row in result["rows"]], ["standard", "other"])
         self.assertTrue(result["has_more"])
 
         task = self.terminal(self.engine.submit(self.request("db-full", value=value))["id"])

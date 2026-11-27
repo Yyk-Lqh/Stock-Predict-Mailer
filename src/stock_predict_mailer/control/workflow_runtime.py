@@ -112,6 +112,17 @@ async def _node(engine, key, data, upstream, settings, budget, progress, spec):
             _check_binding(engine, spec["bindings"], "agents", main["endpoint_id"], key)
         else:
             _check_binding(engine, spec["bindings"], "models", model or main["model_id"] or settings["default_model_id"], key)
+        if tools := data["config"].get("tools"):
+            current = engine.store.settings()
+            for tool in tools:
+                check_tool(engine, tool, current, key)
+                _check_binding(engine, spec["bindings"], "mcp", tool.split(":", 1)[0], key)
+            notes, before = [], progress.tools
+            state["facts"], state["series"] = await engine.collect(p, facts, state["series"], tools, progress, notes, step=key)
+            state["attempts"] = progress.tools - before
+            if notes and data["failurePolicy"] == "stop":
+                raise ServiceError("WORKFLOW_MCP", "Agent 的授权工具未完整提供上下文")
+            state["notes"] = [*state["notes"], *notes]
         await _analysis(engine, data, state, settings, budget, progress)
     elif kind == "chart":
         analysis = deepcopy(state["analysis"])
@@ -151,6 +162,8 @@ async def _analysis(engine, data, state, settings, budget, progress):
     kind = data["type"]
     main_data = {"prediction": p, "facts": facts, "goal": request["goal"], "user_constraints": request["constraints"],
                  "report_format": request["report_format"]}
+    if instruction := data["config"].get("instruction"):
+        main_data["task_instruction"] = instruction
     evidence = engine.workflow_evidence(request.get("_knowledge_owner"), state.get("knowledge"), main_data, notes)
     if evidence and request["knowledge_to_model"]:
         main_data["source_material"] = {"trust": "untrusted_source_material", "as_of": state["knowledge"]["as_of"], "results": evidence}
@@ -212,7 +225,8 @@ def preview(spec, request, settings):
             if not possible:
                 statuses[key] = {"id": key, "state": "blocked", "reason": "上游条件不满足"}
                 continue
-        dynamic = conditions and any(edge["condition"] != "always" for edge in conditions)
+        dynamic = conditions and any(edge["condition"] != "always" or
+                                     nodes[edge["source"]]["type"] in ("classifier", "branch") for edge in conditions)
         statuses[key] = {"id": key, "state": "blocked" if key not in included else "skip" if reason else
                          "conditional" if dynamic or (spec["mode"] == "system" and key == "merge") else "ready",
                          "reason": reason or ("取决于运行中的上游输出" if dynamic else None)}

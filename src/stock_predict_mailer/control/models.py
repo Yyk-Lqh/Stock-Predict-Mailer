@@ -116,7 +116,27 @@ class ModelAdapter:
                      "risk": ["DATA_LIMITED", "MARKET_RISK"], "advice": ["VERIFY", "WAIT"]}[role]
             return {"conclusion_codes": codes, "evidence_ids": ["prediction:" + p["prediction_id"]],
                     "uncertainty_codes": ["MODEL_UNVERIFIED"], "delegate_roles": ["prediction", "risk", "advice"] if role == "main" else []}
-        secret = self.store.secret("models", pid).get("api_key", "")
+        messages = [{"role": "system", "content": SYSTEM},
+                    {"role": "user", "content": json.dumps({"role": role, "data": data}, ensure_ascii=False)}]
+        return await self._completion(profile, messages, temp, settings, budget, role, "json")
+
+    async def workflow_generate(self, pid, prompt, output_format, settings, budget, step):
+        profile = self.store.get("models", pid)
+        if not profile["enabled"]:
+            raise ServiceError("SERVICE_DISABLED", "模型配置已停用")
+        if len(prompt.encode()) > 12_000:
+            raise ServiceError("INPUT_TOO_LARGE", "提示词超过 12 KB")
+        temp = effective_temperature(profile, settings, "main")
+        if profile["provider"] == "mock":
+            budget.reserve()
+            budget.progress.emit("model", step=step, label="使用 Mock 模型", temperature=temp)
+            return {"text": prompt} if output_format == "json" else prompt
+        instruction = "Return one JSON object." if output_format == "json" else "Return plain text."
+        messages = [{"role": "system", "content": instruction}, {"role": "user", "content": prompt}]
+        return await self._completion(profile, messages, temp, settings, budget, "main", output_format, step=step)
+
+    async def _completion(self, profile, messages, temp, settings, budget, role, output_format, *, step=None):
+        secret = self.store.secret("models", profile["id"]).get("api_key", "")
         if not secret:
             raise ServiceError("AUTH_FAILED", "未配置模型 API Key")
         params = {**profile["parameters"]}
@@ -125,10 +145,11 @@ class ModelAdapter:
             params["reasoning_effort"] = native_effort
         if temp is not None:
             params["temperature"] = temp
-        if "response_format" in profile["supported_parameters"]:
+        if output_format == "text":
+            params.pop("response_format", None)
+        elif "response_format" in profile["supported_parameters"]:
             params.setdefault("response_format", {"type": "json_object"})
-        payload = {"model": profile["model"], "messages": [{"role": "system", "content": SYSTEM},
-                   {"role": "user", "content": json.dumps({"role": role, "data": data}, ensure_ascii=False)}], **params}
+        payload = {"model": profile["model"], "messages": messages, **params}
         raw_size = len(json.dumps(payload, ensure_ascii=False).encode())
         if raw_size > 16000:
             raise ServiceError("INPUT_TOO_LARGE", "模型输入超过本地 16 KiB 预算上限")
@@ -141,6 +162,7 @@ class ModelAdapter:
             budget.reserve(reserve)
             if budget.progress:
                 budget.progress.emit("model", label=f"{role} 调用模型（第 {attempt + 1} 次）",
+                                     **({"step": step} if step else {}),
                                      role=role, temperature=temp, native_reasoning_effort=native_effort)
             try:
                 response = await request_json(profile["base_url"].rstrip("/") + "/chat/completions", payload,
@@ -149,9 +171,12 @@ class ModelAdapter:
                     content = response["choices"][0]["message"]["content"]
                     if not isinstance(content, str):
                         raise ValueError()
-                    result = decode(content.encode())
+                    result = decode(content.encode()) if output_format == "json" else content
+                    if step and output_format == "json" and not isinstance(result, dict):
+                        raise ValueError()
                 except (KeyError, IndexError, TypeError, ValueError):
-                    raise ServiceError("INVALID_RESPONSE", "模型未返回结构化 JSON 内容") from None
+                    message = "模型未返回结构化 JSON 内容" if output_format == "json" else "模型未返回文本内容"
+                    raise ServiceError("INVALID_RESPONSE", message) from None
                 budget.check()
                 return result
             except ServiceError as exc:

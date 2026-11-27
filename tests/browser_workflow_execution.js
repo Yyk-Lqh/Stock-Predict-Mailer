@@ -72,12 +72,12 @@
     await wait(()=>!debug.open,'Single-node test did not close');
     assert(node('main').dataset.status==='completed','Debug node did not complete');
     button('编辑').click();
-    const draftBefore=localStorage.getItem('stock_predict_mailer.desktop.workflow.v1');
+    const draftBefore=JSON.stringify(AnalysisMode.read('workflow', 'professional'));
     const file=document.getElementById('desktop-workflow-file'), transfer=new DataTransfer();
     transfer.items.add(new File(['{bad json'],'bad.json',{type:'application/json'}));file.files=transfer.files;
     file.dispatchEvent(new Event('change',{bubbles:true}));
     await wait(()=>document.getElementById('desktop-workflow-message').textContent.includes('导入失败'),'Missing invalid import error');
-    assert(localStorage.getItem('stock_predict_mailer.desktop.workflow.v1')===draftBefore && node('report'),'Invalid import damaged saved graph');
+    assert(JSON.stringify(AnalysisMode.read('workflow', 'professional'))===draftBefore && node('report'),'Invalid import damaged saved graph');
     node('prediction').focus();
     const before=parseFloat(node('prediction').style.left);
     node('prediction').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true,cancelable:true}));

@@ -10,7 +10,7 @@
     assert(location.port==='8768'&&innerWidth>760&&window.DesktopSessions,'Use desktop fixture');
     const access=await api('memory/access','POST',{});await useMemoryKey(access.key);await wait(()=>!$('sessions-refresh').disabled,'empty owner');
     assert(!$('sidebar-sessions').textContent.includes('正在读取')&&rows().length===0,'Empty catalog stayed in loading state');
-    for(let i=0;i<35;i++)await api('conversations','POST',{});
+    for(let i=0;i<35;i++)await api('conversations','POST',{},undefined,AnalysisMode.capture());
     await Workbench.sessions();assert(rows().length===30&&!$('sessions-more').hidden,'Actual first session page missing');
     await Workbench.sessions(true);assert(rows().length===35&&$('sessions-more').hidden,'Actual older page not appended/exhausted');
     $('session-menu').open=true;const oldest=rows().at(-1),oldestId=oldest.dataset.conversation;oldest.focus();await Workbench.sessions();
@@ -36,7 +36,7 @@
     assert(!(await api('conversations')).some(item=>item.id===first)&&rows().length===34,'Deleted conversation reappeared in retained catalog');window.confirm=realConfirm;
     checks.push('Session selection preserves independent original drafts; actual deletion removes the retained row and server conversation');
 
-    const temporary=(await api('conversations','POST',{})).id;await refreshMemory();await Workbench.sessions();
+    const temporary=(await api('conversations','POST',{},undefined,AnalysisMode.capture())).id;await refreshMemory();await Workbench.sessions();
     row(temporary).click();await wait(()=>$('conversation-id').value===temporary&&!$('task-form').inert,'select deletion-race conversation');await Workbench.sessions();
     let deletionHeld=false,releaseDeletion;
     window.fetch=async(url,options)=>{const response=await realFetch(url,options);if(String(url).startsWith('/api/conversations?limit=30')){deletionHeld=true;await new Promise(resolve=>{releaseDeletion=resolve;releases.push(resolve);});}return response;};

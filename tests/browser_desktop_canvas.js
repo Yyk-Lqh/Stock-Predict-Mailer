@@ -91,7 +91,7 @@
     assert(close(start.x, (bounds.left + bounds.right) / 2) && close(start.y, bounds.top), 'SVG must use the same viewport as the nodes');
     const saved = document.getElementById('desktop-workflow-save');
     saved.click();
-    const graph = JSON.parse(localStorage.getItem('stock_predict_mailer.desktop.workflow.v1'));
+    const graph = AnalysisMode.read('workflow', 'professional');
     assert(close(graph.nodes.find(node => node.id === 'model').position.x, position.x), 'Saving must preserve off-origin coordinates');
     checkGrid();
 

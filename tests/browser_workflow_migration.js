@@ -22,7 +22,7 @@
   node.click();
   const text=document.getElementById('desktop-workflow-inspector').textContent;
   assert(text.includes('旧文本条件') && !text.includes('test-secret'),'Legacy config or credential filtering failed');
-  const saved=JSON.parse(localStorage.getItem('stock_predict_mailer.desktop.workflow.v1'));
+  const saved=AnalysisMode.read('workflow', 'professional');
   assert(saved.nodes.some(node=>node.id==='report'),'Import changed previously saved graph');
   window.workflowMigrationResult={state:'passed',width:innerWidth,recovered:true,legacyDraft:true,legacySecretFiltered:true};
   })().catch(error=>{window.workflowMigrationResult={state:'failed',error:error.message};});

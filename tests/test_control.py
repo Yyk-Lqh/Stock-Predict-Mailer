@@ -30,7 +30,7 @@ from stock_predict_mailer.control.store import Store
 
 class Fixture:
     def __init__(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.tmp.name)
         self.key = Fernet.generate_key()
         self.store = Store(self.root, self.key)

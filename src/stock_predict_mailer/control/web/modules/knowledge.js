@@ -347,6 +347,14 @@ window.KnowledgeUI = (() => {
   const selectionEditor = document.createElement('details'); selectionEditor.className = 'input-editor';
   selectionEditor.innerHTML = `<summary>知识资料 · 为本轮检索证据</summary><div class="card stack"><label class="field"><span>检索问题</span><input id="task-knowledge-query" maxlength="4000" placeholder="留空时不使用知识库"></label><label class="check"><input type="checkbox" id="task-knowledge-consent"> 允许将本轮检索资料发送给已配置的分析模型</label><p class="hint">从当前选择的资料库检索已发布资料，截止时间采用预测生成日期。只有明确勾选后，证据才会进入模型输入。</p><button type="button" class="btn tiny" data-goto="knowledge">管理资料与版本</button></div>`;
   $('facts-editor').after(selectionEditor);
+  const taskScopeField = document.createElement('select');
+  taskScopeField.id = 'task-knowledge-scope';
+  taskScopeField.setAttribute('aria-label', '本轮资料库');
+  taskScopeField.append(new Option('本机资料', 'local'), new Option('旧版私有资料', 'private'));
+  taskScopeField.value = scope;
+  const taskScopeLabel = document.createElement('label'); taskScopeLabel.className = 'field';
+  text(taskScopeLabel, 'span', '本轮资料库'); taskScopeLabel.append(taskScopeField);
+  $('task-knowledge-query').closest('label').before(taskScopeLabel);
   $('knowledge-scope').value = scope;
   $('knowledge-scope').onchange = safe(async event => {
     scope = event.currentTarget.value;
@@ -381,7 +389,11 @@ window.KnowledgeUI = (() => {
     ++detailRequest;
     $('knowledge-detail').hidden = true;
   }
-  function reset() { $('task-knowledge-query').value = ''; $('task-knowledge-consent').checked = false; }
+  function reset() {
+    $('task-knowledge-query').value = '';
+    $('task-knowledge-consent').checked = false;
+    taskScopeField.value = scope;
+  }
   function identityReset() {
     ++detailRequest; ++searchRequest; ++historyRequest; desktopStatus = ''; window.DesktopLibrary?.resetKnowledge();
     ++epoch; clearTimeout(timer); clearTimeout(queueTimer); waiting = null;
@@ -393,10 +405,14 @@ window.KnowledgeUI = (() => {
     $('knowledge-profile').querySelector('[type="submit"]').disabled = true;
     $('knowledge-profile-status').textContent = '';
     applyProfile();
-    closeDetail(); reset(); renderLanding(); renderDifyDocuments();
+    closeDetail(); renderLanding(); renderDifyDocuments();
   }
   function selection() { return {knowledge_query: $('task-knowledge-query').value.trim(), knowledge_to_model: $('task-knowledge-consent').checked}; }
-  function restore(value) { $('task-knowledge-query').value = value.knowledge_query || ''; $('task-knowledge-consent').checked = Boolean(value.knowledge_to_model); }
+  function restore(value) {
+    $('task-knowledge-query').value = value.knowledge_query || '';
+    $('task-knowledge-consent').checked = Boolean(value.knowledge_to_model);
+    taskScopeField.value = value.scope || scope;
+  }
   function documentRow(item) {
     const row = document.createElement('article'); row.className = 'document-row';
     row.dataset.documentId = item.id; row.dataset.documentState = item.status;
@@ -1111,5 +1127,7 @@ window.KnowledgeUI = (() => {
     const button = $('knowledge-rebuild'); button.disabled = true;
     try { await api('knowledge/rebuild', 'POST', {}); notice('索引重建完成。'); await configs(); } finally { button.disabled = false; }
   });
-  return {init, load, reset, identityReset, scope: () => scope, restore, selection, evidence, open:openDocuments, close:closeDetail, filter:filterStatus, filterStatus:() => desktopStatus, processing: safe(() => openTab('processing'))};
+  return {init, load, reset, identityReset, scope: () => scope, taskScope: () => taskScopeField.value,
+    restore, selection, evidence, open:openDocuments, close:closeDetail, filter:filterStatus,
+    filterStatus:() => desktopStatus, processing: safe(() => openTab('processing'))};
 })();

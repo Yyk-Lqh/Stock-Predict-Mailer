@@ -20,6 +20,7 @@ window.MailRecipients=(()=>{
   $('mail-recipients-add').onclick=()=>{const input=add();requirements();input.focus();};$('mail-recipients-cancel').onclick=()=>dialog.close();
   async function save(allowNew=false){
     if(saving||!dialog.querySelector('form').reportValidity())return;
+    const scope=AnalysisMode.capture();
     const emails=parse([...list.querySelectorAll('input')].map(input=>input.value).join(',')),enabled=$('mail-recipients-enabled').checked;
     if(enabled&&!emails.length){$('mail-recipients-error').textContent='请至少添加一个收件邮箱。';return;}
     const allowed=settings?.mail?.recipient_allowlist||[];
@@ -35,11 +36,12 @@ window.MailRecipients=(()=>{
       }catch(error){$('mail-recipients-error').textContent='授权未完成：'+error.message+'。已填写邮箱仍保留，请重试。';return;}
       finally{saving=false;controls.forEach(node=>{node.disabled=false;});$('mail-recipients-add').disabled=list.children.length>=50;}
     }
+    if (!AnalysisMode.current(scope)) return;
     field.value=emails.join(', ');$('task-notify').checked=enabled;
     for(const node of [field,$('task-notify')])node.dispatchEvent(new Event('change',{bubbles:true}));
     draftSchedule();dialog.close();notice(`已保存 ${emails.length} 个收件邮箱${enabled?'，下次分析完成后投递':'，暂不投递'}。`);
   }
   dialog.querySelector('form').onsubmit=event=>{event.preventDefault();save();};authorize.onclick=()=>save(true);
   function open(){list.replaceChildren();const emails=parse(field.value);(emails.length?emails:['']).forEach(add);$('mail-recipients-enabled').checked=$('task-notify').checked||!emails.length;requirements();clearAuthorization();dialog.showModal();list.querySelector('input')?.focus();}
-  return{open,values:()=>parse(field.value)};
+  return{open,close:()=>{if(dialog.open)dialog.close();},values:()=>parse(field.value)};
 })();

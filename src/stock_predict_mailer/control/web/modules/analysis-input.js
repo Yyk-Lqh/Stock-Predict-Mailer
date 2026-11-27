@@ -90,14 +90,15 @@ window.AnalysisInput = (() => {
     window.ComposerControls?.update();
     autoSize();
   }
-  function open(id = 'input') {
+  function open(id = 'input', show = true) {
     mode = id;
     for (const [name, pane] of Object.entries(panes)) {
       pane.hidden = name !== id;
       const button = $('analysis-tab-' + name); button.setAttribute('aria-selected', String(name === id)); button.tabIndex = name === id ? 0 : -1;
     }
     $('inspector-actions').hidden = id !== 'report';
-    window.Workbench.inspector(true); update();
+    if (show) window.Workbench.inspector(true);
+    update();
     window.DesktopWorkbench?.panel(id);
     window.DesktopReport?.panel(id);
   }
@@ -113,11 +114,10 @@ window.AnalysisInput = (() => {
   function observe(task) {
     const prediction = task.artifacts?.[0]?.parts?.[0]?.data?.analysis?.prediction;
     if (prediction) lastPrediction = prediction;
-    window.DesktopWorkbench?.observe(task);
-    if (['working', 'submitted'].includes(task.status.state) && mode !== 'input') open('progress');
     update();
   }
-  function reset() { lastPrediction = null; window.DesktopWorkbench?.reset(); update(); }
+  function reset() { lastPrediction = null; update(); }
+  function restorePrediction(value) { lastPrediction = value || null; update(); }
   form.addEventListener('input', update); form.addEventListener('change', update);
   form.addEventListener('input', event => {
     const field = event.target.name === 'p-dir' ? $('p-direction-up') : event.target;
@@ -142,5 +142,5 @@ window.AnalysisInput = (() => {
   const currentPrediction = () => {
     try { return JSON.parse($('task-data').value).prediction || lastPrediction; } catch (_) { return null; }
   };
-  return {open, validate, observe, reset, update, layout, currentPrediction,resize:autoSize};
+  return {open, pane: () => mode, validate, observe, reset, restorePrediction, update, layout, currentPrediction,resize:autoSize};
 })();

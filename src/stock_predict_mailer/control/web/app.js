@@ -125,6 +125,51 @@ const $ = id => document.getElementById(id);
 let csrf = '', profiles = [], servers = [], endpoints = [], settings = null, currentTask = null;
 let taskControlsDirty = false;
 let memoryKey = sessionStorage.getItem('spm_memory_key') || '';
+const AnalysisMode = (() => {
+  const storage = 'stock_predict_mailer.workspace.';
+  let workspace = '', mode = 'standard', epoch = 0, legacy = false;
+  const key = (name, scope = mode) => storage + workspace + '.' + scope + '.' + name;
+  function read(name, scope = mode) {
+    try { return workspace ? JSON.parse(localStorage.getItem(key(name, scope))) : null; } catch (_) { return null; }
+  }
+  function write(name, value, scope = mode) {
+    if (!workspace) return;
+    try {
+      if (value == null) localStorage.removeItem(key(name, scope));
+      else localStorage.setItem(key(name, scope), JSON.stringify(value));
+    } catch (_) { /* Local storage is optional. */ }
+  }
+  function importLegacy(name, scope, oldKeys, parse = JSON.parse) {
+    if (!legacy || read('imported.' + name, scope)) return;
+    try {
+      const value = [oldKeys].flat().map(oldKey => localStorage.getItem(oldKey)).find(item => item != null);
+      if (value != null && read(name, scope) == null) write(name, parse(value), scope);
+      write('imported.' + name, true, scope);
+    } catch (_) { /* An invalid old draft can be ignored. */ }
+  }
+  function configure(id) {
+    workspace = id || 'console';
+    try {
+      const claim = storage + 'legacy-workspace';
+      if (!localStorage.getItem(claim)) localStorage.setItem(claim, workspace);
+      legacy = localStorage.getItem(claim) === workspace;
+    } catch (_) { /* Storage can be unavailable. */ }
+  }
+  function activate(value) { mode = value; ++epoch; }
+  function capture() { return {mode, epoch, key: memoryKey, knowledgeScope: window.KnowledgeUI?.taskScope() || 'local'}; }
+  const current = token => token.mode === mode && token.epoch === epoch && token.key === memoryKey;
+  const model = () => read('model') || settings?.agents?.main?.model_id || settings?.default_model_id;
+  const tools = () => {
+    const allowed = settings?.agents?.main?.tools || [];
+    return (read('tools') || allowed).filter(tool => allowed.includes(tool));
+  };
+  return {read, write, configure, importLegacy, activate, capture, current, model, tools,
+    active: () => mode, canImportLegacy: () => legacy};
+})();
+const taskMode = task => task.metadata?.mode || (task.metadata?.workflow ? 'professional' : task.metadata?.request ? 'standard' : 'legacy');
+const displayedTaskMode = () => window.Workbench?.resultMode() || AnalysisMode.active();
+const pendingSubmissions = new Set();
+const submitErrors = new Map();
 const roles = {main: '主 Agent', prediction: '预测分析', risk: '风险分析', advice: '建议生成'};
 const TASK_STATE = {submitted: '已提交', working: '运行中', completed: '已完成', failed: '失败', canceled: '已取消'};
 const MAIL_STATE = {
@@ -251,16 +296,17 @@ function notice(message, error = false) {
   clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => { el.hidden = true; }, error ? 12000 : 6000);
 }
-async function api(path, method = 'GET', body, signal) {
+async function api(path, method = 'GET', body, signal, context) {
   const response = await fetch('/api/' + path, {
     method,
     signal,
-    headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf, 'X-Memory-Key': memoryKey,
-      'X-Knowledge-Scope': window.KnowledgeUI?.scope() || 'local'},
+    headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf, 'X-Memory-Key': context?.key ?? memoryKey,
+      'X-Knowledge-Scope': context?.knowledgeScope || window.KnowledgeUI?.scope() || 'local',
+      ...(context?.mode ? {'X-Analysis-Mode': context.mode} : {})},
     body: body === undefined ? undefined : JSON.stringify(body)
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(`${data.error?.code || response.status} · ${data.error?.message || '请求失败'}`);
+  if (!response.ok) throw Object.assign(new Error(`${data.error?.code || response.status} · ${data.error?.message || '请求失败'}`), {status:response.status, issues:data.error?.issues});
   return data;
 }
 function action(label, fn) {
@@ -269,8 +315,9 @@ function action(label, fn) {
   b.className = 'btn tiny';
   b.textContent = label;
   b.onclick = async () => {
+    const scope = AnalysisMode.capture();
     b.disabled = true;
-    try { await fn(); } catch (e) { notice(e.message, true); } finally { b.disabled = false; }
+    try { await fn(); } catch (e) { if (AnalysisMode.current(scope)) notice(e.message, true); } finally { b.disabled = false; }
   };
   return b;
 }
@@ -1107,10 +1154,11 @@ $('prediction-import').onchange = async event => {
   const field = event.currentTarget, file = field.files[0];
   if (!file) return;
   const selected = $('conversation-id').value;
+  const scope = AnalysisMode.capture();
   try {
     if (file.size > 1024 * 1024) throw new Error('预测文件须小于 1 MiB。');
     const prediction = JSON.parse(await file.text());
-    if (selected !== $('conversation-id').value) return;
+    if (!AnalysisMode.current(scope) || selected !== $('conversation-id').value) return;
     if (prediction?.schema_version !== '1' || typeof prediction.subject !== 'string' || !prediction.subject.trim() ||
         !prediction.horizon || !(Date.parse(prediction.valid_until) > Date.now()) ||
         (!Number.isFinite(prediction.value) && !['up', 'down', 'flat'].includes(prediction.direction))) {
@@ -1123,7 +1171,7 @@ $('prediction-import').onchange = async event => {
     draftSchedule();
     window.AnalysisInput?.update();
     notice('预测已导入，请填写分析问题并发送。');
-  } catch (error) { notice(error.message, true); }
+  } catch (error) { if (AnalysisMode.current(scope)) notice(error.message, true); }
   finally { field.value = ''; }
 };
 $('load-mock').onclick = () => { applySample(); notice('已填入示例预测与两条事实，可以直接提交。'); };
@@ -1145,7 +1193,7 @@ function validTemplateHorizon(value) {
 }
 function readPredictionTemplate() {
   try {
-    const saved = JSON.parse(localStorage.getItem(PREDICTION_TEMPLATE_KEY));
+    const saved = AnalysisMode.read('template');
     if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return null;
     const template = {...PREDICTION_TEMPLATE_DEFAULTS};
     for (const id of Object.keys(template)) {
@@ -1172,14 +1220,14 @@ $('prediction-template-save').onclick = () => {
     return;
   }
   try {
-    localStorage.setItem(PREDICTION_TEMPLATE_KEY, JSON.stringify(template));
+    AnalysisMode.write('template', template);
     updatePredictionTemplate();
     notice('已保存填写模板，新建分析时会自动套用。');
   } catch (_) { notice('当前浏览器无法保存填写模板，请检查本地存储设置。', true); }
 };
 $('prediction-template-reset').onclick = () => {
   try {
-    localStorage.removeItem(PREDICTION_TEMPLATE_KEY);
+    AnalysisMode.write('template', null);
     updatePredictionTemplate();
     notice('新建分析将使用系统模板。');
   } catch (_) { notice('当前浏览器无法清除填写模板。', true); }
@@ -1202,27 +1250,10 @@ function resetPredictionInput() {
 
 /* ---------- draft：没提交的输入不该因为刷新或切页丢掉 ---------- */
 const DRAFT_KEY = 'stock_predict_mailer.console.draft.v1';
-const draftKey = () => DRAFT_KEY + ($('conversation-id').value ? '.' + $('conversation-id').value : '');
-const DRAFT_KEY_LEGACY = 'spm.console.draft.v1';  // 旧版本写入的键，只读一次后迁走
+const draftKey = (id = $('conversation-id').value) => 'draft.' + (id || 'new');
 let draftTimer = null;
-function draftRead() {
-  try {
-    const fresh = localStorage.getItem(draftKey());
-    if (fresh) return JSON.parse(fresh);
-    if ($('conversation-id').value) return null;
-    const legacy = localStorage.getItem(DRAFT_KEY_LEGACY);
-    if (!legacy) return null;
-    localStorage.setItem(DRAFT_KEY, legacy);
-    localStorage.removeItem(DRAFT_KEY_LEGACY);
-    return JSON.parse(legacy);
-  } catch (error) { return null; }
-}
-function draftWrite(value) {
-  try {
-    if (value) localStorage.setItem(draftKey(), JSON.stringify(value));
-    else localStorage.removeItem(draftKey());
-  } catch (error) { /* 隐私模式写不进去：静默降级，不影响提交 */ }
-}
+const draftWrite = (value, id, mode) => AnalysisMode.write(draftKey(id), value, mode);
+const predictionFields = ['p-subject', 'p-model-version', 'p-horizon-value', 'p-horizon-unit', 'p-confidence', 'p-valid-until'];
 function draftSnapshot() {
   return {
     data: $('task-data').value,
@@ -1234,15 +1265,25 @@ function draftSnapshot() {
     message: $('conversation-message').value,
     constraints: $('conversation-constraints').value,
     format: $('conversation-format').value,
+    remember: $('remember-text').value,
+    remember_format: $('remember-format').value,
+    form: Object.fromEntries(predictionFields.map(id => [id, $(id).value])),
+    direction: currentDirection(),
+    synthetic: $('p-synthetic').checked,
+    facts: structuredClone(facts),
+    numeric: numericPrediction,
     controls_dirty: taskControlsDirty,
-    knowledge: window.KnowledgeUI?.selection(),
+    knowledge: window.KnowledgeUI && {...window.KnowledgeUI.selection(), scope: window.KnowledgeUI.taskScope()},
     saved_at: new Date().toISOString()
   };
 }
 function draftSchedule() {
   clearTimeout(draftTimer);
-  if(window.DesktopInteractions?.draftBlocked())return;
-  draftTimer = setTimeout(() => {if(!window.DesktopInteractions?.draftBlocked())draftWrite(draftSnapshot());}, 400);
+  if (AnalysisMode.active() === 'legacy' || window.DesktopInteractions?.draftBlocked()) return;
+  const scope = AnalysisMode.capture(), cid = $('conversation-id').value;
+  draftTimer = setTimeout(() => {
+    if (AnalysisMode.current(scope) && cid === $('conversation-id').value && !window.DesktopInteractions?.draftBlocked()) draftWrite(draftSnapshot());
+  }, 400);
 }
 function draftBanner(message) {
   if (!message) { $('draft-note').hidden = true; return; }
@@ -1250,16 +1291,26 @@ function draftBanner(message) {
   $('draft-note').hidden = false;
 }
 function draftRestore() {
-  const stored = draftRead();
-  if (!stored || !stored.data) return false;
-  let payload;
-  try { payload = JSON.parse(stored.data); } catch (error) { draftWrite(null); return false; }
-  if (!payload || (!payload.prediction && !$('conversation-id').value)) { draftWrite(null); return false; }
+  const stored = AnalysisMode.read(draftKey());
+  if (!stored || typeof stored.data !== 'string') { draftBanner(null); return false; }
+  let payload = {};
+  try { payload = JSON.parse(stored.data) || {}; } catch (_) { /* Keep an unfinished JSON edit. */ }
   $('task-data').value = stored.data;
-  if (payload.prediction) syncForm(true);
+  if (stored.form) {
+    for (const id of predictionFields) $(id).value = stored.form[id] ?? '';
+    setDirection(stored.direction);
+    $('p-synthetic').checked = Boolean(stored.synthetic);
+    facts = stored.facts || [];
+    renderFacts();
+    setNumericPrediction(stored.numeric);
+    window.ForecastUI?.restore(payload);
+  } else if (payload.prediction) syncForm(true);
+  else window.ForecastUI?.restore(payload);
   $('conversation-message').value = stored.message || '';
   $('conversation-constraints').value = stored.constraints || '';
   $('conversation-format').value = stored.format || '';
+  $('remember-text').value = stored.remember || '';
+  $('remember-format').value = stored.remember_format || '';
   taskControlsDirty = Boolean(stored.controls_dirty);
   if (stored.knowledge) window.KnowledgeUI?.restore(stored.knowledge);
   $('task-notify').checked = Boolean(stored.notify);
@@ -1267,10 +1318,8 @@ function draftRestore() {
   if (stored.complexity) $('task-complexity').value = stored.complexity;
   if (stored.goal) $('task-goal').value = stored.goal;
   if (typeof stored.effort === 'string') $('task-effort').value = stored.effort;
-  // 草稿放久了有效期会过期，直接提交必然被校验拒绝，所以顺延到两天后
   const until = new Date(payload.prediction?.valid_until || NaN);
   const expired = !isNaN(until.getTime()) && until <= new Date();
-  if (expired) draftBanner('草稿中的预测已过期，请更新预测与有效期后提交。');
   draftBanner(`已恢复 ${stored.saved_at ? fmt(stored.saved_at) : '上次'} 的输入${expired ? '；预测已过期，请核对并更新有效期' : ''}。`);
   window.AnalysisInput?.update();
   return true;
@@ -1279,6 +1328,9 @@ function draftClear() {
   clearTimeout(draftTimer);
   draftWrite(null);
   draftBanner(null);
+  for (const id of ['conversation-message', 'conversation-constraints', 'conversation-format', 'remember-text', 'remember-format', 'task-recipient']) $(id).value = '';
+  $('task-notify').checked = false;
+  window.KnowledgeUI?.reset();
   resetPredictionInput();
   notice('已清空本地草稿，表单回到默认值。');
 }
@@ -1294,8 +1346,8 @@ function statusline(task) {
   const mail = result?.mail;
   const items = [
     [TASK_STATE[task.status.state] || task.status.state, task.status.state === 'failed' ? 'warn' : task.status.state === 'completed' ? 'ok' : 'warn'],
-    ['分析 ' + (result ? (result.analysis.status === 'degraded' ? '降级' : '正常') : '尚未产出'),
-      result ? (result.analysis.status === 'degraded' ? 'warn' : 'ok') : 'off'],
+    ['分析 ' + (result?.analysis ? (result.analysis.status === 'degraded' ? '降级' : '正常') : '尚未产出'),
+      result?.analysis ? (result.analysis.status === 'degraded' ? 'warn' : 'ok') : 'off'],
     ['邮件 ' + (MAIL_STATE[mail?.status] || (mail ? mail.status : '未请求通知')), mail && mail.status !== 'not_requested' && mail.status !== 'simulated' ? 'warn' : 'off']
   ];
   for (const [label, dot] of items) {
@@ -1381,6 +1433,10 @@ function renderReport(task) {
     return;
   }
   if (!result) return;
+  if (result.workflow_debug || !result.analysis) {
+    text(host, 'pre', JSON.stringify(result.workflow_debug ? result.summary : result, null, 2));
+    return;
+  }
 
   const analysis = result.analysis;
   const p = analysis.prediction || {};
@@ -1570,7 +1626,9 @@ function renderReport(task) {
       for (const [label, delivered] of [['确认已送达', true], ['确认未送达', false]]) {
         actions.append(action(label, async () => {
           if (!window.confirm(`${label}？这只会更新回执状态，不会重发邮件。`)) return;
-          await api(`tasks/${task.id}/mail/resolve`, 'POST', {delivered});
+          const scope = AnalysisMode.capture();
+          await api(`tasks/${task.id}/mail/resolve`, 'POST', {delivered}, undefined, {...scope, mode: taskMode(task)});
+          if (!AnalysisMode.current(scope) || currentTask !== task.id) return;
           showTask(await api('tasks/' + task.id));
           notice('回执状态已更新。');
         }));
@@ -1586,7 +1644,7 @@ function showTask(task) {
   statusline(task);
   renderReport(task);
   const finished = ['completed', 'failed', 'canceled'].includes(task.status.state);
-  $('task-cancel').hidden = finished;
+  $('task-cancel').hidden = finished || taskMode(task) === 'legacy';
   renderRunviz(task.status.state);
   window.Workbench?.task(task);
   window.PonyOffice?.sync(task, null);
@@ -1773,10 +1831,13 @@ function showEvent(event) {
 async function poll(id) {
   if (window.DesktopPoll?.active()) return window.DesktopPoll.request(id);
   if (currentTask !== id) return;
+  const scope = AnalysisMode.capture(), context = {...scope, mode: displayedTaskMode()};
+  const same = () => currentTask === id && AnalysisMode.current(scope);
   try {
-    const task = await api('tasks/' + id);
-    const progress = await api(`tasks/${id}/events?after=${eventCursor}`);
-    if (currentTask !== id) return;
+    const task = await api('tasks/' + id, 'GET', undefined, undefined, context);
+    if (!same() || taskMode(task) !== context.mode) return;
+    const progress = await api(`tasks/${id}/events?after=${eventCursor}`, 'GET', undefined, undefined, context);
+    if (!same()) return;
     for (const event of progress.events) {
       if (event.seq <= eventCursor) continue;
       showEvent(event);
@@ -1784,35 +1845,39 @@ async function poll(id) {
     }
     runvizSample();
     window.PonyOffice?.sync(task, progress.events);
-    if (!showTask(task) || progress.events.length === 100) setTimeout(() => poll(id), 700);
+    if (!showTask(task) || progress.events.length === 100) setTimeout(() => { if (same()) poll(id); }, 700);
     else {
       overviewTask = task;
       renderSteps();
-      if (memoryKey) refreshMemory().catch(error => notice(error.message, true));
+      if (memoryKey) refreshMemory().catch(error => { if (same()) notice(error.message, true); });
     }
   } catch (error) {
-    if (currentTask === id) {
+    if (same()) {
       window.PonyOffice?.disconnected();
-      setTimeout(() => { if (currentTask === id) poll(id); }, 2500);
+      setTimeout(() => { if (same()) poll(id); }, 2500);
+      notice(error.message, true);
     }
-    notice(error.message, true);
   }
 }
 $('task-form').onsubmit = async event => {
   event.preventDefault();
   const button = $('analysis-send') || event.currentTarget.querySelector('[type=submit]');
-  if (button.disabled || event.currentTarget.inert) return;
+  const start = AnalysisMode.capture();
+  if (button.disabled || event.currentTarget.inert || start.mode === 'legacy' || pendingSubmissions.has(start.mode)) return;
+  const revision = window.Workbench?.revision(start.mode);
+  const sameSelection = () => revision === window.Workbench?.revision(start.mode);
+  submitErrors.delete(start.mode);
+  pendingSubmissions.add(start.mode);
   button.disabled = true;
+  let extension, pendingRun;
   try {
     window.AnalysisInput?.validate();
     window.ForecastUI?.validate();
-    await window.Workbench?.prepare();
     const input = JSON.parse($('task-data').value);
     const conversationId = $('conversation-id').value;
     const controls = {complexity: $('task-complexity').value, goal: $('task-goal').value, reasoning_effort: $('task-effort').value || null};
     const request = conversationId && !input.prediction && !taskControlsDirty ? {...input} : {...input, ...controls};
-    if (conversationId) {
-      request.conversation_id = conversationId;
+    {
       request.message = $('conversation-message').value;
       if ($('conversation-constraints').value.trim()) request.constraints = lines($('conversation-constraints').value);
       if ($('conversation-format').value) request.report_format = $('conversation-format').value;
@@ -1823,51 +1888,77 @@ $('task-form').onsubmit = async event => {
       if (remember.length) request.remember = remember;
     }
     if (window.KnowledgeUI) Object.assign(request, window.KnowledgeUI.selection());
+    const chosenModel = AnalysisMode.read('model');
+    if (chosenModel) request.model_id = chosenModel;
+    if (AnalysisMode.read('tools')) request.tools = AnalysisMode.tools();
     const recipients=window.MailRecipients?.values();
     const payload = {...request, notify: $('task-notify').checked, recipient: recipients?.[0] || $('task-recipient').value || null, ...(recipients?.length>1?{recipients}:{})};
-    const extension = window.DesktopWorkbench?.workflowPayload(payload);
-    let task;
-    try {
-      task = await api('tasks', 'POST', {...payload,...extension});
-    } catch (error) {
-      if (extension?.workflow) window.DesktopWorkbench.explainError(error);
-      throw error;
+    extension = window.DesktopWorkbench?.workflowPayload(payload);
+    const snapshot = draftSnapshot();
+    await ensureBrowserMemory();
+    const scope = {...start, key: start.key || memoryKey};
+    if (scope.key !== memoryKey) return;
+    const cid = conversationId || (await api('conversations', 'POST', {}, undefined, scope)).id;
+    if (!conversationId && sameSelection() && scope.key === memoryKey) {
+      const here = AnalysisMode.active() === scope.mode && !$('conversation-id').value;
+      const draft = here ? draftSnapshot() : AnalysisMode.read(draftKey(''), scope.mode) || snapshot;
+      draftWrite(draft, cid, scope.mode);
+      if (here) window.Workbench?.attachConversation(cid);
+      AnalysisMode.write('position', {conversation:cid}, scope.mode);
     }
-    if (conversationId !== $('conversation-id').value) { notice('任务已提交，可从对应会话查看。'); return; }
-    currentTask = task.id;
-    window.ForecastUI?.reset();
-    window.AnalysisInput?.open('progress');
-    window.Workbench?.submitted(task);
+    pendingRun = {conversation:cid, request:crypto.randomUUID()};
+    if (sameSelection()) AnalysisMode.write('pending-run', pendingRun, scope.mode);
+    const task = await api('tasks', 'POST', {...payload, conversation_id: cid, ...extension}, undefined, scope);
     recordLoaded = false;
-    // 已提交的输入留作下次的起点，但不再提示「未提交」
-    clearTimeout(draftTimer);
-    draftWrite(draftSnapshot());
-    draftBanner(null);
-    $('remember-format').value = '';
-    $('remember-text').value = '';
-    eventCursor = 0;
-    stepRows.clear();
-    for (const id of ['execution-plan', 'execution-events', 'chart-preview', 'analysis-preview']) $(id).replaceChildren();
-    $('effective-effort').textContent = '正在读取生效配置';
-    $('task-progress').hidden = false;
-    $('report').replaceChildren();
-    runvizReset(true);
-    showTask(task);
+    if (taskMode(task) !== scope.mode || !sameSelection() || scope.key !== memoryKey) return;
+    const visible = AnalysisMode.active() === scope.mode && $('conversation-id').value === cid;
+    if (!visible) {
+      AnalysisMode.write('position', {conversation:cid, task:task.id}, scope.mode);
+      if (scope.mode === 'professional') window.DesktopWorkbench?.queueWorkflow();
+      return;
+    }
+    const live = draftSnapshot();
+    delete live.saved_at; delete snapshot.saved_at;
+    const unchanged = JSON.stringify(live) === JSON.stringify(snapshot);
+    window.Workbench?.attachConversation(cid);
+    draftWrite(live, cid, scope.mode);
+    document.body.classList.remove('report-dismissed');
+    displayTask(task);
+    window.AnalysisInput?.open('progress');
+    window.Workbench?.submitted(unchanged);
     window.DesktopWorkbench?.acceptWorkflow(task);
-    poll(task.id);
-    setTimeout(() => $('task-status').scrollIntoView({block: 'start', behavior: 'smooth'}), 120);
   } catch (error) {
-    notice(error.message, true);
+    if ((!start.key || start.key === memoryKey) && sameSelection()) {
+      if (AnalysisMode.active() === start.mode) {
+        if (extension?.workflow) window.DesktopWorkbench.explainError(error);
+        notice(error.message, true);
+      } else submitErrors.set(start.mode, error.message);
+    }
   } finally {
-    button.disabled = false;
-    window.AnalysisInput?.update();
+    if (pendingRun && AnalysisMode.read('pending-run', start.mode)?.request === pendingRun.request) {
+      AnalysisMode.write('pending-run', null, start.mode);
+    }
+    pendingSubmissions.delete(start.mode);
+    if (AnalysisMode.active() === start.mode) {
+      button.disabled = false;
+      window.AnalysisInput?.update();
+    }
   }
 };
 $('task-cancel').onclick = async () => {
   const desktop=window.DesktopPoll?.active(),token=desktop?window.DesktopPoll.beginCancel():null;
   if(desktop&&!token)return;
-  try { const task=await api(`tasks/${token?.id||currentTask}/cancel`, 'POST', {});if(token)await window.DesktopPoll.cancelled(task,token);else showTask(task); }
-  catch (error) { if(!token||window.DesktopPoll.valid(token))notice(error.message, true); }
+  const scope = AnalysisMode.capture(), id = currentTask, context = {...scope, mode: displayedTaskMode()};
+  if (!id || context.mode === 'legacy') return;
+  const same = () => AnalysisMode.current(scope) && currentTask === id;
+  try {
+    const task = await api(`tasks/${id}/cancel`, 'POST', {}, undefined, context);
+    if (same() && taskMode(task) === context.mode) {
+      if (token) await window.DesktopPoll.cancelled(task,token);
+      else showTask(task);
+    }
+  }
+  catch (error) { if(same() && (!token||window.DesktopPoll.valid(token)))notice(error.message, true); }
   finally { if(desktop)window.DesktopPoll.endCancel(token); }
 };
 
@@ -1966,11 +2057,11 @@ async function loadRecords(reset = false) {
     const page = await api(`tasks?order=desc&limit=30${before ? '&before=' + before : ''}`);
     if (desktop && recordEpoch !== window.DesktopRecords.revision()) return;
     // 子 Agent 的中间任务与主任务同表，contextId 指向父任务；它们不是用户提交的记录。
-    const fresh = page.items.filter(topLevel);
+    const fresh = page.items.filter(task => topLevel(task) && !deletedRecords.has(task.id));
     if (desktop) {
       const updated = await window.DesktopRecords.page({existing: records, fresh, cursor: recordCursor, pageCursor: page.next_before, reset});
       if (recordEpoch !== window.DesktopRecords.revision()) return;
-      records = updated.items; recordCursor = updated.cursor;
+      records = updated.items.filter(task => !deletedRecords.has(task.id)); recordCursor = updated.cursor;
       window.DesktopRecords.loaded(updated.warning);
     } else { records = reset ? [...fresh] : [...records, ...fresh]; recordCursor = page.next_before; }
     recordLoaded = true;
@@ -1993,6 +2084,12 @@ async function loadRecords(reset = false) {
     }
   }
 }
+const deletedRecords = new Set();
+function forgetRecord(id) {
+  deletedRecords.add(id);
+  records = records.filter(task => task.id !== id);
+  recordLoaded = false;
+}
 function recordRow(task) {
   const brief = taskBrief(task);
   const state = task.status.state;
@@ -2001,6 +2098,7 @@ function recordRow(task) {
   row.className = 'task-row';
   row.dataset.state = state;
   row.dataset.taskId = task.id;
+  row.dataset.mode = taskMode(task);
   row.dataset.recordedAt = task.status.timestamp || '';
 
   text(row, 'span', shortTime(task.status.timestamp), 'when');
@@ -2039,6 +2137,11 @@ function recordRow(task) {
   return row;
 }
 function openRecord(task) {
+  if (task.metadata?.workflow?.flow?.id && window.WorkflowChat) return window.WorkflowChat.openTask(task);
+  if (taskMode(task) === 'professional') window.WorkflowChat?.showCanvas();
+  return window.Workbench?.record(task);
+}
+function displayTask(task) {
   window.DesktopPoll?.stop();
   if (recordTimer) clearTimeout(recordTimer);
   currentTask = task.id;
@@ -2047,12 +2150,9 @@ function openRecord(task) {
   for (const id of ['execution-plan', 'execution-events', 'chart-preview', 'analysis-preview']) $(id).replaceChildren();
   $('task-progress').hidden = false;
   $('effective-effort').textContent = '正在读取执行过程';
-  showView('analysis');
-  runvizReset();
+  runvizReset(true);
   showTask(task);
-  window.Workbench?.record(task);
   poll(task.id);
-  setTimeout(() => $('task-status').scrollIntoView({block: 'start', behavior: 'smooth'}), 100);
 }
 $('record-refresh').onclick = () => loadRecords(true);
 $('record-more').onclick = () => loadRecords();
@@ -2080,21 +2180,21 @@ async function ensureMockModel() {
     model = await api('models', 'POST', {name: 'Mock 分析模型', provider: 'mock'});
     await refresh();
   }
-  if (settings.default_model_id !== model.id) {
-    await api('settings', 'PUT', {...settings, default_model_id: model.id});
-    await refresh();
-  }
+  return model.id;
 }
 $('try-sample').onclick = async () => {
   const button = $('try-sample');
+  const scope = AnalysisMode.capture();
   button.disabled = true;
   try {
-    await ensureMockModel();
+    const model = await ensureMockModel();
+    if (!AnalysisMode.current(scope)) return;
+    AnalysisMode.write('model', model);
     applySample();
     showView('analysis');
-    notice('已将默认分析模型设为 Mock，并准备好示例预测与事实。点「提交分析」即可。');
+    notice('已为当前模式选择 Mock，并准备好示例预测与事实。点「提交分析」即可。');
   } catch (error) {
-    notice(error.message, true);
+    if (AnalysisMode.current(scope)) notice(error.message, true);
   } finally {
     button.disabled = false;
   }
@@ -2111,10 +2211,9 @@ $('try-sample').onclick = async () => {
     const initial = location.hash.replace('#', '');
     await ensureBrowserMemory().catch(() => { /* The memory page shows the status and recovery action. */ });
     await refresh();
-    if (draftRestore()) updatePredictionTemplate();
-    else resetPredictionInput();
     renderSteps();
     await window.Workbench?.init();
+    window.WorkflowChat?.init();
     const view = initial === 'mcp' ? 'tools' : ['overview', 'analysis', 'records', 'settings', 'memory', 'knowledge', 'tools'].includes(initial) ? initial : 'analysis';
     showView(view);
     const panel = {models: 'models', collab: 'settings'}[initial];

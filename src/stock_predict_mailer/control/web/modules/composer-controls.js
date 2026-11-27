@@ -23,7 +23,7 @@ window.ComposerControls = (() => {
   const cancel=$('task-cancel');cancel.innerHTML=icon('stop');cancel.className='composer-tool';cancel.setAttribute('aria-label','停止任务');cancel.title='停止任务';
   $('analysis-session-label').hidden=true;
   left.append(plus,permission);right.append(options,voice,cancel,send);toolbar.prepend(left);toolbar.append(right);
-  let active=null,trigger=null,saving=false,recognition=null,listening=false,flushEffort=null;
+  let active=null,trigger=null,flushEffort=null;
   const panel=document.createElement('div');panel.className='composer-popover';panel.hidden=true;panel.id='composer-popover';panel.setAttribute('role','dialog');dock.append(panel);
   const desktop=matchMedia('(min-width: 761px)');
   const useCategories=()=>desktop.matches&&!dock.classList.contains('desktop-canvas-composer');
@@ -42,10 +42,11 @@ window.ComposerControls = (() => {
     showView('settings');
     showPanel(tab);
   }
-  function modelChoices(host,actions=host) {
+  function modelChoices(host,actions=host,select=pickModel) {
     const enabled=profiles.filter(profile=>profile.enabled);
-    for (const profile of enabled) row(profile.name,()=>pickModel(profile.id),profile.id===settings?.default_model_id,host);
+    for (const profile of enabled) row(profile.name,()=>select(profile.id),profile.id===AnalysisMode.model(),host);
     if (!enabled.length) text(host,'p','尚无已启用模型。','hint');
+    if (AnalysisMode.read('model')) row('使用全局默认模型',()=>select(null),false,actions);
     row('管理模型…',()=>settingsPage('models'),false,actions);
   }
   function fieldChoices(host,id) {
@@ -59,7 +60,7 @@ window.ComposerControls = (() => {
     search.type='search';search.placeholder='搜索连接器';search.setAttribute('aria-label',search.placeholder);
     const list=document.createElement('div');list.className='composer-connector-list';
     const entries=[
-      ['知识库',$('knowledge-scope').value==='private'?'旧版私有资料':'本机资料',()=>{
+      ['知识库',window.KnowledgeUI.taskScope()==='private'?'旧版私有资料':'本机资料',()=>{
         close();AnalysisInput.open('input');
         const query=$('task-knowledge-query');query.closest('details').open=true;query.focus();
       }],
@@ -80,6 +81,24 @@ window.ComposerControls = (() => {
       if (!list.childElementCount) text(list,'p','没有找到匹配的连接器。','hint');
     }
     search.oninput=filter;host.append(search,list);filter();
+    const authorized = settings?.agents?.main?.tools || [];
+    if (authorized.length) {
+      const group = document.createElement('fieldset');
+      text(group, 'legend', '本模式的上下文工具');
+      const chosen = new Set(AnalysisMode.tools());
+      for (const binding of authorized) {
+        const [id, name] = binding.split(':', 2);
+        const label = document.createElement('label'); label.className = 'check';
+        const field = document.createElement('input'); field.type = 'checkbox'; field.checked = chosen.has(binding);
+        field.onchange = () => {
+          if (field.checked) chosen.add(binding); else chosen.delete(binding);
+          AnalysisMode.write('tools', [...chosen]);
+        };
+        label.append(field, document.createTextNode(`${servers.find(server => server.id === id)?.name || id} · ${name}`));
+        group.append(label);
+      }
+      host.append(group);
+    }
     row('管理工具中心…',()=>{close();showView('tools');},false,host);
   }
   function categories() {
@@ -140,14 +159,16 @@ window.ComposerControls = (() => {
     panel.style.setProperty('--options-bottom',`${composer.bottom-anchor.top+5}px`);
     panel.style.setProperty('--options-room',`${Math.max(0,anchor.top-13)}px`);
   }
-  function showEffort() {
-    panel.setAttribute('aria-label','选择推理强度');
+  function effortPicker(host, {model, effective, select, resetEffort, openModels, prefix='composer'}) {
+    host.setAttribute('aria-label','选择推理强度');
     const header=document.createElement('div');header.className='composer-effort-head';header.innerHTML=icon('bolt');
     const value=text(header,'output','','composer-effort-value');
-    const reset=button('composer-effort-reset','恢复默认档位',icon('reset'));
+    const reset=button(prefix+'-effort-reset','恢复默认档位',icon('reset'));
+    reset.classList.add('composer-effort-reset');
     header.append(reset);
-    const modelChoice=button('composer-effort-model','选择工作台默认模型','<span></span>'+icon('next'));
-    modelChoice.querySelector('span').textContent=modelName.textContent;
+    const modelChoice=button(prefix+'-effort-model','选择模型','<span></span>'+icon('next'));
+    modelChoice.classList.add('composer-effort-model');
+    modelChoice.querySelector('span').textContent=model;
     modelChoice.onclick=openModels;
     const slider=document.createElement('input');
     slider.type='range';slider.min='0';slider.max='4';slider.step='.001';slider.value=String(Math.max(0,levels.indexOf(effective())));
@@ -159,12 +180,11 @@ window.ComposerControls = (() => {
       if(!dirty)return;dirty=false;
       if(frame)cancelAnimationFrame(frame);
       slider.value=String(index());paint();
-      const field=$('task-effort'),next=levels[index()];
-      if(field.value!==next){field.value=next;changed(field);}
+      select(levels[index()]);
     };
     // Drag previews the continuous position. Release commits one semantic level.
     slider.oninput=()=>{dirty=true;if(!frame)frame=requestAnimationFrame(paint);};
-    slider.onchange=commit;flushEffort=commit;
+    slider.onchange=commit;
     slider.onkeydown=event=>{
       const direction={ArrowLeft:-1,ArrowDown:-1,PageDown:-1,ArrowRight:1,ArrowUp:1,PageUp:1}[event.key];
       if(!direction&&!['Home','End'].includes(event.key))return;
@@ -173,15 +193,21 @@ window.ComposerControls = (() => {
     };
     reset.onclick=()=>{
       dirty=false;if(frame)cancelAnimationFrame(frame);
-      const field=$('task-effort');
-      if(field.value){field.value='';changed(field);}
+      resetEffort();
       slider.value=String(Math.max(0,levels.indexOf(effective())));paint();slider.focus();
     };
     const scale=document.createElement('div');scale.className='composer-effort-scale';
     const ticks=document.createElement('div');ticks.className='composer-effort-ticks';ticks.setAttribute('aria-hidden','true');
     ticks.append(...levels.map(()=>document.createElement('i')));
-    scale.append(slider,ticks);panel.append(header,modelChoice,scale);
-    paint();positionOptions();slider.focus();
+    scale.append(slider,ticks);host.append(header,modelChoice,scale);
+    paint();slider.focus();
+    return commit;
+  }
+  function showEffort() {
+    const field=$('task-effort');
+    const select=level=>{if(field.value!==level){field.value=level;changed(field);}};
+    flushEffort=effortPicker(panel,{model:modelName.textContent,effective,select,resetEffort:()=>select(''),openModels});
+    positionOptions();
   }
   function show(kind,source){
     if(active===kind){close();return;}
@@ -214,12 +240,9 @@ window.ComposerControls = (() => {
   function openModels(){show('models',effort);}
   function showPermission(){active=null;show('permission',permission);}
   function changed(field){field.dispatchEvent(new Event('input',{bubbles:true}));field.dispatchEvent(new Event('change',{bubbles:true}));update();}
-  async function pickModel(id){
-    if(saving)return;saving=true;const wasDisabled=send.disabled;send.disabled=true;
-    panel.querySelectorAll('button').forEach(b=>{b.disabled=true;});
-    try{const latest=await api('settings');await api('settings','PUT',{...latest,default_model_id:id});await refresh();close(true);}
-    catch(error){notice(error.message,true);panel.querySelectorAll('button').forEach(b=>{b.disabled=false;});}
-    finally{saving=false;send.disabled=wasDisabled;update();}
+  function pickModel(id){
+    AnalysisMode.write('model', id);
+    close(true); update(); window.DesktopWorkbench?.update();
   }
   for(const [node,kind]of [[plus,'add'],[permission,'permission'],[effort,'effort']]){
     node.setAttribute('aria-haspopup','dialog');node.setAttribute('aria-controls',panel.id);node.setAttribute('aria-expanded','false');
@@ -240,23 +263,32 @@ window.ComposerControls = (() => {
     const next=items.indexOf(document.activeElement)+(event.key==='ArrowDown'?1:-1);
     items[(next+items.length)%items.length].focus();
   });
-  const Speech=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!Speech){voice.disabled=true;voice.title='当前浏览器不支持语音输入';voice.setAttribute('aria-label',voice.title);}
-  else voice.onclick=()=>{
-    if(listening){recognition?.stop();return;}
-    const base=message.value;recognition=new Speech();recognition.lang='zh-CN';recognition.interimResults=true;
-    recognition.onstart=()=>{listening=true;voice.classList.add('listening');voice.setAttribute('aria-pressed','true');voice.title='停止语音输入';};
-    recognition.onresult=event=>{message.value=base+Array.from(event.results,result=>result[0].transcript).join('');message.dispatchEvent(new Event('input',{bubbles:true}));};
-    recognition.onerror=event=>notice(event.error==='not-allowed'?'请允许麦克风权限后重试。':'语音输入未完成，请重试或直接输入文字。',true);
-    recognition.onend=()=>{listening=false;voice.classList.remove('listening');voice.setAttribute('aria-pressed','false');voice.title='语音输入';};
-    try{recognition.start();}catch(error){notice('无法启动语音输入，请检查麦克风权限。',true);}
-  };
-  $('task-form').addEventListener('submit',()=>recognition?.stop(),true);
-  document.addEventListener('visibilitychange',()=>{if(document.hidden)recognition?.stop();});
+  function speechInput(control, input, capture, report) {
+    const Speech=window.SpeechRecognition||window.webkitSpeechRecognition;
+    let recognition;
+    const label=value=>{control.title=value;control.setAttribute('aria-label',value);};
+    const stop=()=>recognition?.stop();
+    control.setAttribute('aria-pressed','false');
+    if(!Speech){control.disabled=true;label('当前浏览器不支持语音输入');return stop;}
+    control.onclick=()=>{
+      if(recognition){stop();return;}
+      const valid=capture(),base=input.value, session=new Speech();
+      recognition=session;session.lang='zh-CN';session.interimResults=true;
+      session.onstart=()=>{control.classList.add('listening');control.setAttribute('aria-pressed','true');label('停止语音输入');};
+      session.onresult=event=>{if(valid()){input.value=(base+Array.from(event.results,result=>result[0].transcript).join('')).slice(0,input.maxLength>0?input.maxLength:undefined);input.dispatchEvent(new Event('input',{bubbles:true}));}};
+      session.onerror=event=>{if(valid())report(event.error==='not-allowed'?'请允许麦克风权限后重试。':'语音输入未完成，请重试或直接输入文字。');};
+      session.onend=()=>{recognition=null;control.classList.remove('listening');control.setAttribute('aria-pressed','false');label('语音输入');};
+      try{session.start();}catch(_){session.onend();if(valid())report('无法启动语音输入，请检查麦克风权限。');}
+    };
+    document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();});
+    return stop;
+  }
+  const stopSpeech=speechInput(voice,message,()=>{const scope=AnalysisMode.capture();return ()=>AnalysisMode.current(scope);},error=>notice(error,true));
+  $('task-form').addEventListener('submit',stopSpeech,true);
   function update(){
     plus.innerHTML=icon('plus');plus.title=$('analysis-data-status').textContent;
     permission.querySelector('span').textContent=$('task-notify').checked?'授权邮件':'仅分析';
-    const selected=profiles.find(p=>p.enabled&&p.id===settings?.default_model_id);
+    const selected=profiles.find(p=>p.enabled&&p.id===AnalysisMode.model());
     modelName.textContent=selected?.name||'选择模型';
     effortLabel.textContent=labels[levels.indexOf(effective())]||'默认';
     effort.setAttribute('aria-label',`选择模型与推理强度，${modelName.textContent}，${effortLabel.textContent}`);
@@ -272,5 +304,5 @@ window.ComposerControls = (() => {
   new MutationObserver(syncMenu).observe(document.body,{attributes:true,attributeFilter:['class']});
   desktop.addEventListener('change',syncMenu);
   new ResizeObserver(positionOptions).observe(dock);
-  syncMenu();update();return {update,close,openModels};
+  syncMenu();update();return {update,close,openModels,icon,button,effortPicker,effortLabel:level=>labels[levels.indexOf(level)]||'默认',modelChoices,speechInput};
 })();

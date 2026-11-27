@@ -238,6 +238,12 @@ window.DesktopReport = (() => {
   install();
   return {
     render,
+    snapshot() { return {id:task?.id, overview, reading:document.body.classList.contains('desktop-report-reading')}; },
+    restore(value) {
+      if (!value?.id || value.id !== task?.id) return;
+      setOverview(value.overview);
+      setReading(value.reading);
+    },
     panel(value) { pane = value; if (value !== 'report') setReading(false); syncExpand(); },
     visibility(open) { if (!open) setReading(false); else syncExpand(); },
     clear() { setReading(false); restoreOriginal(); task = null; overview = false; document.body.classList.remove('desktop-report-overview'); if (tools) tools.hidden = true; syncExpand(); }

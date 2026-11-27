@@ -5,14 +5,14 @@ window.DesktopPoll=(()=>{
   const feedback=document.createElement('div');feedback.id='desktop-poll-feedback';feedback.className='desktop-poll-feedback';feedback.hidden=true;
   const status=document.createElement('p');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
   const retry=document.createElement('button');retry.type='button';retry.className='btn tiny';retry.textContent='重新读取进度';retry.onclick=()=>resume();feedback.append(status,retry);$('analysis-pane-progress').prepend(feedback);
-  const same=value=>job===value&&currentTask===value.id&&memoryKey===value.key;
+  const same=value=>job===value&&currentTask===value.id&&AnalysisMode.current(value.scope);
   const visible=()=>!suspended&&!document.hidden&&document.body.dataset.view==='analysis';
   function stop(){++epoch;if(job){clearTimeout(job.timer);job.control?.abort();}job=null;canceling=null;$('task-cancel').disabled=false;feedback.hidden=true;window.DesktopWorkbench?.connectionLost(false);}
   function pause(){if(!job)return;clearTimeout(job.timer);job.timer=null;job.control?.abort();}
   function schedule(value,delay){clearTimeout(value.timer);if(same(value)&&visible()&&!value.done)value.timer=setTimeout(()=>request(value.id),delay);}
   function request(id){
     if(!id||id!==currentTask)return Promise.resolve();
-    if(!job||job.id!==id||job.key!==memoryKey){stop();job={id,key:memoryKey,timer:null,promise:null,control:null,done:false,urgent:false};}
+    if(!job||job.id!==id||!AnalysisMode.current(job.scope)){stop();job={id,scope:AnalysisMode.capture(),mode:displayedTaskMode(),timer:null,promise:null,control:null,done:false,urgent:false};}
     const value=job;if(value.done||!visible())return value.promise||Promise.resolve();
     clearTimeout(value.timer);value.timer=null;
     if(value.promise){if(value.control?.signal.aborted)value.urgent=true;return value.promise;}
@@ -20,9 +20,10 @@ window.DesktopPoll=(()=>{
     const expiry=setTimeout(()=>{timeout=true;control.abort();},8000);retry.disabled=true;feedback.setAttribute('aria-busy','true');
     value.promise=(async()=>{
       try{
-        const task=await api('tasks/'+id,'GET',undefined,control.signal);
-        if(!same(value)||!visible()||control.signal.aborted)return;
-        const progress=await api(`tasks/${id}/events?after=${eventCursor}`,'GET',undefined,control.signal);
+        const scope={...value.scope,mode:value.mode};
+        const task=await api('tasks/'+id,'GET',undefined,control.signal,scope);
+        if(!same(value)||!visible()||control.signal.aborted||taskMode(task)!==scope.mode)return;
+        const progress=await api(`tasks/${id}/events?after=${eventCursor}`,'GET',undefined,control.signal,scope);
         if(!same(value)||!visible()||control.signal.aborted)return;
         window.DesktopWorkbench?.observeProgressTask?.(task);
         for(const event of progress.events){if(event.seq<=eventCursor)continue;showEvent(event);eventCursor=event.seq;}
@@ -42,8 +43,8 @@ window.DesktopPoll=(()=>{
     return value.promise;
   }
   function resume(){return request(currentTask);}
-  function ticket(){return {id:currentTask,key:memoryKey,epoch};}
-  const valid=token=>Boolean(token&&token.epoch===epoch&&token.id===currentTask&&token.key===memoryKey);
+  function ticket(){return {id:currentTask,scope:AnalysisMode.capture(),epoch};}
+  const valid=token=>Boolean(token&&token.epoch===epoch&&token.id===currentTask&&AnalysisMode.current(token.scope));
   function beginCancel(){if(!currentTask||valid(canceling))return null;canceling=ticket();$('task-cancel').disabled=true;return canceling;}
   function cancelled(task,token){if(!valid(token)||task.id!==token.id)return Promise.resolve();stop();PonyOffice.sync(task,[]);showTask(task);return request(task.id);}
   document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();else resume();});

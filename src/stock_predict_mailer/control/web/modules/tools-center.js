@@ -446,6 +446,7 @@ globalThis.ToolsCenter = (() => {
 
   function addWorkflowTool(id) {
     showView('analysis');
+    window.DesktopWorkbench?.setMode('focus');
     const ready = window.DesktopWorkbench?.addBuiltinTool?.(id);
     if (ready) notice('已将工作流工具加入当前流程。');
     else notice('请先打开专业工作流画布，再将工具加入流程。', true);

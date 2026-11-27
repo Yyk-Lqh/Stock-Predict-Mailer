@@ -1,4 +1,5 @@
 async function refreshMemory() {
+  const scope = AnalysisMode.capture();
   const active = Boolean(memoryKey);
   if (!active) {
     $('memory-details').hidden = true;
@@ -6,8 +7,10 @@ async function refreshMemory() {
     return;
   }
   const [conversations, entries, config, pending] = await Promise.all([
-    api('conversations'), api('memory'), api('memory/settings'), api('memory/pending')
+    api('conversations', 'GET', undefined, undefined, scope), api('memory', 'GET', undefined, undefined, scope),
+    api('memory/settings'), api('memory/pending', 'GET', undefined, undefined, scope)
   ]);
+  if (!AnalysisMode.current(scope)) return;
   $('memory-details').hidden = false;
   $('conversation-fields').hidden = false;
   const selector = $('conversation-id');
@@ -16,6 +19,7 @@ async function refreshMemory() {
   for (const conversation of conversations) {
     selector.append(new Option(conversation.subject || '空会话', conversation.id));
   }
+  if (selected && ![...selector.options].some(option => option.value === selected)) selector.add(new Option('分析会话', selected));
   selector.value = selected;
   $('memory-enabled').checked = config.enabled;
   $('memory-threshold').value = config.context_bytes;
@@ -41,13 +45,14 @@ async function refreshMemory() {
     }
     format.value = item.report_format || '';
     if (item.kind === 'preference') card.append(format);
-    card.append(action('保存更正', async () => {
-      const {id, owner, recorded_at, source_conversation, source_message, ...body} = item;
-      await api('memory/' + id, 'PUT', {...body, content:field.value, report_format:format.value || null});
+    field.readOnly = scope.mode === 'legacy';
+    if (scope.mode !== 'legacy') card.append(action('保存更正', async () => {
+      const {id, mode, owner, recorded_at, source_conversation, source_message, ...body} = item;
+      await api('memory/' + id, 'PUT', {...body, content:field.value, report_format:format.value || null}, undefined, scope);
       await refreshMemory();
     }), action('删除记忆', async () => {
       if (window.confirm('删除这条长期记忆？')) {
-        await api('memory/' + item.id, 'DELETE');
+        await api('memory/' + item.id, 'DELETE', undefined, undefined, scope);
         await refreshMemory();
       }
     }));
@@ -96,6 +101,8 @@ function ensureBrowserMemory() {
     browserMemoryReady = (async () => {
       const session = await api('session');
       csrf = session.csrf_token;
+      AnalysisMode.configure(session.workspace_id);
+      window.DesktopWorkbench?.restoreWorkspace();
       if (!session.browser_memory_access) {
         // Older servers read static files from disk but need restarting to add new API routes.
         if (!memoryKey) throw new Error(memoryRestartHint);
@@ -126,14 +133,13 @@ $('memory-settings-actions').append(action('保存记忆设置', async () => {
   notice('记忆设置已保存。');
 }));
 $('conversation-actions').append(action('新建会话', async () => {
-  const conversation = await api('conversations', 'POST', {});
-  await refreshMemory();
-  $('conversation-id').value = conversation.id;
-  $('conversation-summary').textContent = '已创建会话，请先提交预测输入。';
+  $('new-analysis').click();
 }), action('沿用上轮输入', async () => {
   const id = $('conversation-id').value;
+  const scope = AnalysisMode.capture();
   if (!id) throw new Error('请先选择已有会话');
-  const session = await api('conversations/' + id);
+  const session = await api('conversations/' + id, 'GET', undefined, undefined, scope);
+  if (!AnalysisMode.current(scope) || id !== $('conversation-id').value) return;
   if (!session.messages.length) throw new Error('此会话还没有预测输入');
   $('task-data').value = '{}';
   $('conversation-summary').textContent = '将沿用最近一轮预测和约束，并校验其有效期。';
@@ -145,7 +151,9 @@ $('conversation-id').onchange = async event => {
     return;
   }
   try {
-    const session = await api('conversations/' + id);
+    const scope = AnalysisMode.capture();
+    const session = await api('conversations/' + id, 'GET', undefined, undefined, scope);
+    if (!AnalysisMode.current(scope) || id !== $('conversation-id').value) return;
     $('conversation-summary').textContent = `近期消息 ${session.messages.length} 轮 · 已压缩摘要 ${session.summary.length} 条 · 最近检查点 ${session.completed_step || '暂无'}`;
   } catch (error) {
     notice(error.message, true);

@@ -13,7 +13,7 @@ window.DesktopSessions=(()=>{
   function paint(){
     const query=search.value.trim().toLocaleLowerCase(),selected=$('conversation-id').value,nodes=[],ids=new Set();let shown=0;
     for(const item of items){ids.add(item.id);let entry=rows.get(item.id);const title=item.subject||'新分析会话',signature=JSON.stringify([title,item.updated]);
-      if(!entry){const node=document.createElement('button');node.type='button';node.className='session-item';node.dataset.conversation=item.id;node.onclick=()=>{Promise.resolve(choose?.(item.id)).catch(error=>notice(error.message,true));};entry={node};rows.set(item.id,entry);}
+      if(!entry){const node=document.createElement('button');node.type='button';node.className='session-item';node.dataset.conversation=item.id;node.onclick=()=>{const scope=AnalysisMode.capture();Promise.resolve(choose?.(item.id)).catch(error=>{if(AnalysisMode.current(scope))notice(error.message,true);});};entry={node};rows.set(item.id,entry);}
       if(entry.signature!==signature){entry.node.replaceChildren();const name=document.createElement('span');name.className='desktop-session-title';name.textContent=title;const time=document.createElement('time');time.className='hint';time.dateTime=item.updated||'';time.textContent='更新于 '+fmt(item.updated);entry.node.append(name,time);entry.signature=signature;entry.name=title.toLocaleLowerCase();}
       entry.node.classList.toggle('active',item.id===selected);if(item.id===selected)entry.node.setAttribute('aria-current','true');else entry.node.removeAttribute('aria-current');
       const hidden=!entry.name.includes(query);if(entry.node.hidden!==hidden)entry.node.hidden=hidden;if(!hidden)shown++;nodes.push(entry.node);
@@ -26,16 +26,16 @@ window.DesktopSessions=(()=>{
     const text=`显示 ${shown} / ${items.length} 个已加载会话${cursor!=null?' · 仍有更早会话':''}`;if(scope.textContent!==text)scope.textContent=text;
     label.hidden=scope.hidden=!memoryKey;noMatch.hidden=!items.length||shown>0;$('sessions-more').hidden=cursor==null;
   }
-  function identityChanged(){++epoch;control?.abort();owner=memoryKey;items=[];cursor=null;pending=null;control=null;refreshQueued=false;rows.clear();deleted.clear();search.value='';receipt('idle','');busy(false);paint();}
+  function identityChanged(){++epoch;control?.abort();owner=memoryKey;items=[];cursor=null;pending=null;control=null;refreshQueued=false;rows.clear();deleted.clear();search.value=AnalysisMode.read('session-filter')||'';receipt('idle','');busy(false);paint();}
   function load(append=false,select){
     if(select)choose=select;if(owner!==memoryKey)identityChanged();if(!memoryKey){paint();return Promise.resolve();}
     if(pending){if(!append&&appendPending)refreshQueued=true;return pending;}
-    const generation=epoch,key=memoryKey,existing=items,priorCursor=cursor,requestControl=new AbortController();control=requestControl;const signal=requestControl.signal;appendPending=append;let timeout=false;
+    const generation=epoch,key=memoryKey,scope=AnalysisMode.capture(),existing=items,priorCursor=cursor,requestControl=new AbortController();control=requestControl;const signal=requestControl.signal;appendPending=append;let timeout=false;
     const expiry=setTimeout(()=>{timeout=true;requestControl.abort();},8000);
     receipt('loading',items.length?`正在更新，保留已加载的 ${items.length} 个会话…`:'正在读取会话…');busy(true);if(!items.length)paint();
     pending=(async()=>{
       try{
-        const page=await api(`conversations?limit=30${append&&priorCursor!=null?'&before='+encodeURIComponent(priorCursor):''}`,'GET',undefined,signal);
+        const page=await api(`conversations?limit=30${append&&priorCursor!=null?'&before='+encodeURIComponent(priorCursor):''}`,'GET',undefined,signal,scope);
         if(generation!==epoch||key!==memoryKey||signal.aborted)return;
         const retained=existing.filter(item=>!deleted.has(item.id)),fresh=page.items.filter(item=>!deleted.has(item.id));
         const incoming=new Map(fresh.map(item=>[item.id,item])),known=new Set(retained.map(item=>item.id)),overlap=fresh.some(item=>known.has(item.id));
@@ -47,6 +47,6 @@ window.DesktopSessions=(()=>{
     })();
     return pending;
   }
-  search.oninput=paint;paint();
+  search.oninput=()=>{AnalysisMode.write('session-filter',search.value);paint();};paint();
   return {active:()=>desktop.matches,load,identityChanged,removed(id){deleted.add(id);items=items.filter(item=>item.id!==id);rows.delete(id);paint();}};
 })();

@@ -7,6 +7,7 @@ import binascii
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import time
 from http.cookies import SimpleCookie
@@ -27,8 +28,10 @@ from .forecast_preview import preview as forecast_preview
 from .forecast_views import detail as forecast_detail
 from .forecast_views import listing as forecast_listing
 from .market_feed import MarketFeed
+from .modes import LEGACY, MODES, PROFESSIONAL, STANDARD, TASK_MODE_SQL, require_mode, task_mode, with_task_mode
 from .orchestrator import Orchestrator
 from .store import Store
+from .workflow_chat import WorkflowChat
 
 STATIC = Path(__file__).with_name("web")
 BROWSER_MEMORY_MAX_AGE = 365 * 24 * 60 * 60
@@ -37,6 +40,7 @@ BROWSER_MEMORY_MAX_AGE = 365 * 24 * 60 * 60
 def make_server(root, port=8767, master_key=None, market=None):
     store = Store(root, master_key)
     engine = Orchestrator(store)
+    workflow_chat = WorkflowChat(engine)
     market = MarketFeed(store.root) if market is None else market
     session, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     workspace_id = hashlib.sha256(str(store.root.resolve()).encode()).hexdigest()[:16]
@@ -147,6 +151,12 @@ def make_server(root, port=8767, master_key=None, market=None):
         def do_DELETE(self):
             self.handle_request("DELETE")
 
+        def request_mode(self, *, write=False):
+            mode = self.headers.get("X-Analysis-Mode")
+            if mode is not None and mode not in (MODES if write else (*MODES, LEGACY)):
+                raise ServiceError("INVALID_INPUT", "分析模式无效")
+            return (mode or STANDARD) if write else mode
+
         def handle_request(self, method):
             try:
                 path = urlsplit(self.path).path
@@ -162,7 +172,7 @@ def make_server(root, port=8767, master_key=None, market=None):
                     return
                 self.guard(method != "GET", a2a=path.startswith("/a2a/") or path == "/.well-known/agent-card.json")
                 if method == "GET" and path == "/api/session":
-                    self.output({"csrf_token": csrf, "browser_memory_access": True,
+                    self.output({"csrf_token": csrf, "browser_memory_access": True, "workspace_id": workspace_id,
                                  "temperature_note": "温度控制随机性，不是预测准确率或置信度；默认 0.2。"})
                     return
                 if method == "GET" and path == "/.well-known/agent-card.json":
@@ -182,10 +192,48 @@ def make_server(root, port=8767, master_key=None, market=None):
                     raise ServiceError("NOT_FOUND", "接口不存在")
                 kind = parts[1]
                 if kind == "workflows":
-                    from .workflow import catalog, freeze
+                    from .workflow import catalog, freeze, workflow_issues
+                    from .workflow_wiring import issue
                     from .workflow_runtime import preview
 
-                    if method == "GET" and parts[2:] == ["catalog"]:
+                    if len(parts) >= 3 and parts[2] == "definitions":
+                        require_mode(PROFESSIONAL, self.request_mode())
+                        owner = engine.memory.owner(self.headers.get("X-Memory-Key", ""))
+                        route = parts[3:]
+                        if not route and method == "GET":
+                            query = parse_qs(urlsplit(self.path).query)
+                            model = query.get("model_id", [None])[0]
+                            try:
+                                tools = json.loads(query["tools"][0]) if "tools" in query else None
+                            except ValueError:
+                                raise ServiceError("INVALID_INPUT", "工具选择格式无效") from None
+                            self.output(workflow_chat.list(owner, model=model, tools=tools))
+                        elif not route and method == "POST":
+                            self.output(workflow_chat.save(owner, self.body()), 201)
+                        elif len(route) == 1 and method == "PUT":
+                            self.output(workflow_chat.save(owner, self.body(), flow_id=route[0]))
+                        elif len(route) in (2, 3) and route[1] == "runs" and method == "GET":
+                            query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                            node = query.get("node", [None])[0]
+                            kind = query.get("kind", [None])[0]
+                            try:
+                                before = int(query.get("before", [str(2**63 - 1)])[0])
+                                if not 1 <= before <= 2**63 - 1 or set(query) - {"before", "node", "kind"} or any(len(v) != 1 for v in query.values()):
+                                    raise ValueError()
+                            except ValueError:
+                                raise ServiceError("INVALID_INPUT", "运行历史游标无效") from None
+                            if (node is not None or kind is not None) and (len(route) != 2 or not all(
+                                    re.fullmatch(r"[A-Za-z0-9_-]{1,64}", item or "") for item in (node, kind))):
+                                raise ServiceError("INVALID_INPUT", "节点运行查询无效")
+                            self.output(workflow_chat.history(owner, route[0], before=before,
+                                                              task_id=route[2] if len(route) == 3 else None,
+                                                              node_id=node, node_type=kind))
+                        elif len(route) == 2 and route[1] == "runs" and method == "POST":
+                            body = self.body()
+                            self.output(workflow_chat.submit(owner, route[0], body, knowledge_owner=self.knowledge_owner), 202)
+                        else:
+                            raise ServiceError("NOT_FOUND", "流程对话接口不存在")
+                    elif method == "GET" and parts[2:] == ["catalog"]:
                         self.output(catalog())
                     elif method == "GET" and parts[2:] == ["tools", "mcp"]:
                         from .workflow_tools import authorized_mcp
@@ -204,18 +252,32 @@ def make_server(root, port=8767, master_key=None, market=None):
                         from .workflow_database import inspect
 
                         self.output(inspect(store, self.body().get("path")))
-                    elif method == "POST" and parts[2:] == ["preview"]:
+                    elif method == "POST" and parts[2:] == ["validate"]:
+                        require_mode(PROFESSIONAL, self.request_mode())
                         body = self.body()
-                        settings = store.settings()
-                        spec = freeze(body.get("workflow"), engine, settings)
+                        try:
+                            settings = engine.execution_settings(store.settings(), body.get("model_id"), body.get("tools"))
+                            issues = workflow_issues(body.get("workflow"), engine, settings)
+                        except ServiceError as error:
+                            issues = [issue(error.code, error.message)]
+                        self.output({"issues": issues, "runnable": not any(item["severity"] == "error" for item in issues)})
+                    elif method == "POST" and parts[2:] == ["preview"]:
+                        require_mode(PROFESSIONAL, self.request_mode())
+                        body = self.body()
                         raw = body.get("request")
+                        settings = store.settings()
                         if isinstance(raw, dict):
+                            settings = engine.execution_settings(settings, raw.get("model_id"), raw.get("tools"))
+                        spec = freeze(body.get("workflow"), engine, settings)
+                        if isinstance(raw, dict) and not spec.get("variables"):
                             owner = engine.memory.owner(self.headers.get("X-Memory-Key", "")) if raw.get("conversation_id") is not None else None
-                            request = engine.prepare(raw, owner, knowledge_owner=self.knowledge_owner() if raw.get("knowledge_query") else None)
+                            request = engine.prepare(raw, owner, mode=PROFESSIONAL,
+                                                     knowledge_owner=self.knowledge_owner() if raw.get("knowledge_query") else None)
                         else:
                             request = None
                         self.output(preview(spec, request, settings))
                     elif method == "GET" and parts[2:] == ["runs"]:
+                        require_mode(PROFESSIONAL, self.request_mode())
                         query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
                         try:
                             before = int(query.get("before", [str(2**63 - 1)])[0])
@@ -228,6 +290,7 @@ def make_server(root, port=8767, master_key=None, market=None):
                             rows = con.execute(
                                 "SELECT t.rowid,t.body FROM tasks t LEFT JOIN memory_tasks m ON m.task=t.id "
                                 "WHERE t.rowid<? AND (m.owner IS NULL OR m.owner=?) "
+                                f"AND {TASK_MODE_SQL}='professional' "
                                 "AND json_extract(t.body,'$.contextId')=t.id ORDER BY t.rowid DESC LIMIT 31",
                                 (before, owner),
                             ).fetchall()
@@ -236,7 +299,7 @@ def make_server(root, port=8767, master_key=None, market=None):
                             task = json.loads(raw)
                             meta = task.get("metadata", {})
                             workflow = meta.get("workflow") or {}
-                            items.append({"id": task["id"], "status": task["status"], "subject": meta.get("request", {}).get("subject"),
+                            items.append({"id": task["id"], "mode": PROFESSIONAL, "status": task["status"], "subject": meta.get("request", {}).get("subject"),
                                           "version": workflow.get("version"), "debug": workflow.get("debug")})
                         self.output({"items": items, "next_before": rows[29][0] if len(rows) > 30 else None})
                     else:
@@ -351,6 +414,7 @@ def make_server(root, port=8767, master_key=None, market=None):
                         self.output(engine.memory.create_owner(), 201)
                         return
                     owner = engine.memory.owner(self.headers.get("X-Memory-Key", ""))
+                    mode = self.request_mode()
                     query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
                     paged_pending = kind == "memory" and route == ["pending"]
                     if (not route or paged_pending) and method == "GET" and query:
@@ -361,18 +425,18 @@ def make_server(root, port=8767, master_key=None, market=None):
                             limit = int(query.get("limit", ["100"])[0])
                         except ValueError:
                             raise ServiceError("INVALID_INPUT", "分页参数无效") from None
-                        self.output(engine.memory.page(owner, "pending" if paged_pending else kind, before, limit))
+                        self.output(engine.memory.page(owner, "pending" if paged_pending else kind, before, limit, mode))
                         return
                     if kind == "memory" and route == ["access"] and method == "DELETE":
                         self.output(engine.memory.revoke(owner))
                         return
                     if kind == "conversations" and len(route) == 2 and route[1] == "export" and method == "GET":
-                        self.output(engine.memory.export_conversation(owner, route[0]))
+                        self.output(engine.memory.export_conversation(owner, route[0], mode))
                         return
                     if kind == "conversations" and not route and method == "POST":
-                        self.output(engine.memory.new(owner), 201)
+                        self.output(engine.memory.new(owner, self.request_mode(write=True)), 201)
                     elif kind == "conversations" and not route and method == "GET":
-                        self.output(engine.memory.conversations(owner))
+                        self.output(engine.memory.conversations(owner, mode))
                     elif kind == "conversations" and len(route) == 1 and method == "GET":
                         query = parse_qs(urlsplit(self.path).query)
                         try:
@@ -380,19 +444,20 @@ def make_server(root, port=8767, master_key=None, market=None):
                             limit = int(query.get("limit", ["20"])[0])
                         except ValueError:
                             raise ServiceError("INVALID_INPUT", "历史分页参数无效") from None
-                        self.output(engine.memory.conversation(owner, route[0], before, limit))
+                        self.output(engine.memory.conversation(owner, route[0], before, limit, mode))
                     elif kind == "conversations" and len(route) == 1 and method == "DELETE":
-                        self.output(engine.memory.delete_conversation(owner, route[0]))
+                        with engine.lock:
+                            self.output(engine.memory.delete_conversation(owner, route[0], self.request_mode(write=True)))
                     elif kind == "memory" and route == ["settings"] and method in ("GET", "PUT"):
                         self.output(engine.memory.settings(owner, self.body() if method == "PUT" else None))
                     elif kind == "memory" and route == ["pending"] and method == "GET":
-                        self.output(engine.memory.pending(owner))
+                        self.output(engine.memory.pending(owner, mode))
                     elif kind == "memory" and not route and method == "GET":
-                        self.output(engine.memory.entries(owner))
+                        self.output(engine.memory.entries(owner, mode))
                     elif kind == "memory" and len(route) == 1 and method == "PUT":
-                        self.output(engine.memory.update(owner, route[0], self.body()))
+                        self.output(engine.memory.update(owner, route[0], self.body(), self.request_mode(write=True)))
                     elif kind == "memory" and len(route) == 1 and method == "DELETE":
-                        engine.memory.delete(owner, route[0])
+                        engine.memory.delete(owner, route[0], self.request_mode(write=True))
                         self.output({"status": "deleted"})
                     else:
                         raise ServiceError("NOT_FOUND", "记忆接口不存在")
@@ -415,6 +480,9 @@ def make_server(root, port=8767, master_key=None, market=None):
                     if len(parts) >= 3 and (owner := engine.memory.task_owner(parts[2])):
                         if engine.memory.owner(self.headers.get("X-Memory-Key", "")) != owner:
                             raise ServiceError("FORBIDDEN", "此任务属于其他会话所有者")
+                    mode = self.request_mode()
+                    if len(parts) >= 3 and mode is not None:
+                        require_mode(task_mode(store.task(parts[2])), mode)
                     if method == "POST" and len(parts) == 5 and parts[3:] == ["forecast", "preview"]:
                         if urlsplit(self.path).query:
                             raise ServiceError("INVALID_INPUT", "预览参数须通过 JSON 请求体提供")
@@ -424,10 +492,15 @@ def make_server(root, port=8767, master_key=None, market=None):
                             raise ServiceError("INVALID_INPUT", "任务预测详情不接受查询参数")
                         self.output(forecast_detail(store, parts[2]))
                     elif method == "POST" and len(parts) == 2:
+                        from .workflow_values import dataflow, needs_knowledge
+
                         payload = self.body()
-                        owner = engine.memory.owner(self.headers.get("X-Memory-Key", "")) if payload.get("conversation_id") is not None else None
-                        knowledge_owner = self.knowledge_owner() if payload.get("knowledge_query") else None
-                        self.output(engine.submit(payload, owner, knowledge_owner=knowledge_owner), 202)
+                        workflow = payload.get("workflow")
+                        graph = workflow.get("graph") if isinstance(workflow, dict) else None
+                        scoped = payload.get("conversation_id") is not None or dataflow(graph)
+                        owner = engine.memory.owner(self.headers.get("X-Memory-Key", "")) if scoped else None
+                        knowledge_owner = self.knowledge_owner() if payload.get("knowledge_query") or needs_knowledge(graph) else None
+                        self.output(engine.submit(payload, owner, knowledge_owner=knowledge_owner, mode=mode), 202)
                     elif method == "GET" and len(parts) == 2:
                         query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
                         order = query.get("order", ["asc"])[0]
@@ -442,18 +515,16 @@ def make_server(root, port=8767, master_key=None, market=None):
                         except ValueError:
                             raise ServiceError("INVALID_INPUT", "任务分页参数无效") from None
                         owner = engine.memory.owner(self.headers['X-Memory-Key']) if self.headers.get('X-Memory-Key') else None
+                        compare = "<" if order == "desc" else ">"
                         with store.db() as con:
-                            if order == "desc":
-                                rows = con.execute("SELECT t.rowid,t.body FROM tasks t LEFT JOIN memory_tasks m ON m.task=t.id "
-                                                   "WHERE t.rowid<? AND (m.owner IS NULL OR m.owner=?) "
-                                                   "AND json_extract(t.body,'$.metadata.workflow.debug') IS NULL ORDER BY t.rowid DESC LIMIT ?",
-                                                   (cursor, owner, limit + 1)).fetchall()
-                            else:
-                                rows = con.execute("SELECT t.rowid,t.body FROM tasks t LEFT JOIN memory_tasks m ON m.task=t.id "
-                                                   "WHERE t.rowid>? AND (m.owner IS NULL OR m.owner=?) "
-                                                   "AND json_extract(t.body,'$.metadata.workflow.debug') IS NULL ORDER BY t.rowid LIMIT ?",
-                                                   (cursor, owner, limit + 1)).fetchall()
-                        body = {"items": [json.loads(r[1]) for r in rows[:limit]]}
+                            rows = con.execute(
+                                "SELECT t.rowid,t.body FROM tasks t LEFT JOIN memory_tasks m ON m.task=t.id "
+                                f"WHERE t.rowid{compare}? AND (m.owner IS NULL OR m.owner=?) "
+                                f"AND (? IS NULL OR {TASK_MODE_SQL}=?) "
+                                "AND json_extract(t.body,'$.metadata.workflow.debug') IS NULL "
+                                f"ORDER BY t.rowid {order} LIMIT ?", (cursor, owner, mode, mode, limit + 1)
+                            ).fetchall()
+                        body = {"items": [with_task_mode(json.loads(r[1])) for r in rows[:limit]]}
                         body["next_before" if order == "desc" else "next_after"] = rows[limit - 1][0] if len(rows) > limit else None
                         self.output(body)
                     elif method == "GET" and len(parts) == 4 and parts[3] in ("report", "analysis", "mail"):
@@ -463,6 +534,8 @@ def make_server(root, port=8767, master_key=None, market=None):
                         result = task["artifacts"][0]["parts"][0]["data"]
                         if result.get("workflow_debug"):
                             raise ServiceError("NOT_READY", "单节点调试只提供运行记录")
+                        if "analysis" not in result and parts[3] != "mail":
+                            raise ServiceError("NOT_READY", "该任务只提供工作流输出和运行记录")
                         if parts[3] == "report":
                             self.output(render(result["analysis"])[1].encode(), content_type="text/html; charset=utf-8")
                         elif parts[3] == "analysis":
@@ -484,6 +557,7 @@ def make_server(root, port=8767, master_key=None, market=None):
                             self.output(mail)
                     elif method == "POST" and len(parts) == 5 and parts[3:] == ["mail", "resolve"]:
                         task = store.task(parts[2])
+                        require_mode(task_mode(task), self.request_mode(write=True))
                         if task["status"]["state"] != "completed":
                             raise ServiceError("NOT_READY", "任务尚未完成")
                         mail = task["artifacts"][0]["parts"][0]["data"].get("mail") or {}
@@ -495,7 +569,7 @@ def make_server(root, port=8767, master_key=None, market=None):
                         service = MailService(store.root, store.settings()["mail"])
                         self.output(service.resolve(mail["id"], body["delivered"]))
                     elif method == "GET" and len(parts) == 3:
-                        self.output(store.task(parts[2]))
+                        self.output(with_task_mode(store.task(parts[2])))
                     elif method == "GET" and len(parts) == 4 and parts[3] == "events":
                         try:
                             after = int(parse_qs(urlsplit(self.path).query).get("after", ["0"])[0])
@@ -505,7 +579,9 @@ def make_server(root, port=8767, master_key=None, market=None):
                             raise ServiceError("INVALID_INPUT", "进度游标无效") from None
                         self.output({"events": store.events(parts[2], after)})
                     elif method == "POST" and len(parts) == 4 and parts[3] == "cancel":
-                        self.output(engine.cancel(parts[2]))
+                        self.output(engine.cancel(parts[2], self.request_mode(write=True)))
+                    elif method == "DELETE" and len(parts) == 3:
+                        self.output(engine.delete_task(parts[2], self.request_mode(write=True)))
                     else:
                         raise ServiceError("NOT_FOUND", "任务接口不存在")
                     return

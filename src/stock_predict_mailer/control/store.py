@@ -121,7 +121,7 @@ class Store:
                     secrets[field] = value
                 if field in clear:
                     secrets.pop(field, None)
-            for field in ("id", "has_secret", "secret_mask", "env_keys"):
+            for field in ("id", "has_secret", "secret_mask", "env_keys", "config_revision"):
                 body.pop(field, None)
             try:
                 body = TYPES[kind].model_validate(body).model_dump()
@@ -131,6 +131,8 @@ class Store:
             pid = pid or uuid.uuid4().hex
             body.update(id=pid, has_secret=bool(secrets.get("api_key") or secrets.get("auth_token")),
                         secret_mask="••••••••" if secrets.get("api_key") or secrets.get("auth_token") else "", env_keys=sorted(secrets.get("env", {})))
+            if kind == "models":
+                body["config_revision"] = uuid.uuid4().hex
             with self.db() as con:
                 con.execute("INSERT OR REPLACE INTO profiles VALUES (?,?,?,?)",
                             (kind, pid, json.dumps(body), self.cipher.encrypt(json.dumps(secrets).encode())))

@@ -633,7 +633,14 @@ def make_server(root, port=8767, master_key=None, market=None):
                 elif method == "POST" and len(parts) == 4:
                     pid, action = parts[2:]
                     if kind == "models" and action == "test":
-                        self.output(asyncio.run(engine.models.test(pid, store.settings())))
+                        revision = store.get("models", pid).get("config_revision")
+                        body = self.body() if self.headers.get("Content-Length") not in (None, "0") else {}
+                        if set(body) - {"config_revision"} or body.get("config_revision", revision) != revision:
+                            raise ServiceError("CONFIG_CONFLICT", "模型配置已有更新，请刷新后再测试")
+                        result = asyncio.run(engine.models.test(pid, store.settings()))
+                        if store.get("models", pid).get("config_revision") != revision:
+                            raise ServiceError("CONFIG_CONFLICT", "测试期间模型配置已有更新，请刷新后重试")
+                        self.output({**result, "config_revision": revision})
                     elif kind == "mcp" and action == "test":
                         self.output(asyncio.run(engine.mcp.discover(pid)))
                     elif kind == "mcp" and action == "call":

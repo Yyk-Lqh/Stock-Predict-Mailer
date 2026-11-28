@@ -43,7 +43,7 @@
     },
     "control.base": {
       "source": "stock_predict_mailer/control/store.py",
-      "source_id": "a9359b602ed385dc751df989b9b956dfb10a39f5f2b46a3f269552e8a8f8f40c",
+      "source_id": "6c5943cbb5f323fea78654005f89c851e6c3526f2ca587523f375cecb71a42ae",
       "ddl": [
         "CREATE TABLE IF NOT EXISTS profiles (kind TEXT,id TEXT,body TEXT,secrets BLOB,PRIMARY KEY(kind,id));",
         "CREATE TABLE IF NOT EXISTS state (id TEXT PRIMARY KEY,body TEXT);",

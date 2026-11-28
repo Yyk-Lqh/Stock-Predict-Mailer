@@ -635,6 +635,18 @@ class ConsoleAPITests(unittest.TestCase):
         self.thread.join(timeout=2)
         self.f.close()
 
+    def test_model_connection_test_is_bound_to_the_saved_revision(self):
+        model = self.client.post("/api/models", json={"name": "Revision Mock", "provider": "mock"}).json()
+        path = f"/api/models/{model['id']}"
+        first = self.client.post(path + "/test", json={"config_revision": model["config_revision"]})
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json()["config_revision"], model["config_revision"])
+        changed = self.client.put(path, json={**model, "name": "Revision Mock Updated"}).json()
+        self.assertNotEqual(changed["config_revision"], model["config_revision"])
+        stale = self.client.post(path + "/test", json={"config_revision": model["config_revision"]})
+        self.assertEqual(stale.json()["error"]["code"], "CONFIG_CONFLICT")
+        self.assertEqual(self.client.post(path + "/test").json()["config_revision"], changed["config_revision"])
+
     def test_browser_memory_restores_the_same_space_without_widening_api_access(self):
         self.assertIs(self.client.get("/api/session").json()["browser_memory_access"], True)
         browser_path = "/api/memory/browser-access"

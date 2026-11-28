@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "catalogue_revision": "5",
+  "catalogue_revision": "6",
   "app_version": "0.6.0",
   "database_markers": {
     "application_id": 1397771569,
@@ -131,7 +131,7 @@
     },
     "knowledge.core": {
       "source": "stock_predict_mailer/private_knowledge/service.py",
-      "source_id": "a630ddc3c71e42bc0540432d64c8bd6c3c2dc231aae692cc72979a73af3d7590",
+      "source_id": "bbaac6767738febc15790eb90dfc24316e2d11f90c7b6d7f585fdcac4ca67320",
       "ddl": [
         "CREATE TABLE IF NOT EXISTS owners (owner TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0, config BLOB);",
         "CREATE TABLE IF NOT EXISTS documents (\n                    id TEXT PRIMARY KEY, owner TEXT NOT NULL, logical TEXT NOT NULL, filename TEXT NOT NULL,\n                    hash TEXT NOT NULL, metadata TEXT NOT NULL, uploaded TEXT NOT NULL,\n                    status TEXT NOT NULL, step TEXT NOT NULL, error TEXT, parsed TEXT, draft TEXT,\n                    active INTEGER NOT NULL DEFAULT 0, UNIQUE(owner,logical,hash,metadata));",
@@ -198,7 +198,7 @@
     },
     "knowledge.workers": {
       "source": "stock_predict_mailer/private_knowledge/service.py",
-      "source_id": "a630ddc3c71e42bc0540432d64c8bd6c3c2dc231aae692cc72979a73af3d7590",
+      "source_id": "bbaac6767738febc15790eb90dfc24316e2d11f90c7b6d7f585fdcac4ca67320",
       "ddl": [
         "CREATE TABLE IF NOT EXISTS workers (id TEXT PRIMARY KEY, host TEXT NOT NULL, pid INTEGER NOT NULL,\n                    started TEXT NOT NULL, beat TEXT NOT NULL, state TEXT NOT NULL, current TEXT,\n                    processed INTEGER NOT NULL DEFAULT 0);"
       ],
@@ -208,7 +208,7 @@
     },
     "knowledge.recall": {
       "source": "stock_predict_mailer/private_knowledge/service.py",
-      "source_id": "a630ddc3c71e42bc0540432d64c8bd6c3c2dc231aae692cc72979a73af3d7590",
+      "source_id": "bbaac6767738febc15790eb90dfc24316e2d11f90c7b6d7f585fdcac4ca67320",
       "ddl": [
         "CREATE TABLE IF NOT EXISTS recall_history (id INTEGER PRIMARY KEY, owner TEXT NOT NULL,\n                    at TEXT NOT NULL, body BLOB NOT NULL);",
         "CREATE INDEX IF NOT EXISTS recall_owner ON recall_history(owner,id DESC);"
@@ -217,6 +217,28 @@
       "initialize_when_absent": true,
       "target_revision": "1",
       "initialize_data_effect": "creates_empty_recall_history"
+    },
+    "knowledge.libraries": {
+      "source": "stock_predict_mailer/private_knowledge/service.py",
+      "source_id": "bbaac6767738febc15790eb90dfc24316e2d11f90c7b6d7f585fdcac4ca67320",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS libraries (\n                    id TEXT NOT NULL, parent TEXT NOT NULL, namespace TEXT NOT NULL UNIQUE,\n                    PRIMARY KEY(parent,id));"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
+    },
+    "knowledge.sources": {
+      "source": "stock_predict_mailer/private_knowledge/sources.py",
+      "source_id": "1d033580b35e8371cb41fe40ac1ba2517bfecf879982d97f8702319c1eeb6bf5",
+      "ddl": [
+        "CREATE TABLE IF NOT EXISTS source_connections (\n                    owner TEXT NOT NULL, provider TEXT NOT NULL, revision TEXT NOT NULL,\n                    body BLOB NOT NULL, failed TEXT, PRIMARY KEY(owner,provider));",
+        "CREATE TABLE IF NOT EXISTS source_previews (\n                    id TEXT PRIMARY KEY, owner TEXT NOT NULL, library TEXT NOT NULL,\n                    provider TEXT NOT NULL, revision TEXT NOT NULL, expires TEXT NOT NULL, body BLOB NOT NULL);",
+        "CREATE INDEX IF NOT EXISTS source_preview_owner ON source_previews(owner,expires);"
+      ],
+      "additions": [],
+      "initialize_when_absent": false,
+      "target_revision": "1"
     },
     "crawler.jobs": {
       "source": "mcp_server/jobs.py",
@@ -418,7 +440,9 @@
       "groups": [
         "knowledge.core",
         "knowledge.workers",
-        "knowledge.recall"
+        "knowledge.recall",
+        "knowledge.libraries",
+        "knowledge.sources"
       ]
     },
     "crawler": {

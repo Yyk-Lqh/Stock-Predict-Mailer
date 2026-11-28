@@ -20,6 +20,7 @@ from stock_predict_mailer.control.market_feed import MarketFeed
 from stock_predict_mailer.control.orchestrator import a2a_task
 from stock_predict_mailer.control.server import make_server
 from test_cleaning_agent import RELATION, FakeCleaner, candidate
+from test_knowledge_sources import SyntheticSources
 
 
 def seed_forecasts(server):
@@ -59,6 +60,7 @@ def main():
     parser.add_argument("--port", type=int, default=8768)
     parser.add_argument("--forecast-fixtures", action="store_true")
     parser.add_argument("--record-fixtures", action="store_true")
+    parser.add_argument("--knowledge-source-fixtures", action="store_true")
     parser.add_argument("--mock-delay", type=float, default=0, help="Synthetic model latency in seconds, for cancellation checks (0–5).")
     args = parser.parse_args()
     if not 0 <= args.mock_delay <= 5:
@@ -70,6 +72,8 @@ def main():
             seed_forecasts(server)
         if args.record_fixtures:
             seed_records(server)
+        if args.knowledge_source_fixtures:
+            server.knowledge_sources.adapter = SyntheticSources().adapter
         server.engine.knowledge.cleaner = FakeCleaner([candidate(RELATION, valid_from="2026-01-01")])
         if args.mock_delay:
             generate = server.engine.models.generate

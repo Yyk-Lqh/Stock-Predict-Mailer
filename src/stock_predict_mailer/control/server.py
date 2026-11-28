@@ -23,6 +23,8 @@ from ..agent_service.reporting import render
 from ..naming import env
 from ..operations.components import Component
 from ..plugins.errors import PluginError
+from ..private_knowledge.parsing import FORMATS as KNOWLEDGE_FORMATS
+from ..private_knowledge.sources import MAX_CONTENT, KnowledgeSources, segment_preview
 from .a2a import SESSION_COOKIE, A2AService, card
 from .forecast_preview import evaluate as forecast_evaluate
 from .forecast_preview import preview as forecast_preview
@@ -43,6 +45,7 @@ def make_server(root, port=8767, master_key=None, market=None):
     store = Store(root, master_key)
     engine = Orchestrator(store)
     workflow_chat = WorkflowChat(engine)
+    knowledge_sources = KnowledgeSources(engine.knowledge)
     market = MarketFeed(store.root) if market is None else market
     session, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     workspace_id = hashlib.sha256(str(store.root.resolve()).encode()).hexdigest()[:16]
@@ -340,6 +343,44 @@ def make_server(root, port=8767, master_key=None, market=None):
                 if kind == "knowledge":
                     owner = self.knowledge_owner()
                     kb, route = engine.knowledge, parts[2:]
+                    library = self.headers.get("X-Knowledge-Library", "default")
+                    if route == ["libraries"] and method == "GET":
+                        self.output({"items": kb.libraries(owner)})
+                        return
+                    if route == ["libraries"] and method == "POST":
+                        self.output(kb.create_library(owner, self.body()), 201)
+                        return
+                    if route == ["sources"] and method == "GET":
+                        self.output({"items": knowledge_sources.status(owner)})
+                        return
+                    if len(route) == 2 and route[0] == "sources" and method in ("PUT", "DELETE"):
+                        self.output(knowledge_sources.configure(owner, route[1], self.body() if method == "PUT" else None,
+                                                                remove=method == "DELETE"))
+                        return
+                    if route == ["sources", "notion", "pages"] and method == "POST":
+                        self.output(knowledge_sources.pages(owner, self.body()))
+                        return
+                    if len(route) == 3 and route[0] == "sources" and route[2] == "preview" and method == "POST":
+                        self.output({"items": knowledge_sources.preview(owner, library, route[1], self.body())})
+                        return
+                    if route in (["import", "segments"], ["import", "submit"]) and method == "POST":
+                        raw = self.body()
+                        if route[-1] == "segments" and "text" in raw:
+                            filename, value, size = raw.get("filename"), raw["text"], raw.get("chunk_size")
+                            if (not isinstance(filename, str) or not filename.lower().endswith((".txt", ".md"))
+                                    or not isinstance(value, str) or not 1 <= len(value.encode()) <= MAX_CONTENT
+                                    or type(size) is not int or not 400 <= size <= 4000):
+                                raise ServiceError("INVALID_INPUT", "分段预览支持 512 KiB 以内的 TXT 或 Markdown")
+                            self.output(segment_preview(filename, value.encode(), size))
+                        else:
+                            self.output(knowledge_sources.import_preview(owner, library, raw, segments=route[-1] == "segments"))
+                        return
+                    owner = kb.library_owner(owner, library)
+                    if route == ["import", "options"] and method == "GET":
+                        self.output({"formats": sorted(KNOWLEDGE_FORMATS), "max_file_bytes": 10 * 1024 * 1024,
+                                     "max_files": 5, "chunk_size": 1600, "preview_max_bytes": MAX_CONTENT,
+                                     "cleaner": kb.cleaning_config(owner)["provider"]})
+                        return
                     if route == ["queue"] and method == "GET":
                         self.output(kb.queue(owner))
                     elif route == ["documents"] and method == "GET":
@@ -358,7 +399,8 @@ def make_server(root, port=8767, master_key=None, market=None):
                             raw = base64.b64decode(data["data"], validate=True)
                         except (KeyError, TypeError, ValueError, binascii.Error):
                             raise ServiceError("INVALID_INPUT", "需要 base64 文件内容") from None
-                        self.output(kb.upload(owner, data.get("filename"), raw, data.get("metadata"), data.get("logical")), 202)
+                        self.output(kb.upload(owner, data.get("filename"), raw, data.get("metadata"), data.get("logical"),
+                                              chunk_size=data.get("chunk_size", 1600)), 202)
                     elif route == ["config"] and method in ("GET", "PUT"):
                         self.output(kb.config(owner, self.body() if method == "PUT" else None))
                     elif route == ["cleaner", "config"] and method in ("GET", "PUT"):
@@ -694,6 +736,7 @@ def make_server(root, port=8767, master_key=None, market=None):
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.store, server.engine = store, engine
+    server.knowledge_sources = knowledge_sources
     return server
 
 

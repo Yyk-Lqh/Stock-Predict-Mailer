@@ -24,6 +24,7 @@ from stock_predict_mailer.mail_core import MailCore
 from stock_predict_mailer.operations import schema_planning as sp
 from stock_predict_mailer.operations.schema_models import catalogue, execute_group
 from stock_predict_mailer.private_knowledge.service import Knowledge
+from stock_predict_mailer.private_knowledge.sources import KnowledgeSources
 
 
 @contextmanager
@@ -174,6 +175,15 @@ class SchemaTests(unittest.TestCase):
         self.create("legacy", "legacy.runs", "legacy.knowledge")
         self.assertEqual(self.plan("legacy")["state"], "current")
         self.assertTrue(self.rehearse("legacy")["rehearsal"][0]["target_verified"])
+
+    def test_live_knowledge_library_and_source_tables_are_recognized(self):
+        knowledge = Knowledge(Store(self.app, Fernet.generate_key()))
+        KnowledgeSources(knowledge)
+        value = self.plan("knowledge")
+        self.assertEqual(value["state"], "current", value)
+        features = {item["name"]: item["state"] for item in value["databases"][0]["features"]}
+        self.assertEqual(features["knowledge.libraries"], "current")
+        self.assertEqual(features["knowledge.sources"], "current")
 
     def test_unsupported_column_order_is_not_rewritten(self):
         self.create("knowledge", "knowledge.core", additions=["knowledge.review"])

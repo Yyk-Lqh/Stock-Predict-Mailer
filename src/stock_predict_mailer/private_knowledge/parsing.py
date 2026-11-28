@@ -207,7 +207,7 @@ def parse(filename, raw):
     return {"pieces": pieces, "warnings": sorted(set(warnings))}
 
 
-def clean(parsed):
+def clean(parsed, chunk_size=1600):
     chunks, seen, heading = [], {}, ""
     for piece in parsed["pieces"]:
         original = piece["original"]
@@ -227,9 +227,9 @@ def clean(parsed):
             raise ServiceError("REVIEW_REQUIRED", "单行表格内容过长，请先拆分字段并保留周期单位")
         offset = 0
         while offset < len(original):
-            end = min(len(original), offset + 1600)
+            end = min(len(original), offset + chunk_size)
             if end < len(original):
-                boundary = max(original.rfind(mark, offset + 800, end) for mark in ("。", "；", "\n", ". "))
+                boundary = max(original.rfind(mark, offset + chunk_size // 2, end) for mark in ("。", "；", "\n", ". "))
                 if boundary >= 0:
                     end = boundary + 1
             excerpt = original[offset:end]
@@ -257,5 +257,5 @@ def clean(parsed):
                      "occurrences": [piece["location"]]}
             chunks.append(chunk)
             seen[key].append(chunk)
-            offset = end if end == len(original) else max(offset + 1, end - 160)
+            offset = end if end == len(original) else max(offset + 1, end - min(160, chunk_size // 10))
     return {"chunks": chunks, "warnings": sorted(set(parsed["warnings"]))}

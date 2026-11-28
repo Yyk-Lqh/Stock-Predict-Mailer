@@ -98,6 +98,8 @@ def build():
     group("knowledge.workers", "stock_predict_mailer/private_knowledge/service.py", objects={"workers"}, initialize=True)
     group("knowledge.recall", "stock_predict_mailer/private_knowledge/service.py", objects={"recall_history", "recall_owner"}, initialize=True)
     groups["knowledge.recall"]["initialize_data_effect"] = "creates_empty_recall_history"
+    group("knowledge.libraries", "stock_predict_mailer/private_knowledge/service.py", objects={"libraries"})
+    group("knowledge.sources", "stock_predict_mailer/private_knowledge/sources.py")
     group("crawler.jobs", "mcp_server/jobs.py")
     group("legacy.runs", "stock_predict_mailer/core.py")
     group("legacy.outbox", "stock_predict_mailer/delivery.py")
@@ -116,13 +118,14 @@ def build():
     version_tree = ast.parse((ROOT / "src/stock_predict_mailer/__init__.py").read_text(encoding="utf-8"))
     version = next(node.value.value for node in version_tree.body if isinstance(node, ast.Assign) and
                    any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets))
-    return {"schema_version": "1", "catalogue_revision": "5", "app_version": version,
+    return {"schema_version": "1", "catalogue_revision": "6", "app_version": version,
             "database_markers": {"application_id": 0x53504D31, "user_version": 1}, "groups": groups,
             "stores": {
                 "mail": {"required": ["mail.core"], "groups": ["mail.core", "mail.bindings", "mail.archive"]},
                 "control": {"required": ["control.base"], "groups": [
                     "control.base", "control.memory", "control.workflow_conversations", "control.receipts", "control.knowledge_owners"]},
-                "knowledge": {"required": ["knowledge.core"], "groups": ["knowledge.core", "knowledge.workers", "knowledge.recall"]},
+                "knowledge": {"required": ["knowledge.core"], "groups": [
+                    "knowledge.core", "knowledge.workers", "knowledge.recall", "knowledge.libraries", "knowledge.sources"]},
                 "crawler": {"required": ["crawler.jobs"], "groups": ["crawler.jobs"]},
                 "legacy": {"required": ["legacy.runs"], "groups": [name for name in groups if name.startswith("legacy.")]}}}
 

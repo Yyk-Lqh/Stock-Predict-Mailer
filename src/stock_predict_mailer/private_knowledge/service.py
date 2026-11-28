@@ -139,6 +139,9 @@ class Knowledge:
         with self.db() as con:
             con.executescript("""
                 CREATE TABLE IF NOT EXISTS owners (owner TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0, config BLOB);
+                CREATE TABLE IF NOT EXISTS libraries (
+                    id TEXT NOT NULL, parent TEXT NOT NULL, namespace TEXT NOT NULL UNIQUE,
+                    PRIMARY KEY(parent,id));
                 CREATE TABLE IF NOT EXISTS documents (
                     id TEXT PRIMARY KEY, owner TEXT NOT NULL, logical TEXT NOT NULL, filename TEXT NOT NULL,
                     hash TEXT NOT NULL, metadata TEXT NOT NULL, uploaded TEXT NOT NULL,
@@ -188,7 +191,13 @@ class Knowledge:
 
     def ensure(self, owner):
         with self.store.db() as con:
-            if con.execute("SELECT 1 FROM memory_owners WHERE id=?", (owner,)).fetchone() is None:
+            valid = con.execute("SELECT 1 FROM memory_owners WHERE id=?", (owner,)).fetchone()
+        if not valid:
+            with self.db() as con:
+                row = con.execute("SELECT parent FROM libraries WHERE namespace=?", (owner,)).fetchone()
+            with self.store.db() as con:
+                valid = row and con.execute("SELECT 1 FROM memory_owners WHERE id=?", (row[0],)).fetchone()
+            if not valid:
                 raise ServiceError("FORBIDDEN", "私有用户不存在")
         with self.db() as con:
             con.execute("INSERT OR IGNORE INTO owners(owner) VALUES (?)", (owner,))
@@ -199,22 +208,64 @@ class Knowledge:
     def opened(self, blob):
         return json.loads(self.store.cipher.decrypt(blob))
 
+    def library_owner(self, owner, library):
+        if library in ("", "default"):
+            return owner
+        with self.db() as con:
+            row = con.execute("SELECT namespace FROM libraries WHERE parent=? AND id=?", (owner, library)).fetchone()
+        if row is None:
+            raise ServiceError("NOT_FOUND", "知识库不存在或无权访问")
+        return row[0]
+
+    def libraries(self, owner):
+        self.ensure(owner)
+        with self.db() as con:
+            scopes = con.execute("SELECT id,namespace FROM libraries WHERE parent=? ORDER BY rowid DESC", (owner,)).fetchall()
+            items = []
+            for library, namespace in [("default", owner), *scopes]:
+                saved = con.execute("SELECT profile FROM owners WHERE owner=?", (namespace,)).fetchone()[0]
+                total, review = con.execute(
+                    "SELECT count(*),coalesce(sum(status='review'),0) FROM documents WHERE owner=?", (namespace,)
+                ).fetchone()
+                items.append({**PROFILE, **(self.opened(saved) if saved else {}), "id": library,
+                              "total": total, "review": review})
+        return items
+
+    def create_library(self, owner, raw):
+        if set(raw) - {"id", "name", "description"} or "name" not in raw:
+            raise ServiceError("INVALID_INPUT", "创建知识库需要名称")
+        library = raw.get("id", uuid.uuid4().hex)
+        if not isinstance(library, str) or not re.fullmatch(r"[0-9a-f]{32}", library):
+            raise ServiceError("INVALID_INPUT", "知识库标识无效")
+        profile = self.profile_value({**PROFILE, "name": raw["name"], "description": raw.get("description", "")})
+        self.ensure(owner)
+        namespace = hashlib.sha256(f"knowledge-library:{owner}:{library}".encode()).hexdigest()
+        with self.db() as con:
+            con.execute("BEGIN IMMEDIATE")
+            con.execute("INSERT OR IGNORE INTO libraries VALUES (?,?,?)", (library, owner, namespace))
+            con.execute("INSERT OR IGNORE INTO owners(owner,profile) VALUES (?,?)", (namespace, self.seal(profile)))
+        return {**self.profile(namespace), "id": library}
+
+    @staticmethod
+    def profile_value(raw):
+        if not isinstance(raw, dict) or set(raw) != set(PROFILE):
+            raise ServiceError("INVALID_INPUT", "请提交完整的知识库设置")
+        name, description, icon, top_k, retrieval = (raw[key] for key in PROFILE)
+        if (not isinstance(name, str) or not 1 <= len(name.strip()) <= 80
+                or not isinstance(description, str) or len(description) > 500
+                or icon not in ("library", "reports", "notes", "research")
+                or type(top_k) is not int or not 1 <= top_k <= 20
+                or retrieval not in RETRIEVAL_MODES):
+            raise ServiceError("INVALID_INPUT", "知识库设置无效，请检查名称、描述、图标和检索范围")
+        return {**raw, "name": name.strip(), "description": description.strip()}
+
     def profile(self, owner, raw=None):
         self.ensure(owner)
         with self.db() as con:
             if raw is None:
                 saved = con.execute("SELECT profile FROM owners WHERE owner=?", (owner,)).fetchone()[0]
                 return {**PROFILE, **(self.opened(saved) if saved else {})}
-            if not isinstance(raw, dict) or set(raw) != set(PROFILE):
-                raise ServiceError("INVALID_INPUT", "请提交完整的知识库设置")
-            name, description, icon, top_k, retrieval = (raw[key] for key in PROFILE)
-            if (not isinstance(name, str) or not 1 <= len(name.strip()) <= 80
-                    or not isinstance(description, str) or len(description) > 500
-                    or icon not in ("library", "reports", "notes", "research")
-                    or type(top_k) is not int or not 1 <= top_k <= 20
-                    or retrieval not in RETRIEVAL_MODES):
-                raise ServiceError("INVALID_INPUT", "知识库设置无效，请检查名称、描述、图标和检索范围")
-            profile = {**raw, "name": name.strip(), "description": description.strip()}
+            profile = self.profile_value(raw)
             con.execute("UPDATE owners SET profile=? WHERE owner=?", (self.seal(profile), owner))
             return profile
 
@@ -369,7 +420,7 @@ class Knowledge:
         value["stock_codes"] = stock_codes(" ".join(value["stock_codes"]), explicit=True)
         return value
 
-    def upload(self, owner, filename, raw, metadata=None, logical=None):
+    def upload(self, owner, filename, raw, metadata=None, logical=None, *, chunk_size=1600, origin=None):
         self.ensure(owner)
         if (not isinstance(filename, str) or Path(filename).name != filename or "/" in filename or "\\" in filename
                 or len(filename) > 200 or Path(filename).suffix.lower() not in FORMATS):
@@ -377,14 +428,28 @@ class Knowledge:
         if not isinstance(raw, bytes) or not 1 <= len(raw) <= 10 * 1024 * 1024:
             raise ServiceError("FILE_LIMIT", "原文件须为 1 字节至 10 MiB")
         meta = self.metadata(metadata or {})
+        if type(chunk_size) is not int or not 400 <= chunk_size <= 4000:
+            raise ServiceError("INVALID_INPUT", "分段长度需要 400–4000 字符")
+        if chunk_size != 1600:
+            meta["chunk_size"] = chunk_size
+        if origin:
+            meta["origin"] = origin
         logical = logical or filename
         if not isinstance(logical, str) or not 1 <= len(logical) <= 200:
             raise ServiceError("INVALID_INPUT", "逻辑资料名称无效")
         fingerprint = hashlib.sha256(raw).hexdigest()
         with self.db() as con:
             con.execute("BEGIN IMMEDIATE")
-            row = con.execute("SELECT id FROM documents WHERE owner=? AND logical=? AND hash=? AND metadata=?",
-                              (owner, logical, fingerprint, packed(meta))).fetchone()
+            row = None
+            if origin:
+                latest = con.execute(
+                    "SELECT id,hash,metadata FROM documents WHERE owner=? AND logical=? ORDER BY uploaded DESC,id DESC LIMIT 1",
+                    (owner, logical)).fetchone()
+                if latest and latest["hash"] == fingerprint and json.loads(latest["metadata"]).get("chunk_size", 1600) == chunk_size:
+                    row = latest
+            if row is None:
+                row = con.execute("SELECT id FROM documents WHERE owner=? AND logical=? AND hash=? AND metadata=?",
+                                  (owner, logical, fingerprint, packed(meta))).fetchone()
             if row:
                 did = row[0]
             else:
@@ -509,7 +574,8 @@ class Knowledge:
                 raw = self.store.cipher.decrypt((self.root / owner / (did + ".bin")).read_bytes())
                 parsed = parse(item["filename"], raw)
                 self._checkpoint(owner, did, "parsed", "parsed", parsed)
-            draft = json.loads(item["draft"]) if item["draft"] else clean(parsed)
+            meta = json.loads(item["metadata"])
+            draft = json.loads(item["draft"]) if item["draft"] else clean(parsed, meta.get("chunk_size", 1600))
             if not draft["chunks"]:
                 raise ServiceError("REVIEW_REQUIRED", "清洗后没有有效内容")
             self._checkpoint(owner, did, "chunked", "draft", draft)

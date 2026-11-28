@@ -48,6 +48,34 @@ class WorkflowChatTests(unittest.TestCase):
     def history(self, flow):
         return self.client.get(f"{BASE}/{flow['id']}/runs", headers=MODE).json()["items"]
 
+    def test_canvas_annotations_follow_the_owner_and_revision_without_changing_execution(self):
+        owner_key = self.access()
+        value = graph()
+        base = self.save("带画布说明", value)
+        note = {"id": "note-1", "x": 123.5, "y": 61, "width": 280, "height": 150, "font": 16,
+                "color": "green", "body": "**核对** [来源](https://example.test)"}
+        comment = {"id": "comment-1", "x": -12, "y": 82, "body": "请核对来源", "author": "untrusted"}
+        value["canvas"] = {"notes": [note], "comments": [comment]}
+        response = self.client.put(f"{BASE}/{base['id']}", headers=MODE,
+                                   json={"name": base["name"], "base_revision": base["revision"], "graph": value})
+        self.assertEqual(response.status_code, 200, response.text)
+        saved = response.json()
+        comment.pop("author")
+        self.assertEqual(saved["graph"]["canvas"], {"notes": [note], "comments": [comment]})
+        self.assertNotEqual(saved["revision"], base["revision"])
+        self.assertEqual(saved["graph_version"], base["graph_version"])
+        stored = next(item for item in self.client.get(BASE, headers=MODE).json()["items"] if item["id"] == base["id"])
+        self.assertEqual(stored["graph"]["canvas"], saved["graph"]["canvas"])
+        task = self.terminal(self.submit(saved, self.payload(saved)))
+        self.assertEqual(task["status"]["state"], "completed", task["metadata"])
+        self.assertNotIn("canvas", task["metadata"]["workflow"]["graph"])
+        note["width"] = 1
+        update = {"name": base["name"], "base_revision": saved["revision"], "graph": value, "draft": True}
+        self.assertEqual(self.client.put(f"{BASE}/{base['id']}", headers=MODE, json=update).status_code, 400)
+        self.access()
+        self.assertEqual(self.client.put(f"{BASE}/{base['id']}", headers=MODE, json=update).status_code, 404)
+        self.client.headers["X-Memory-Key"] = owner_key
+
     def test_pinned_versions_inputs_owner_scope_and_idempotence(self):
         key = self.access()
         first = self.save("流程甲", inputs={"prediction": True, "constraints": True})

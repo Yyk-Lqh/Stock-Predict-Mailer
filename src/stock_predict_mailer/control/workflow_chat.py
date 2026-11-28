@@ -12,6 +12,7 @@ from .execution import PRESETS
 from .memory import LOCAL_KNOWLEDGE_OWNER
 from .modes import PROFESSIONAL, TASK_MODE_SQL
 from .workflow import STEP_ID, freeze, workflow_issues
+from .workflow_annotations import canvas_details
 from .workflow_values import bind_fields, dataflow, needs_knowledge
 from .workflow_wiring import WiringError, draft_graph, issue
 
@@ -100,7 +101,8 @@ class WorkflowChat:
 
     @staticmethod
     def submission(flow, key):
-        return {"mode": flow["mode"], "key": key, **({"graph": flow["graph"]} if flow["mode"] == "custom" else {})}
+        return {"mode": flow["mode"], "key": key, **({"graph": {
+            field: flow["graph"][field] for field in ("version", "nodes", "edges")}} if flow["mode"] == "custom" else {})}
 
     def list(self, owner, *, model=None, tools=None):
         with self.store.db() as con:
@@ -156,6 +158,7 @@ class WorkflowChat:
                 raise ServiceError("INVALID_INPUT", "草稿参数无效")
             pending = raw.get("draft_edits", [])
             saved = draft_graph(raw.get("graph"))
+            canvas = canvas_details(raw["graph"])
             ids = {node["id"] for node in saved["nodes"]}
             if (not isinstance(pending, list) or len(pending) > 24
                     or any(not isinstance(pair, list) or len(pair) != 2 or not isinstance(pair[0], str)
@@ -180,6 +183,8 @@ class WorkflowChat:
                 if not any(item["severity"] == "error" for item in problems):
                     problems.append(issue(error.code, error.message))
                 version = identity(saved)
+            if canvas:
+                saved["canvas"] = canvas
             start = next((node for node in saved["nodes"] if node["data"].get("type") == "input"), None)
             declared = start["data"].get("config", {}).get("fields", []) if start else []
             variables = declared if isinstance(declared, list) else []

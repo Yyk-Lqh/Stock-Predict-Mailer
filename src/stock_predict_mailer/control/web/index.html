@@ -291,22 +291,33 @@
       <span class="hint" id="record-count">尚未读取</span>
       <button type="button" id="record-refresh" class="btn quiet">刷新</button>
     </div>
-
-    <div class="filter-bar">
+    <div class="subnav" id="records-tabs" role="group" aria-label="记录类型">
+      <button type="button" data-record-tab="tasks" aria-pressed="true">任务记录</button>
+      <button type="button" data-record-tab="forecasts" aria-pressed="false">预测归档</button>
+    </div>
+    <section id="task-records" aria-label="任务列表">
+    <div class="filter-bar records-filters">
+      <label class="field"><span>分析模式</span><select id="record-mode"><option value="all">全部模式</option><option value="standard">普通模式</option><option value="professional">专业模式</option><option value="legacy">历史任务</option></select></label>
       <div class="chips" id="record-chips">
         <button type="button" data-filter="all" class="chip active">全部</button>
         <button type="button" data-filter="active" class="chip">进行中</button>
+        <button type="button" data-filter="submitted" class="chip">已提交</button>
+        <button type="button" data-filter="working" class="chip">运行中</button>
         <button type="button" data-filter="completed" class="chip">已完成</button>
         <button type="button" data-filter="failed" class="chip">失败</button>
+        <button type="button" data-filter="canceled" class="chip">已取消</button>
       </div>
-      <input id="record-query" type="search" autocomplete="off" placeholder="按标的或错误码筛选">
+      <input id="record-query" type="search" aria-label="搜索任务" autocomplete="off" maxlength="128" placeholder="标的、任务、流程或错误码">
     </div>
 
+    <p id="desktop-record-scope" class="hint">搜索和筛选覆盖当前工作区内有权访问的全部任务记录。</p>
     <div id="record-list" class="task-list"></div>
     <div class="actions mt-16" id="record-more-wrap" hidden>
       <button type="button" id="record-more" class="btn tiny">载入更早的记录</button>
     </div>
-    <section id="forecast-records" class="forecast-records" aria-labelledby="forecast-records-title">
+    </section>
+    <section id="record-detail" class="card" tabindex="-1" aria-label="任务详情" hidden></section>
+    <section id="forecast-records" class="forecast-records" aria-labelledby="forecast-records-title" hidden>
       <div class="section-head"><h2 id="forecast-records-title">预测归档</h2><button id="forecast-refresh" type="button" class="btn quiet">刷新预测</button></div>
       <p class="hint">到期后提交匹配的观测数据即可评估。</p>
       <label class="field forecast-filter"><span>评价状态</span><select id="forecast-state"><option value="all">全部状态</option><option value="pending">待到期</option><option value="due">已到期，待观测</option><option value="evaluated">已评估</option></select></label>

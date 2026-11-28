@@ -387,14 +387,15 @@ const fmt = value => {
 
 /* ---------- views ---------- */
 function showView(name) {
+  const previous = document.body.dataset.view;
+  if (previous === 'records' && name !== previous) window.DesktopRecords?.remember();
   document.querySelectorAll('[data-view-pane]').forEach(el => { el.hidden = el.dataset.viewPane !== name; });
   document.querySelectorAll('.nav [data-view]').forEach(el => el.classList.toggle('active', el.dataset.view === name));
   if (location.hash.slice(1) !== name) history.replaceState(null, '', '#' + name);
   window.scrollTo({top: 0});
-  if (name === 'overview') renderSteps();
-  if (name === 'records' && !recordLoaded) loadRecords();
-  if (name === 'records') window.ForecastUI?.load(true);
   window.Workbench?.view(name);
+  if (name === 'overview') renderSteps();
+  if (name === 'records') window.DesktopRecords?.view(previous !== name);
   window.ToolsCenter?.view(name);
 }
 function showPanel(id) {
@@ -1965,7 +1966,8 @@ $('task-cancel').onclick = async () => {
 /* ---------- records ---------- */
 let recordLoaded = false, recordCursor = null, recordBusy = false, recordTimer = null;
 let records = [], recordFilter = 'all', recordQuery = '';
-const RECORD_FILTER = {all: '全部', active: '进行中', completed: '已完成', failed: '失败'};
+const RECORD_FILTER = {all: '全部', active: '进行中', submitted: '已提交', working: '运行中', completed: '已完成', failed: '失败', canceled: '已取消'};
+const RECORD_MODE = {standard:'普通模式', professional:'专业模式', legacy:'历史任务'};
 const shortTime = value => {
   const date = new Date(value);
   if (isNaN(date.getTime())) return '—';
@@ -1991,96 +1993,40 @@ function taskBrief(task) {
 const HORIZON_UNIT = {trading_days: '交易日', calendar_days: '自然日', hours: '小时'};
 const horizonText = horizon => horizon && horizon.value !== undefined && horizon.value !== null
   ? `${horizon.value} ${HORIZON_UNIT[horizon.unit] || ''}`.trim() : '—';
-function recordsPlaceholder(message) {
-  const host = $('record-list');
-  host.replaceChildren();
-  return text(host, 'p', message, 'empty');
-}
 const recordGroup = state => state === 'completed' ? 'completed'
-  : (state === 'failed' || state === 'canceled') ? 'failed' : 'active';
-function recordMatches(task) {
-  if (recordFilter !== 'all' && recordGroup(task.status.state) !== recordFilter) return false;
-  if (!recordQuery) return true;
-  const brief = taskBrief(task);
-  const hay = [brief.subject, task.metadata?.error?.code, MAIL_STATE[brief.mail?.status], TASK_STATE[task.status.state]]
-    .filter(Boolean).join(' ').toLowerCase();
-  return hay.includes(recordQuery);
-}
+  : ['failed', 'canceled'].includes(state) ? state : 'active';
 function renderRecords() {
-  if (window.DesktopRecords?.render({items: records, filter: recordFilter, query: recordQuery, cursor: recordCursor})) return;
-  const host = $('record-list');
-  host.replaceChildren();
-  const counts = {all: records.length, active: 0, completed: 0, failed: 0};
-  for (const task of records) counts[recordGroup(task.status.state)] += 1;
-  for (const chip of $('record-chips').querySelectorAll('[data-filter]')) {
-    const key = chip.dataset.filter;
-    chip.textContent = counts[key] ? `${RECORD_FILTER[key]} ${counts[key]}` : RECORD_FILTER[key];
-    chip.classList.toggle('active', key === recordFilter);
-    chip.classList.toggle('is-empty', counts[key] === 0);
-  }
-  if (!records.length) {
-    const hint = recordsPlaceholder('暂无任务记录。');
-    const go = document.createElement('button');
-    go.type = 'button';
-    go.className = 'btn tiny mt-12';
-    go.textContent = '开始分析';
-    go.onclick = () => showView('analysis');
-    hint.after(go);
-    $('record-count').textContent = '还没有任务';
-  } else {
-    const shown = records.filter(recordMatches);
-    if (!shown.length) {
-      recordsPlaceholder(`已载入的 ${records.length} 条里没有匹配。${recordCursor ? '可以继续载入更早的记录，或' : ''}清空筛选再看。`);
-    } else {
-      for (const task of shown) host.append(recordRow(task));
-    }
-    $('record-count').textContent = shown.length === records.length
-      ? `已载入 ${records.length} 条${recordCursor ? ' · 还有更早的' : ''}`
-      : `筛出 ${shown.length} 条 · 已载入 ${records.length} 条`;
-  }
-  $('record-more-wrap').hidden = !recordCursor;
-  window.DesktopLibrary?.records();
+  window.DesktopRecords?.render();
 }
 async function loadRecords(reset = false) {
   if (recordBusy) return;
   recordBusy = true;
   clearTimeout(recordTimer);
-  const desktop = window.DesktopRecords?.active();
-  if (desktop && !recordLoaded) reset = true;
-  const recordEpoch = desktop ? window.DesktopRecords.revision() : null;
+  const ui = window.DesktopRecords, recordEpoch = ui.revision(), key = memoryKey;
+  const current = () => recordEpoch === ui.revision() && key === memoryKey;
+  if (!recordLoaded) reset = true;
   const before = reset ? null : recordCursor;
-  if (reset && !desktop) recordCursor = null;
-  const host = $('record-list');
-  if (desktop) window.DesktopRecords.loading();
-  else if (reset || !records.length) recordsPlaceholder('正在读取任务记录…');
+  const query = new URLSearchParams({mode:$('record-mode').value,state:recordFilter,q:recordQuery,limit:'30'});
+  if (before != null) query.set('before',before);
+  ui.loading();
   try {
-    const page = await api(`tasks?order=desc&limit=30${before ? '&before=' + before : ''}`);
-    if (desktop && recordEpoch !== window.DesktopRecords.revision()) return;
+    const page = await api('tasks/records?' + query, 'GET', undefined, undefined, {key});
+    if (!current()) return;
     // 子 Agent 的中间任务与主任务同表，contextId 指向父任务；它们不是用户提交的记录。
     const fresh = page.items.filter(task => topLevel(task) && !deletedRecords.has(task.id));
-    if (desktop) {
-      const updated = await window.DesktopRecords.page({existing: records, fresh, cursor: recordCursor, pageCursor: page.next_before, reset});
-      if (recordEpoch !== window.DesktopRecords.revision()) return;
-      records = updated.items.filter(task => !deletedRecords.has(task.id)); recordCursor = updated.cursor;
-      window.DesktopRecords.loaded(updated.warning);
-    } else { records = reset ? [...fresh] : [...records, ...fresh]; recordCursor = page.next_before; }
+    const updated = await ui.page({existing: records, fresh, cursor: recordCursor, pageCursor: page.next_before, reset, key});
+    if (!current()) return;
+    records = updated.items.filter(task => !deletedRecords.has(task.id)); recordCursor = updated.cursor;
+    ui.loaded(updated.warning,page.counts);
     recordLoaded = true;
     renderRecords();
-    if (records.some(task => recordGroup(task.status.state) === 'active')) {
-      // 只在记录页可见时继续刷新，离开页面就停，避免后台空转。
-      recordTimer = setTimeout(() => {
-        if (!$('record-list').closest('[data-view-pane]')?.hidden) loadRecords(true);
-      }, 3000);
-    }
+    ui.schedule();
   } catch (error) {
-    if (desktop && recordEpoch !== window.DesktopRecords.revision()) return;
-    if (desktop) window.DesktopRecords.failed(error.message);
-    else if (!host.childElementCount) recordsPlaceholder('记录读取失败：' + error.message);
-    notice(error.message, true);
+    if (current()) ui.failed(error.message);
   } finally {
-    if (!desktop || recordEpoch === window.DesktopRecords.revision()) {
+    if (current()) {
       recordBusy = false;
-      if (desktop) window.DesktopRecords.finished();
+      ui.finished();
     }
   }
 }
@@ -2105,7 +2051,10 @@ function recordRow(task) {
 
   const subject = document.createElement('span');
   subject.className = 'subject';
-  text(subject, 'b', brief.subject || '未标注标的');
+  const flow = task.metadata?.workflow?.flow;
+  const version = flow?.revision || task.metadata?.workflow?.version;
+  const label = brief.subject || task.metadata?.request?.name || flow?.name || '分析任务';
+  text(subject, 'b', label).title = label;
   if (brief.direction) {
     const dir = document.createElement('i');
     dir.className = 'dir';
@@ -2132,8 +2081,9 @@ function recordRow(task) {
   text(row, 'span', brief.mail ? (MAIL_STATE[brief.mail.status] || brief.mail.status) : (brief.notify ? '待投递' : '未请求'),
     'mail');
 
-  text(row, 'span', '查看 →', 'go');
-  row.onclick = () => openRecord(task);
+  text(row, 'span', '查看详情 →', 'go');
+  text(row, 'span', [RECORD_MODE[taskMode(task)], flow?.name, version && '版本 ' + version.slice(0, 8)]
+    .filter(Boolean).join(' · '), 'record-mode-line');
   return row;
 }
 function openRecord(task) {
@@ -2154,17 +2104,19 @@ function displayTask(task) {
   showTask(task);
   poll(task.id);
 }
-$('record-refresh').onclick = () => loadRecords(true);
+$('record-refresh').onclick = () => window.DesktopRecords.refresh();
 $('record-more').onclick = () => loadRecords();
 $('record-chips').onclick = event => {
   const button = event.target.closest('[data-filter]');
-  if (!button) return;
+  if (!button || button.dataset.filter === recordFilter) return;
   recordFilter = button.dataset.filter;
-  renderRecords();
+  window.DesktopRecords.filterChanged();
 };
 $('record-query').oninput = () => {
-  recordQuery = $('record-query').value.trim().toLowerCase();
-  renderRecords();
+  const query = $('record-query').value.trim();
+  if (query === recordQuery) return;
+  recordQuery = query;
+  window.DesktopRecords.filterChanged(220);
 };
 
 /* ---------- overview actions ---------- */

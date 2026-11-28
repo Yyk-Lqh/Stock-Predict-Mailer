@@ -93,10 +93,14 @@
   await wait(() => $('record-list').querySelector(`[data-task-id="${original.id}"]`), 'history record');
   set('record-query', 'DEMO');
   document.querySelector('[data-filter="completed"]').click();
+  await wait(() => $('record-list').querySelector(`[data-task-id="${original.id}"]`), 'filtered record');
   const row = $('record-list').querySelector(`[data-task-id="${original.id}"]`);
-  assert(row && $('desktop-record-scope').textContent.includes('已载入'), 'Loaded-only scope missing');
+  assert($('desktop-record-scope').textContent.includes('有权访问'), 'Workspace search scope missing');
   window.scrollTo(0, 160); const scroll = window.scrollY;
-  row.click(); await wait(() => !$('task-form').inert && document.querySelector('.desktop-report-back') && !document.querySelector('.desktop-report-back').hidden, 'history report');
+  row.click();
+  const open = [...$('record-detail').querySelectorAll('button')].find(button => /^打开分析/.test(button.textContent));
+  assert(open, 'Missing analysis navigation in history detail');
+  open.click(); await wait(() => !$('task-form').inert && document.querySelector('.desktop-report-back') && !document.querySelector('.desktop-report-back').hidden, 'history report');
   $('analysis-tab-report').click(); document.querySelector('.desktop-report-back').click();
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   assert(document.body.dataset.view === 'records' && $('record-query').value === 'DEMO', 'History query not restored');

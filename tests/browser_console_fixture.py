@@ -37,7 +37,9 @@ def seed_forecasts(server):
         record = archive.register(p, d, now=generated + timedelta(seconds=10))["record"]
         analysis = AnalysisAgent().analyze(p, forecast_record=record)
         tid = "browser-" + name
-        server.engine.store.task(tid, a2a_task(tid, "completed", result={"analysis": analysis, "children": [], "mail": None, "usage": {"calls": 0}}))
+        task = a2a_task(tid, "completed", result={"analysis": analysis, "children": [], "mail": None, "usage": {"calls": 0}})
+        task.setdefault("metadata", {})["mode"] = "standard"
+        server.engine.store.task(tid, task)
         if name == "evaluated":
             archive.evaluate(record["forecast_id"], {"schema_version": "1", "subject": p["subject"], "metric": d["metric"], "unit": d["unit"],
                 "value": 112, "observed_at": d["target_at"], "available_at": d["target_at"], "source": "browser synthetic observation", "synthetic": True})

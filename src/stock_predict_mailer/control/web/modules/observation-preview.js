@@ -3,7 +3,7 @@ window.ObservationPreview = (() => {
   let active = null;
   const MAX = 256 * 1024;
   function clear() { if (active) { ++active.version; active.root.remove(); active = null; } }
-  function mount(host, tid, view, current) {
+  function mount(host, tid, view, current, saved) {
     clear();
     const root = document.createElement('details'); root.className = 'observation-preview';
     text(root, 'summary', '导入观测并预览');
@@ -25,6 +25,7 @@ window.ObservationPreview = (() => {
     const status = text(form, 'p', '尚未预览。请选择文件或粘贴完整观测。', 'hint'); status.id = 'observation-status'; status.setAttribute('role', 'status');
     const output = document.createElement('section'); output.id = 'observation-result'; output.hidden = true; output.setAttribute('aria-label', '观测评估预览'); form.append(output);
     const state = {root, version:0, busy:false, loading:false, importVersion:0, imported:null}; active = state; host.append(root);
+    const scope = {...AnalysisMode.capture(), mode:view.mode};
     const live = () => active === state && current() && root.isConnected;
     const message = (value, error = false) => { status.textContent = value; status.classList.toggle('observation-error', error); };
     function invalidate() {
@@ -65,7 +66,8 @@ window.ObservationPreview = (() => {
         const request = {format:format.value, content};
         if (cutoff.value.trim()) request.as_of = cutoff.value.trim();
         state.busy = true; button.disabled = true; message('正在校验观测并计算预览…');
-        const result = await api(`tasks/${encodeURIComponent(tid)}/forecast/preview`, 'POST', request);
+        const path = `tasks/${encodeURIComponent(tid)}/forecast`;
+        const result = await api(path+'/preview', 'POST', request, undefined, scope);
         if (!live() || version !== state.version) return;
         output.replaceChildren(); output.hidden = false;
         const label = {ready:'评分预览（未保存）',not_due:'目标尚未到期，未评分',awaiting_observation:'观测在截止时点尚不可用，未评分'}[result.state];
@@ -83,6 +85,22 @@ window.ObservationPreview = (() => {
         const hashes = document.createElement('details'); hashes.className = 'advanced mt-14'; output.append(hashes); text(hashes, 'summary', '核对内容摘要');
         for (const [name, value] of [['导入文本',result.input.content_sha256],['标准观测',result.observation_id],['预测与定义',result.forecast_content_id]]) text(hashes, 'p', `${name}：${value}`, 'mono');
         for (const note of result.limitations) text(output, 'p', note, 'hint mt-14');
+        if (result.state === 'ready' && ['standard','professional'].includes(view.mode)) {
+          const save = action('提交观测并保存评估', async () => {
+            if (!live() || version !== state.version) return;
+            message('正在保存评估…');
+            try {
+              const receipt = await api(path+'/evaluate','POST',{
+                preview:{...request, as_of:result.as_of},
+                forecast_record_id:result.forecast_record_id, observation_id:result.observation_id,
+              },undefined,scope);
+              if (live() && receipt.persisted) {
+                message('评估已保存。'); await saved?.();
+              }
+            } catch (error) { if (live() && version===state.version) message('保存失败 · '+error.message,true); }
+          });
+          save.id='observation-save';output.append(save);
+        }
         message('预览完成，未保存回执。原归档状态保持不变。');
         window.DesktopLibrary?.preview(result, view, output);
       } catch (error) { if (live() && version === state.version) message(`预览失败：${error.message}`, true); }

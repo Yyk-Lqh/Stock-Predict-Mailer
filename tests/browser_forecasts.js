@@ -6,7 +6,8 @@
   const set = (id, value) => { $(id).value=value; $(id).dispatchEvent(new Event('input',{bubbles:true})); };
   const filter = async value => { $('forecast-state').value=value; $('forecast-state').dispatchEvent(new Event('change')); await wait(()=>!$('forecast-refresh').disabled); };
   await wait(()=>window.ForecastUI && window.Workbench && !$('new-analysis').disabled);
-  document.querySelector('[data-view="records"]').click(); await wait(()=>!$('forecast-refresh').disabled);
+  document.querySelector('[data-view="records"]').click();
+  document.querySelector('[data-record-tab="forecasts"]').click(); await wait(()=>!$('forecast-refresh').disabled);
   await filter('all');
   assert($('forecast-list').children.length>=3,'three archive states missing'); checks.push('task-linked archive list');
   for (const state of ['pending','due','evaluated']) { await filter(state); assert($('forecast-list').children.length>0,'state filter '+state); }

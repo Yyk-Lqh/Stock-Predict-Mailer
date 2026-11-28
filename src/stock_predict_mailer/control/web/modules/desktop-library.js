@@ -117,9 +117,9 @@ window.DesktopLibrary = (() => {
     host.querySelectorAll('.desktop-forecast-added').forEach(node => node.remove());
     const top = make('section', null, 'desktop-forecast-added desktop-forecast-guide');
     top.append(make('h3', {pending:'待到期 · 先核对观测要求',due:'待观测 · 提供观测后可预览',evaluated:'已有正式回执 · 可单独预览其他观测'}[view.state] || String(view.state)));
-    top.append(make('p', '只读预览 · 不保存评估回执，不覆盖已有档案或回执。来源与日历仍为提供方声明。', 'note'));
+    top.append(make('p', '先核对预览，再决定是否提交观测并保存评估。来源与日历由提供方声明。', 'note'));
     const actions = make('div', null, 'actions');
-    actions.append(button(view.state === 'due' ? '提供观测并预览' : '查看观测要求', openObservation, 'btn primary'), button('返回预测列表', () => { window.ForecastUI.close(); $('forecast-refresh').focus(); $('forecast-records').scrollIntoView({block:'start'}); }, 'btn'));
+    actions.append(button(view.state === 'due' ? '提供观测并预览' : '查看观测要求', openObservation, 'btn primary'));
     top.append(actions);
     const format = make('details', null, 'desktop-observation-format');
     format.append(make('summary', 'JSON / CSV 格式参考（含占位符）'), make('p', '以下占位符不可直接预览。请从实际来源提供数值、可用时间和来源声明；本页不会把参考内容填入观测表单。', 'hint'));

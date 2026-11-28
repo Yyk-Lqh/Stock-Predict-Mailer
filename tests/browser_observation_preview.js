@@ -8,7 +8,8 @@
   const real=window.fetch;
   try {
     await wait(()=>window.ObservationPreview && window.ForecastUI);
-    document.querySelector('[data-view=records]').click();await wait(()=>!$('forecast-refresh').disabled);
+    document.querySelector('[data-view=records]').click();
+    document.querySelector('[data-record-tab="forecasts"]').click();await wait(()=>!$('forecast-refresh').disabled);
     $('forecast-state').value='due';$('forecast-state').dispatchEvent(new Event('change'));await wait(()=>!$('forecast-refresh').disabled);
     $('forecast-list').querySelector('button').click();await wait(()=>$('observation-content'));
     document.querySelector('.observation-preview').open=true;

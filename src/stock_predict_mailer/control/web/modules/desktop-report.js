@@ -3,7 +3,7 @@ window.DesktopReport = (() => {
   const desktop = matchMedia('(min-width: 761px)'), report = $('report');
   const inspector = $('report-inspector'), heading = inspector.querySelector('.inspector-head'), tabs = inspector.querySelector('.analysis-tabs');
   const focusAttributes = new Map();
-  let task = null, tools = null, scope = null, header = null, pane = 'progress', overview = false;
+  let task = null, tools = null, header = null, pane = 'progress', overview = false;
   let source = null, selected = [], originRecord = null, overridesExpand = false, officeInert = null;
   const analysis = () => ['failed', 'canceled'].includes(task?.status.state) ? null : task?.artifacts?.[0]?.parts?.[0]?.data?.analysis;
   const result = () => task?.artifacts?.[0]?.parts?.[0]?.data;
@@ -158,7 +158,7 @@ window.DesktopReport = (() => {
   function backToRecords() {
     if (!originRecord || originRecord.task !== task?.id) return;
     const saved = originRecord;
-    setReading(false); showView('records');
+    setReading(false); showView('records'); window.DesktopRecords?.returnToTasks();
     requestAnimationFrame(() => {
       const row = [...$('record-list').querySelectorAll('.task-row')].find(node => node.dataset.taskId === saved.task);
       row?.focus({preventScroll: true}); window.scrollTo({top: saved.scroll, behavior: 'auto'});
@@ -195,7 +195,6 @@ window.DesktopReport = (() => {
       setReading(false); restoreOriginal(); overview = false;
       document.body.classList.remove('desktop-report-overview');
       if (tools) tools.hidden = true;
-      if (scope) scope.hidden = true;
       if (header?.isConnected) { header.before(heading, tabs); header.remove(); }
       syncExpand(); return;
     }
@@ -209,11 +208,6 @@ window.DesktopReport = (() => {
       resize.observe(header);
     }
     if (!header.isConnected) { inspector.prepend(header); header.append(heading, tabs); }
-    if (!scope) {
-      scope = make('p', '仅筛选已载入的任务。', 'hint desktop-record-scope'); scope.id = 'desktop-record-scope';
-      $('record-list').before(scope);
-    }
-    scope.hidden = false;
     if (task) render(task);
   }
   $('record-list').addEventListener('click', event => {

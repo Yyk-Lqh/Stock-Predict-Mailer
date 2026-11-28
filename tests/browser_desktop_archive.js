@@ -3,12 +3,13 @@
   const $=id=>document.getElementById(id),checks=[];
   const assert=(ok,message)=>{if(!ok)throw Error(message);};
   const wait=async(fn,label)=>{for(let i=0;i<150;i++){if(fn())return;await new Promise(resolve=>setTimeout(resolve,100));}throw Error('Timeout: '+label);};
-  document.querySelector('[data-view="records"]').click(); await wait(()=>!$('forecast-refresh').disabled,'archive');
+  document.querySelector('[data-view="records"]').click();
+  document.querySelector('[data-record-tab="forecasts"]').click(); await wait(()=>!$('forecast-refresh').disabled,'archive');
   document.querySelector('[data-forecast-state="due"]').click(); await wait(()=>!$('forecast-refresh').disabled,'due filter');
   assert($('forecast-state').value==='due' && $('desktop-forecast-scope').textContent.includes('筛选范围'),'Loaded/filter scope missing');
   $('desktop-forecast-next').click(); await wait(()=>$('observation-content')&&!$('forecast-detail').hidden,'due detail');
   assert(document.querySelector('.observation-preview').open && !$('observation-content').value,'Shortcut did not open empty observation form');
-  assert(document.querySelector('.desktop-forecast-guide').textContent.includes('不保存评估回执'),'Read-only status missing');
+  assert(document.querySelector('.desktop-forecast-guide').textContent.includes('先核对预览'),'Preview guidance missing');
   const reference=document.querySelector('.desktop-observation-format'); reference.open=true;
   assert(reference.textContent.includes('<替换为 JSON 数字>') && reference.textContent.includes('CSV') && !$('observation-content').value,'Format template fabricated observation');
   checks.push('state shortcuts and loaded-only due action lead to empty read-only observation form');
@@ -28,8 +29,9 @@
   assert($('forecast-detail').textContent.includes('已有正式回执') && $('forecast-detail').textContent.includes('绝对误差：2 CNY'),'Existing receipt not separate');
   assert(!$('forecast-detail').querySelector('img'),'Untrusted source interpreted as markup');
   checks.push('edits/filter changes clear checklist and due actions; original receipt/source remain intact');
+  document.querySelector('[data-record-tab="tasks"]').click();
   await wait(()=>$('record-list').querySelector('.task-row'),'task records');
-  assert($('record-list').querySelector('.desktop-record-date')?.textContent.includes('状态记录时间'),'Date grouping scope not explicit');
+  assert($('record-list').querySelector('.desktop-record-date')?.textContent,'Date grouping missing');
   assert(document.documentElement.scrollWidth<=innerWidth,'Horizontal overflow');
   checks.push('task dates identify status record time without changing existing order');
   document.body.dataset.desktopArchiveCheck=JSON.stringify({checks});

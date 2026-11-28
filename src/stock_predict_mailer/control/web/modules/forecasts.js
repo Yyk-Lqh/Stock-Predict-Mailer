@@ -4,6 +4,8 @@ window.ForecastUI = (() => {
   const names = {target_at:'target', timezone:'timezone', metric:'metric', unit:'unit', flat_tolerance:'tolerance'};
   const labels = {pending:'待到期', due:'已到期，待观测', evaluated:'已评估'};
   let base = {}, rows = new Map(), cursor = null, epoch = 0, detailEpoch = 0, busy = false;
+  let pages = 0, listState, listScroll = 0, returnFocus;
+  const archive = $('forecast-records'), count = () => window.DesktopRecords?.forecastCount(pages ? `${rows.size} 条归档` : '尚未读取归档');
   const input = () => JSON.parse($('task-data').value || '{}');
   const put = value => { $('task-data').value = JSON.stringify(value, null, 2); draftSchedule(); };
   const value = id => $('evaluation-' + id).value.trim();
@@ -83,7 +85,8 @@ window.ForecastUI = (() => {
   $('task-data').addEventListener('change', () => { try { restore(input()); } catch (_) { /* raw editor owns error */ } });
   function clearList() {
     window.ObservationPreview?.clear();
-    ++epoch; ++detailEpoch; rows.clear(); cursor = null; busy = false;
+    ++epoch; ++detailEpoch; rows.clear(); cursor = null; busy = false; pages = 0; listState = undefined;
+    listScroll = 0; returnFocus = null; delete archive.dataset.detail;
     $('forecast-list').replaceChildren(); $('forecast-detail').replaceChildren(); $('forecast-detail').hidden = true;
     $('forecast-more').hidden = true; $('forecast-refresh').disabled = false;
     $('forecast-list-status').textContent = '尚未读取，请刷新预测。';
@@ -95,39 +98,58 @@ window.ForecastUI = (() => {
       const row = document.createElement('article'); row.className = 'forecast-row'; row.dataset.forecast = r.forecast_id;
       const main = document.createElement('div');
       text(main, 'h3', r.subject); text(main, 'p', `${labels[r.state]} · ${r.synthetic ? '合成数据' : '真实数据'}`, 'hint');
-      text(main, 'p', `目标 ${fmt(r.target_at)} · ${r.metric} (${r.unit})`, 'hint');
+      text(main, 'p', `预测 ${fmt(r.generated_at || r.registered_at)} · 目标 ${fmt(r.target_at)} · ${r.metric} (${r.unit})`, 'hint');
       row.append(main, action('查看预测详情', () => openTask(r.task_id, false))); host.append(row);
     }
     window.DesktopLibrary?.forecasts({items:[...rows.values()], state:$('forecast-state').value, cursor});
   }
   async function load(resetPage = false) {
-    if (resetPage) clearList(); else if (busy || cursor == null) return;
+    if (!resetPage && (busy || cursor == null)) return;
+    const filter = $('forecast-state').value;
+    if (listState !== filter) {
+      listState = filter; pages = 0; rows.clear(); cursor = null; renderRows();
+      $('forecast-more').hidden = true;
+    }
     const current = ++epoch, key = memoryKey; busy = true;
     $('forecast-refresh').disabled = true; $('forecast-more').disabled = true; $('forecast-list-status').textContent = '正在读取可访问任务的预测…';
     try {
-      const page = await api(`forecasts?limit=20&state=${$('forecast-state').value}${cursor == null ? '' : '&before=' + cursor}`);
-      if (current !== epoch || key !== memoryKey) return;
-      for (const item of page.items) if (!rows.has(item.forecast_id)) rows.set(item.forecast_id, item);
-      cursor = page.next_before; renderRows(); $('forecast-more').hidden = cursor == null;
-      $('forecast-list-status').textContent = rows.size ? `已载入 ${rows.size} 条不同预测；最近读取 ${fmt(page.as_of)}。刷新从最新任务重新读取。` : cursor != null ? '本页任务没有符合条件的预测，可继续载入更早任务。' : '没有符合条件的预测。可在分析资料中启用本轮归档，或切换状态筛选。';
+      const updated = resetPage ? new Map() : new Map(rows);
+      let next = resetPage ? null : cursor, read = 0, asOf;
+      const pageCount = resetPage ? Math.max(1, pages) : 1;
+      do {
+        const page = await api(`forecasts?limit=20&state=${filter}${next == null ? '' : '&before=' + next}`, 'GET', undefined, undefined, {key});
+        if (current !== epoch || key !== memoryKey) return;
+        for (const item of page.items) if (!updated.has(item.forecast_id)) updated.set(item.forecast_id, item);
+        next = page.next_before; asOf = page.as_of; ++read;
+      } while (next != null && read < pageCount);
+      rows = updated; cursor = next; pages = resetPage ? read : pages + read;
+      renderRows(); count(); $('forecast-more').hidden = cursor == null;
+      $('forecast-list-status').textContent = rows.size ? `已载入 ${rows.size} 条预测 · 最近读取 ${fmt(asOf)}` : cursor != null ? '当前已载入范围没有匹配，可继续载入更早任务。' : '没有符合条件的预测。可在分析资料中启用本轮归档，或切换状态筛选。';
     } catch (error) {
       if (current === epoch && key === memoryKey) { $('forecast-list-status').textContent = `读取失败：${error.message}。请刷新重试。`; $('forecast-more').hidden = cursor == null; }
     } finally { if (current === epoch) { busy = false; $('forecast-refresh').disabled = false; $('forecast-more').disabled = false; } }
   }
   async function openTask(tid, navigate = true) {
     if (navigate) showView('records');
+    window.DesktopRecords?.selectTab('forecasts', false);
     window.ObservationPreview?.clear();
     window.DesktopLibrary?.forecastClosed();
     const current = ++detailEpoch, key = memoryKey, host = $('forecast-detail');
-    host.hidden = false; host.replaceChildren(); text(host, 'p', '正在读取预测详情…', 'hint');
+    if (host.hidden) {listScroll = scrollY; returnFocus = document.activeElement;}
+    archive.dataset.detail = 'true';
+    host.hidden = false; host.replaceChildren(); host.append(action('返回预测列表', close));
+    text(host, 'p', '正在读取预测详情…', 'hint');
     try {
       const view = await api(`tasks/${encodeURIComponent(tid)}/forecast`);
       if (current !== detailEpoch || key !== memoryKey) return;
-      host.replaceChildren(); const r = view.record, d = r.definition, p = r.prediction;
+      host.replaceChildren(action('返回预测列表', close)); const r = view.record, d = r.definition, p = r.prediction;
       text(host, 'h3', `${p.subject} · ${labels[view.state]}`);
       text(host, 'p', p.synthetic ? '合成数据，仅用于演示' : '真实数据，来源为上游声明', 'hint');
+      text(host, 'h4', '预测数据', 'mt-14');
       const dl = document.createElement('dl'); dl.className = 'kv'; host.append(dl);
-      for (const [label, v] of [['预测归档', r.forecast_id], ['注册时间', fmt(r.registered_at)], ['目标时点', `${d.target_at} · ${d.timezone}`],
+      for (const [label, v] of [['预测归档', r.forecast_id], ['预测时间', fmt(p.generated_at)], ['注册时间', fmt(r.registered_at)],
+        ['预测值', p.value == null ? '—' : `${p.value} ${p.value_unit}`], ['预测方向', {up:'上涨', down:'下跌', flat:'持平'}[p.direction] || '—'],
+        ['上游版本', p.model_version], ['目标时点', `${d.target_at} · ${d.timezone}`],
         ['评价口径', `${d.metric} (${d.unit})`], ['比较基准', `${d.reference.value} ${d.unit} · ${d.reference.source}`],
         ['基准观测 / 可用', `${d.reference.observed_at} / ${d.reference.available_at}`], ['平盘阈值', `${d.flat_tolerance} ${d.unit}（含边界）`]]) { text(dl, 'dt', label); text(dl, 'dd', v); }
       if (d.calendar) text(host, 'p', `声明日历：${d.calendar.source}；${d.calendar.sessions.join('、')}`, 'hint');
@@ -135,20 +157,25 @@ window.ForecastUI = (() => {
       for (const receipt of view.evaluations) {
         const m = receipt.metrics, section = document.createElement('section'); section.className = 'forecast-receipt'; host.append(section);
         text(section, 'h4', `评估回执 · ${fmt(receipt.evaluated_at)}`);
-        text(section, 'p', `观测 ${receipt.observation.value} ${m.unit}；来源声明：${receipt.observation.source}`);
+        text(section, 'p', `实际观测 · ${receipt.observation.value} ${m.unit} · ${receipt.observation.source}`);
         text(section, 'p', `实际方向：${{up:'上涨', down:'下跌', flat:'持平'}[m.realized_direction]}；方向匹配：${m.direction_correct == null ? '未提供方向预测' : m.direction_correct ? '是' : '否'}`);
         if (m.absolute_error != null) text(section, 'p', `绝对误差：${m.absolute_error} ${m.unit}；有符号误差：${m.signed_error} ${m.unit}`);
         text(section, 'p', `观测可用：${receipt.observation.available_at}；评价截止：${receipt.as_of}`, 'hint');
       }
       text(host, 'p', '已保存的档案与回执只读。来源与日历未独立认证，摘要仅用于核对一致性。', 'hint mt-14');
-      window.ObservationPreview?.mount(host, tid, view, () => current === detailEpoch && key === memoryKey && !host.hidden);
-      host.append(action('收起详情', close));
+      window.ObservationPreview?.mount(host, tid, view, () => current === detailEpoch && key === memoryKey && !host.hidden && !archive.hidden,
+        async () => { await openTask(tid, false); await load(true); });
       window.DesktopLibrary?.forecastDetail(tid, view);
       host.focus(); host.scrollIntoView({block:'nearest'});
-    } catch (error) { if (current === detailEpoch && key === memoryKey) { host.replaceChildren(); text(host, 'p', `读取失败：${error.message}`, 'hint'); host.append(action('重试详情', () => openTask(tid, false))); } }
+    } catch (error) { if (current === detailEpoch && key === memoryKey) { host.replaceChildren(action('返回预测列表', close)); text(host, 'p', `读取失败：${error.message}`, 'hint'); host.append(action('重试详情', () => openTask(tid, false))); } }
   }
-  function close() { ++detailEpoch; window.ObservationPreview?.clear(); $('forecast-detail').hidden = true; window.DesktopLibrary?.forecastClosed(); }
-  $('forecast-refresh').onclick = () => load(true); $('forecast-more').onclick = () => load(); $('forecast-state').onchange = () => load(true);
+  function close() {
+    ++detailEpoch; window.ObservationPreview?.clear(); $('forecast-detail').hidden = true; delete archive.dataset.detail;
+    window.DesktopLibrary?.forecastClosed(); returnFocus?.focus({preventScroll:true}); scrollTo(0,listScroll);
+  }
+  $('forecast-refresh').onclick = () => load(true); $('forecast-more').onclick = () => load();
+  $('forecast-state').onchange = () => { if (archive.dataset.detail) close(); load(true); };
   restore(input());
-  return {restore, reset, validate, load, openTask, close, identityChanged:clearList};
+  return {restore, reset, validate, load, openTask, close, identityChanged:clearList,
+    enter(){count();if(!pages&&!busy)load(true);},refresh:()=>load(true)};
 })();

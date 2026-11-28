@@ -31,6 +31,7 @@ from .market_feed import MarketFeed
 from .modes import LEGACY, MODES, PROFESSIONAL, STANDARD, TASK_MODE_SQL, require_mode, task_mode, with_task_mode
 from .orchestrator import Orchestrator
 from .store import Store
+from .task_records import listing as task_records
 from .workflow_chat import WorkflowChat
 
 STATIC = Path(__file__).with_name("web")
@@ -477,6 +478,11 @@ def make_server(root, port=8767, master_key=None, market=None):
                         raise ServiceError("NOT_FOUND", "设置接口不存在")
                     return
                 if kind == "tasks":
+                    if method == "GET" and parts[2:] == ["records"]:
+                        owner = engine.memory.owner(self.headers["X-Memory-Key"]) if self.headers.get("X-Memory-Key") else None
+                        self.output(task_records(store, owner, self.request_mode(), parse_qs(
+                            urlsplit(self.path).query, keep_blank_values=True)))
+                        return
                     if len(parts) >= 3 and (owner := engine.memory.task_owner(parts[2])):
                         if engine.memory.owner(self.headers.get("X-Memory-Key", "")) != owner:
                             raise ServiceError("FORBIDDEN", "此任务属于其他会话所有者")

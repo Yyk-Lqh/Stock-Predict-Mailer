@@ -784,6 +784,71 @@ class ConsoleAPITests(unittest.TestCase):
         older = self.client.get(f"/api/tasks?order=desc&limit=1&before={descending['next_before']}").json()
         self.assertEqual([item["id"] for item in older["items"]], [oldest["id"]])
 
+    def test_task_records_find_older_matches_and_page_by_update_time(self):
+        from stock_predict_mailer.control.orchestrator import a2a_task
+
+        for tid, stamp in (("early-1", "2025-03-04T07:00:00Z"),
+                           ("early-2", "2025-03-04T15:00:00+08:00"),
+                           ("old-updated", "2025-03-04T08:00:00Z")):
+            task = a2a_task(tid, "working", mode="standard", brief={"subject": "STRASSE_%", "name": "港股核对"})
+            task["status"]["timestamp"] = stamp
+            self.f.store.task(tid, task)
+        for index in range(35):
+            tid = f"recent-{index:02d}"
+            self.f.store.task(tid, a2a_task(tid, "completed", mode="standard", brief={"subject": "DEMO.SZ"}))
+
+        endpoint = "/api/tasks/records"
+        params = {"mode": "standard", "state": "active", "q": "Straße_%", "limit": 1}
+        seen = []
+        for expected in ("old-updated", "early-2", "early-1"):
+            response = self.client.get(endpoint, params=params)
+            self.assertEqual(response.status_code, 200, response.text)
+            page = response.json()
+            seen.extend(task["id"] for task in page["items"])
+            self.assertEqual(seen[-1], expected)
+            self.assertEqual(page["counts"], {"all": 3, "active": 3, "submitted": 0, "working": 3,
+                                              "completed": 0, "failed": 0, "canceled": 0})
+            params["before"] = page["next_before"]
+        self.assertIsNone(params["before"])
+        self.assertEqual(len(set(seen)), 3)
+        self.assertEqual(self.client.get(endpoint, params={"q": "港股", "state": "completed"}).json()["items"], [])
+        self.assertEqual(self.client.get(endpoint, params={"q": "STRASSE_"}).json()["counts"]["all"], 3)
+        self.assertEqual(self.client.get(endpoint, params={"q": "%"}).json()["counts"]["all"], 3)
+        for query in ("limit=0", "mode=bad", "state=bad", "q=a&q=b", "before=999", "extra=1", "q=" + "x" * 129):
+            self.assertEqual(self.client.get(endpoint + "?" + query).status_code, 400, query)
+        # The submission-order endpoint still has its original cursor.
+        self.assertEqual(self.client.get("/api/tasks?order=desc&limit=1").json()["items"][0]["id"], "recent-34")
+
+    def test_task_records_counts_and_search_respect_owner_mode_and_run_type(self):
+        from stock_predict_mailer.control.orchestrator import a2a_task
+
+        owner = self.server.engine.memory.create_owner()
+        other = self.server.engine.memory.create_owner()
+        for tid, parent, debug, private in (("hidden", None, False, True), ("child", "hidden", False, False),
+                                              ("debug", None, True, False), ("public", None, False, False)):
+            workflow = {"flow": {"name": "财报核对"}}
+            if debug:
+                workflow["debug"] = {"node": "fixture"}
+            task = a2a_task(tid, "failed", context_id=parent, workflow=workflow,
+                            mode="professional", error={"code": "NODE_FAILED"})
+            self.f.store.task(tid, task)
+            if private:
+                with self.f.store.db() as con:
+                    con.execute("INSERT INTO memory_tasks VALUES (?,?,?)", (tid, owner["owner"], "records-test"))
+        self.f.store.task("legacy", a2a_task("legacy", "canceled"))
+        endpoint = "/api/tasks/records"
+        for key, expected in ((owner["key"], {"public", "hidden"}), (other["key"], {"public"})):
+            headers = {"X-Memory-Key": key}
+            for term in ("node_failed", "财报核对"):
+                page = self.client.get(endpoint, headers=headers, params={"q": term, "state": "failed"}).json()
+                self.assertEqual({task["id"] for task in page["items"]}, expected)
+                self.assertEqual(page["counts"]["all"], len(expected))
+            page = self.client.get(endpoint, headers={**headers, "X-Analysis-Mode": "standard"},
+                                   params={"mode": "professional"}).json()
+            self.assertEqual(page["counts"]["all"], 0)
+        page = self.client.get(endpoint, params={"mode": "legacy", "state": "canceled"}).json()
+        self.assertEqual([task["id"] for task in page["items"]], ["legacy"])
+
     def test_session_csrf_origin_and_no_secret_response(self):
         bad = self.client.post("/api/models", json={"name": "Bad"}, headers={"X-CSRF-Token": "bad"})
         self.assertEqual(bad.status_code, 403)

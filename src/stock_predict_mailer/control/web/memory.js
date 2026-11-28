@@ -9292,10 +9292,10 @@ window.WorkflowChat = (() => {
   const write = (key, value) => AnalysisMode.write('workflow-chat.' + key, value, mode);
   const terminal = state => ['completed', 'failed', 'canceled'].includes(state);
   const stateLabel = {submitted:'排队中', working:'运行中', running:'运行中', completed:'已完成',
-    failed:'失败', skipped:'已跳过', canceled:'已取消', degraded:'已降级', waiting:'等待执行'};
+    failed:'失败', skipped:'已跳过', canceled:'已取消', degraded:'已降级', waiting:'等待执行', needs_input:'等待用户处理'};
   const flows = new Map(), workspaces = new Map(), runs = new Map(), articles = new Map();
   let root, directoryRoot, shortcut, canvasShortcut, current = '', fields = {}, timer, catalogRequest, identity = '', failedCatalog = '';
-  let optionsPanel, optionsButton, flushEffort, stopSpeech;
+  let stopSpeech;
   const mk = (tag, className) => Object.assign(document.createElement(tag), {className:className || ''});
   const el = id => root.querySelector('#workflow-chat-' + id);
   const scope = () => ({...AnalysisMode.capture(), mode});
@@ -9332,43 +9332,6 @@ window.WorkflowChat = (() => {
     return {...(model ? {model_id:model} : {}), ...(saved ? {tools:saved.filter(item => allowed.includes(item))} : {})};
   }
   const effort = () => state().draft.effort || settings?.default_reasoning_effort || 'extreme';
-  const modelName = () => profiles.find(profile => profile.enabled && profile.id === AnalysisMode.model())?.name || '选择模型';
-  function renderOptions() {
-    const name = modelName(), level = ComposerControls.effortLabel(effort());
-    optionsButton.firstElementChild.textContent = name;
-    optionsButton.lastElementChild.textContent = level;
-    optionsButton.setAttribute('aria-label', `选择模型与推理强度，${name}，${level}`);
-  }
-  function closeOptions(focus = false) {
-    flushEffort?.(); flushEffort = null;
-    optionsPanel.hidden = true;
-    optionsButton.setAttribute('aria-expanded', 'false');
-    if (focus) optionsButton.focus();
-  }
-  function openOptions(models = false) {
-    closeOptions();
-    el('inputs').open = false;
-    optionsPanel.replaceChildren(); optionsPanel.hidden = false;
-    optionsPanel.classList.toggle('composer-model-popover', models);
-    optionsButton.setAttribute('aria-expanded', 'true');
-    if (models) {
-      optionsPanel.setAttribute('aria-label', '选择模型');
-      text(optionsPanel, 'h3', '选择模型');
-      const list = text(optionsPanel, 'div', '', 'composer-model-list');
-      ComposerControls.modelChoices(list, optionsPanel, id => {
-        AnalysisMode.write('model', id, mode);
-        closeOptions(true);
-        loadCatalog();
-        renderFeedback();
-      });
-      (list.querySelector('.selected') || optionsPanel.querySelector('button'))?.focus();
-      return;
-    }
-    const data = state(), id = current;
-    const select = level => { data.draft.effort = level; persist(id); renderOptions(); };
-    flushEffort = ComposerControls.effortPicker(optionsPanel, {model:modelName(), effective:effort, select,
-      resetEffort:() => select(null), openModels:() => openOptions(true), prefix:'workflow-chat'});
-  }
   async function importLocal(context) {
     for (const item of window.DesktopWorkbench.legacyDefinitions()) {
       if (!item.label || !item.graph) continue;
@@ -9381,11 +9344,11 @@ window.WorkflowChat = (() => {
       } catch (_) { /* The original canvas draft remains available for validation and editing. */ }
     }
   }
-  function loadCatalog() {
+  function loadCatalog({reload = false} = {}) {
     const context = scope();
     const query = new URLSearchParams(Object.entries(choices()).map(([key, value]) => [key, Array.isArray(value) ? JSON.stringify(value) : value]));
     const key = context.key + '?' + query;
-    if (catalogRequest?.key === key) return catalogRequest.promise;
+    if (!reload && catalogRequest?.key === key) return catalogRequest.promise;
     const request = catalogRequest = {key};
     request.promise = (async () => {
       try {
@@ -9426,22 +9389,35 @@ window.WorkflowChat = (() => {
     const status = directoryRoot.querySelector('.wfcat-status');
     grid.replaceChildren();
     status.textContent = failedCatalog ? '流程读取失败：' + failedCatalog : flows.size ? '' : '还没有保存流程，先新建一个流程。';
-    if (failedCatalog) { grid.append(button('重试读取', () => { catalogRequest = null; loadCatalog(); }, 'btn primary')); return; }
     const create = mk('article', 'wfcat-card wfcat-create');
-    const mark = mk('div', 'wfcat-create-mark'); mark.textContent = '+'; create.append(mark);
-    text(create, 'h3', '新建流程'); text(create, 'p', '从空白画布开始编排节点、连线和参数。', 'hint');
-    create.onclick = () => enterCanvas(null,{empty:true}); grid.append(create);
+    const createHead = mk('div', 'wfcat-card-head'), mark = text(createHead, 'span', '+', 'wfcat-create-mark');
+    mark.setAttribute('aria-hidden', 'true');
+    const openBlank = () => enterCanvas(null, {empty:true});
+    const add = button('新建流程', event => { event.stopPropagation(); openBlank(); }, 'wfcat-create-title');
+    add.id = 'wfcat-new'; createHead.append(add);
+    const createActions = mk('div', 'actions wfcat-actions');
+    createActions.append(button('分析模板', event => { event.stopPropagation(); enterCanvas(null); }));
+    create.append(createHead, createActions); create.onclick = openBlank; grid.append(create);
+    if (failedCatalog) { status.append(' ', button('重试读取', loadCatalog)); return; }
     [...flows.values()].sort((a,b) => String(b.updated_at || '').localeCompare(String(a.updated_at || ''))).forEach(item => {
-      const card = mk('article', 'wfcat-card'), preview = mk('div', 'wfcat-image'), image = flowImage(item);
-      if (image) { const img = document.createElement('img'); img.src = image; img.alt = ''; img.onerror = () => { img.remove(); preview.classList.add('wfcat-default-image'); }; preview.append(img); }
-      else preview.classList.add('wfcat-default-image');
-      const body = mk('div', 'wfcat-card-body'), title = mk('h3'); title.title = item.name; title.textContent = item.name; body.append(title);
-      const meta = mk('p', 'wfcat-meta'); meta.textContent = item.updated_at ? '更新于 ' + fmt(item.updated_at) : '版本 ' + item.revision.slice(0,8); body.append(meta);
-      if (item.description) text(body, 'p', item.description, 'hint wfcat-description');
-      const state = text(body, 'span', item.runnable ? '可运行' : '草稿 · ' + (item.reason || '配置未完成'), 'wfcat-state'); state.dataset.state = item.runnable ? 'ready' : 'invalid';
+      const card = mk('article', 'wfcat-card'), head = mk('div', 'wfcat-card-head'), heading = mk('div', 'wfcat-card-heading');
+      appendFlowImage(head, item, 'wfcat-image');
+      const title = text(heading, 'h3', item.name); title.title = item.name;
+      const meta = text(heading, 'p', item.updated_at ? '更新于 ' + fmt(item.updated_at) : '版本 ' + item.revision.slice(0,8), 'wfcat-meta');
+      const state = text(meta, 'span', item.runnable ? '可运行' : '草稿', 'wfcat-state');
+      state.dataset.state = item.runnable ? 'ready' : 'invalid';
+      if (!item.runnable) state.title = item.reason || '配置未完成';
+      head.append(heading);
+      if (item.mode === 'custom') {
+        const versions = button('版本记录', event => { event.stopPropagation(); showRevisions(item); }, 'btn tiny wfcat-versions');
+        versions.setAttribute('aria-label', item.name + '的版本记录');
+        head.append(versions);
+      }
+      card.append(head);
+      if (item.description) text(card, 'p', item.description, 'hint wfcat-description');
       const actions = mk('div', 'actions wfcat-actions');
       actions.append(button('打开画布', event => { event.stopPropagation(); enterCanvas(item); }), button('编辑卡片', event => { event.stopPropagation(); editCard(item); }), button('在对话中使用', event => { event.stopPropagation(); select(item.id); setSurface('chat'); }));
-      body.append(actions); card.append(preview, body); card.onclick = () => enterCanvas(item); grid.append(card);
+      card.append(actions); card.onclick = () => enterCanvas(item); grid.append(card);
     });
   }
   function syncView() {
@@ -9456,7 +9432,7 @@ window.WorkflowChat = (() => {
     canvasShortcut.hidden = !professional;
     canvasShortcut.setAttribute('aria-pressed', String(showDirectory));
     if (show === !root.hidden && showDirectory === !directoryRoot.hidden) return;
-    if (!show) { closeOptions(); stopSpeech(); }
+    if (!show) stopSpeech();
     root.hidden = !show;
     directoryRoot.hidden = !showDirectory;
     document.body.classList.toggle('workflow-chat-view', show || showDirectory);
@@ -9494,6 +9470,167 @@ window.WorkflowChat = (() => {
     document.body.append(layer); layer.showModal();
     return {layer, body};
   }
+  function revisionChanges(current, selected) {
+    const canonical = value => JSON.stringify(value, (_, item) =>
+      item && typeof item === 'object' && !Array.isArray(item)
+        ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+    const differs = (left, right) => canonical(left) !== canonical(right);
+    const changes = [];
+    const previous = new Map(current.graph.nodes.map(node => [node.id, node]));
+    const next = new Map(selected.graph.nodes.map(node => [node.id, node]));
+    const name = node => node.data.label || node.id;
+    for (const [id, node] of next) {
+      const old = previous.get(id);
+      if (!old) { changes.push('新增节点 · ' + name(node)); continue; }
+      const fields = [];
+      const {label, type, ...config} = node.data;
+      const {label: oldLabel, type: oldType, ...oldConfig} = old.data;
+      if (label !== oldLabel) fields.push('名称');
+      if (type !== oldType) fields.push('类型');
+      if (differs(oldConfig, config)) fields.push('配置');
+      if (differs(old.position, node.position)) fields.push('画布位置');
+      if (fields.length) {
+        const label = name(old) === name(node) ? name(node) : name(old) + ' → ' + name(node);
+        changes.push('更新节点 · ' + label + ' · ' + fields.join('、'));
+      }
+    }
+    for (const [id, node] of previous) if (!next.has(id)) changes.push('移除节点 · ' + name(node));
+    if (differs([...previous.keys()].filter(id => next.has(id)), [...next.keys()].filter(id => previous.has(id))))
+      changes.push('调整节点顺序');
+    if ((previous.size !== current.graph.nodes.length || next.size !== selected.graph.nodes.length)
+        && differs(current.graph.nodes, selected.graph.nodes)) changes.push('节点 ID 重复，请核对画布中的节点');
+
+    function edges(graph) {
+      return graph.edges.map(({source, target, output = 'value', input = 'value', field = '', condition = 'always'}) =>
+        [source, output, field, target, input, condition]);
+    }
+    const oldEdges = edges(current.graph), newEdges = edges(selected.graph);
+    const unmatched = oldEdges.map(edge => JSON.stringify(edge));
+    const edgeLabel = ([source, output, field, target, input, condition], nodes) => {
+      const label = id => nodes.has(id) ? name(nodes.get(id)) : id;
+      return label(source) + '.' + output + (field && field !== output ? '［' + field + '］' : '') + ' → ' +
+        label(target) + '.' + input + (condition !== 'always' ? ' · ' + condition : '');
+    };
+    let added = false;
+    for (const edge of newEdges) {
+      const index = unmatched.indexOf(JSON.stringify(edge));
+      if (index !== -1) { unmatched.splice(index, 1); continue; }
+      changes.push('新增连线 · ' + edgeLabel(edge, next)); added = true;
+    }
+    for (const edge of unmatched) changes.push('移除连线 · ' + edgeLabel(JSON.parse(edge), previous));
+    if (!added && !unmatched.length && differs(oldEdges, newEdges)) changes.push('调整连线顺序');
+
+    for (const [key, label] of Object.entries({name:'名称', description:'描述', image:'图标', inputs:'分析输入'}))
+      if (differs(current[key] ?? null, selected[key] ?? null)) changes.push('更新流程' + label);
+    if (Boolean(current.draft) !== Boolean(selected.draft)) changes.push('保存时的草稿状态不同');
+    for (const [key, label] of Object.entries({notes:'注释', comments:'评论'}))
+      if (differs(current.graph.canvas?.[key] || [], selected.graph.canvas?.[key] || [])) changes.push('更新画布' + label);
+    if (differs(Object.fromEntries(current.draft_edits || []), Object.fromEntries(selected.draft_edits || [])))
+      changes.push('更新未提交的节点参数');
+    return changes;
+  }
+  function showRevisions(item) {
+    const {layer, body} = dialog('流程版本记录');
+    const context = scope(), url = path(item.id, '/revisions');
+    const visible = () => layer.open && AnalysisMode.current(context);
+    const status = text(body, 'p', '', 'hint');
+    status.role = 'status';
+    const list = mk('div', 'wfcat-revision-list'), preview = mk('section', 'wfcat-revision-preview');
+    const more = button('加载更早的版本', load);
+    body.append(list, more, preview);
+    const readVersion = revision => api(url + '/' + revision, 'GET', undefined, undefined, context);
+    let cursor, latest, baseline, selection = 0;
+    const compareAgainst = () => baseline ||= readVersion(latest).catch(error => { baseline = null; throw error; });
+    async function load() {
+      more.hidden = true;
+      status.textContent = '正在读取版本…';
+      try {
+        const page = await api(url + (cursor ? '?before=' + cursor : ''), 'GET', undefined, undefined, context);
+        if (!visible()) return;
+        latest ||= page.items[0]?.revision;
+        cursor = page.next_before;
+        status.textContent = item.name;
+        for (const row of page.items) {
+          const currentVersion = row.revision === latest;
+          const label = [
+            currentVersion ? '当前' : '版本', row.revision.slice(0, 8), fmt(row.updated_at), row.name,
+            row.draft ? '草稿' : '', row.restored_from ? '恢复自 ' + row.restored_from.slice(0, 8) : '',
+          ].filter(Boolean).join(' · ');
+          const entry = button(label, () => inspect(row, entry), 'btn tiny');
+          entry.setAttribute('aria-pressed', 'false');
+          list.append(entry);
+        }
+        more.textContent = '加载更早的版本';
+        more.hidden = !cursor;
+      } catch (error) {
+        if (!visible()) return;
+        status.textContent = error.message;
+        more.textContent = '重试读取'; more.hidden = false;
+      }
+    }
+    async function inspect(row, entry) {
+      const request = ++selection, revisionUrl = url + '/' + row.revision;
+      for (const control of list.children) control.setAttribute('aria-pressed', String(control === entry));
+      preview.replaceChildren();
+      const feedback = text(preview, 'p', '正在读取版本…', 'hint');
+      feedback.role = 'status';
+      try {
+        const version = await readVersion(row.revision);
+        if (!visible() || request !== selection) return;
+        feedback.textContent = '版本 ' + version.revision.slice(0, 8);
+        text(preview, 'h3', version.name);
+        if (version.description) text(preview, 'p', version.description);
+        renderGraph(preview, version);
+        if (row.revision === latest) { baseline ||= Promise.resolve(version); return; }
+        const comparison = mk('details', 'wfcat-revision-diff');
+        text(comparison, 'summary', '与当前版本对比');
+        const summary = text(comparison, 'p', '', 'hint');
+        summary.role = 'status';
+        let requested = false;
+        comparison.ontoggle = async () => {
+          if (!comparison.open || requested) return;
+          requested = true;
+          summary.textContent = '正在读取当前版本…';
+          try {
+            const base = await compareAgainst();
+            if (!visible() || request !== selection) return;
+            const changes = revisionChanges(base, version);
+            const label = '当前 ' + base.revision.slice(0, 8) + ' → 所选 ' + version.revision.slice(0, 8);
+            summary.textContent = label + (changes.length ? ' · 已保存内容的差异' : ' · 流程内容一致');
+            if (changes.length) {
+              const entries = mk('ul');
+              for (const change of changes) text(entries, 'li', change);
+              comparison.append(entries);
+            }
+          } catch (error) {
+            if (visible() && request === selection) summary.textContent = error.message + '。收起后重新展开可重试。';
+            requested = false;
+          }
+        };
+        preview.append(comparison);
+        const restore = button('恢复此版本', async () => {
+          if (restore.textContent === '恢复此版本') {
+            feedback.textContent = '将此版本的画布和卡片保存为新的当前版本。';
+            restore.textContent = '确认恢复'; return;
+          }
+          restore.disabled = true;
+          try {
+            const saved = await api(revisionUrl + '/restore', 'POST', {base_revision:latest, ...choices()}, undefined, context);
+            if (context.key !== memoryKey) return;
+            if (visible()) { layer.close(); notice('已恢复流程 · ' + saved.revision.slice(0, 8)); }
+            loadCatalog({reload:true});
+          } catch (error) {
+            if (visible() && request === selection) feedback.textContent = error.message;
+            restore.disabled = false;
+          }
+        }, 'btn primary');
+        preview.append(restore);
+      } catch (error) {
+        if (visible() && request === selection) feedback.textContent = error.message;
+      }
+    }
+    load();
+  }
   async function editCard(item) {
     const {layer, body} = dialog('编辑流程卡片');
     const form = mk('form', 'stack');
@@ -9527,7 +9664,7 @@ window.WorkflowChat = (() => {
   }
   function select(id) {
     if (!flows.has(id)) return;
-    closeOptions(); stopSpeech();
+    stopSpeech();
     persist();
     current = id; write('selected', id);
     render();
@@ -9555,6 +9692,9 @@ window.WorkflowChat = (() => {
     const {body} = dialog(historical ? '执行时的流程' : item.name);
     text(body, 'p', '版本 '+item.revision, 'wfchat-version');
     if (item.description) text(body, 'p', item.description);
+    renderGraph(body, item);
+  }
+  function renderGraph(body, item) {
     const nodes = new Map(item.graph.nodes.map(node => [node.id, node.data.label]));
     const list = mk('ol', 'wfchat-graph-list');
     for (const node of item.graph.nodes) {
@@ -9669,7 +9809,6 @@ window.WorkflowChat = (() => {
     };
     el('live').hidden = !data.viewing;
     el('form').hidden = Boolean(data.viewing);
-    renderOptions();
   }
   function runState(id, flowId) {
     if (!runs.has(id)) runs.set(id, {id, flowId, events:new Map(), cursor:0, task:null, error:''});
@@ -9696,7 +9835,7 @@ window.WorkflowChat = (() => {
   async function send(retryEntry = null) {
     const id = current, item = flow(), data = state();
     if (!item || data.waiting || data.viewing || catalogRequest || (!data.pending && !item.runnable)) return;
-    closeOptions(); stopSpeech();
+    stopSpeech();
     if (!data.pending) {
       try {
         const message = retryEntry?.input?.message ?? el('message').value.trim();
@@ -9879,16 +10018,15 @@ window.WorkflowChat = (() => {
       outer.append(list); host.append(outer);
     }
   }
-  async function showReport(entry) {
-    const context = scope(), id = entry.flowId;
+  async function showTaskReport(id, context, current) {
     const {layer, body} = dialog('分析报告');
     text(body, 'p', '正在读取报告…', 'hint');
     try {
-      const response = await fetch('/api/tasks/'+encodeURIComponent(entry.id)+'/report',
-        {headers:{'X-Memory-Key':context.key, 'X-Analysis-Mode':mode}});
+      const response = await fetch('/api/tasks/'+encodeURIComponent(id)+'/report',
+        {headers:{'X-Memory-Key':context.key, 'X-Analysis-Mode':context.mode}});
       if (!response.ok) throw Error('无法读取此运行的报告。');
       const html = await response.text();
-      if (!layer.open || !matches(id) || context.key !== memoryKey) return;
+      if (!layer.open || !current() || context.key !== memoryKey) return;
       const frame = mk('iframe', 'wfchat-report');
       const preview = new DOMParser().parseFromString(html, 'text/html');
       preview.querySelectorAll('script').forEach(script => script.remove());
@@ -9896,7 +10034,7 @@ window.WorkflowChat = (() => {
       frame.srcdoc = '<!doctype html>' + preview.documentElement.outerHTML;
       const download = button('下载原报告', () => {
         const url = URL.createObjectURL(new Blob([html], {type:'text/html;charset=utf-8'}));
-        const link = mk('a'); link.href = url; link.download = 'analysis-'+entry.id+'.html'; link.click();
+        const link = mk('a'); link.href = url; link.download = 'analysis-'+id+'.html'; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       });
       body.replaceChildren(frame, download);
@@ -9936,11 +10074,13 @@ window.WorkflowChat = (() => {
     }
     progress.append(head);
     trace(entry, progress, opened);
+    if(!readonly)WorkflowNodeUI.humanAction(progress,task,[...entry.events.values()].sort((a,b)=>a.seq-b.seq),
+      values=>api('tasks/'+encodeURIComponent(id)+'/continue','POST',values,undefined,scope()));
     const analysis = task.artifacts?.[0]?.parts?.[0]?.data?.analysis;
     if (analysis) {
       const result = mk('div', 'wfchat-result');
       text(result, 'strong', (analysis.prediction?.subject || '分析')+' · '+(analysis.status === 'degraded' ? '报告已生成，分析存在降级' : '报告已生成'));
-      result.append(button('打开报告', () => showReport(entry), 'btn'));
+      result.append(button('打开报告', () => showTaskReport(entry.id, scope(), () => matches(entry.flowId)), 'btn'));
       progress.append(result);
     } else if (task.artifacts?.[0]?.parts?.[0]?.data?.workflow_outputs) {
       for (const output of task.artifacts[0].parts[0].data.workflow_outputs) {
@@ -9999,7 +10139,7 @@ window.WorkflowChat = (() => {
       const entry = runs.get(id), item = entry?.receipt;
       if (!item) continue;
       const row = button('', () => {
-        closeOptions(); stopSpeech();
+        stopSpeech();
         if (!data.viewing) data.scroll = el('thread').scrollTop;
         data.viewing = id; persist(); renderThread({restore:true}); renderFeedback(); renderHistory();
         loadRun(id, current); schedule();
@@ -10156,51 +10296,26 @@ window.WorkflowChat = (() => {
         </div></details>
       </aside>`;
     const controls = root.querySelector('.composer-tools-right');
-    optionsButton = ComposerControls.button('workflow-chat-effort', '选择模型与推理强度',
-      '<span class="composer-model-name"></span><span class="composer-effort-label"></span>');
-    optionsPanel = mk('div', 'composer-popover composer-options-popover');
-    optionsPanel.id = 'workflow-chat-options'; optionsPanel.hidden = true;
-    optionsPanel.setAttribute('role', 'dialog');
-    optionsButton.setAttribute('aria-controls', optionsPanel.id);
-    optionsButton.setAttribute('aria-haspopup', 'dialog');
-    optionsButton.setAttribute('aria-expanded', 'false');
-    optionsButton.onclick = () => optionsPanel.hidden ? openOptions() : closeOptions();
     const voice = ComposerControls.button('workflow-chat-voice', '语音输入', ComposerControls.icon('mic'));
     const submit = mk('button', 'composer-send');
     submit.id = 'workflow-chat-send'; submit.type = 'submit'; submit.title = '发送并运行';
     submit.setAttribute('aria-label', submit.title); submit.innerHTML = ComposerControls.icon('arrow');
-    controls.append(optionsButton, voice, submit); el('form').append(optionsPanel);
+    controls.append(voice, submit);
     stopSpeech = ComposerControls.speechInput(voice, el('message'), () => {
       const id = current, context = scope();
       return () => matches(id) && AnalysisMode.current(context) && !state(id).viewing;
     }, error => { state().error = error; renderFeedback(); });
-    document.addEventListener('pointerdown', event => {
-      if (!optionsPanel.hidden && !optionsPanel.contains(event.target) && !optionsButton.contains(event.target)) closeOptions();
-    });
-    el('form').addEventListener('keydown', event => {
-      if (event.key === 'Escape' && !optionsPanel.hidden) { event.preventDefault(); closeOptions(true); }
-      if (!optionsPanel.classList.contains('composer-model-popover') || !optionsPanel.contains(event.target)) return;
-      const direction = {ArrowUp:-1, ArrowDown:1}[event.key];
-      if (!direction) return;
-      const rows = [...optionsPanel.querySelectorAll('.composer-menu-row')];
-      if (!rows.length) return;
-      event.preventDefault();
-      rows[(Math.max(-1, rows.indexOf(document.activeElement)) + direction + rows.length) % rows.length].focus();
-    });
     document.querySelector('[data-view-pane="analysis"]').prepend(root);
     directoryRoot = mk('section', 'workflow-catalog');
     directoryRoot.hidden = true;
     directoryRoot.setAttribute('aria-label', '流程目录');
-    directoryRoot.innerHTML = '<header class="wfcat-header"><div><p>专业模式</p><h1>流程目录</h1><p class="hint">选择已有流程，或从画布创建新的流程。</p></div><div class="actions"><button type="button" class="btn primary" id="wfcat-new">新建流程</button><button type="button" class="btn tiny" id="wfcat-chat">流程对话</button></div></header><main class="wfcat-main"><p class="wfcat-status hint" role="status"></p><div class="wfcat-grid"></div></main>';
+    directoryRoot.innerHTML = '<main class="wfcat-main"><p class="wfcat-status hint" role="status"></p><div class="wfcat-grid"></div></main>';
     document.querySelector('[data-view-pane="analysis"]').prepend(directoryRoot);
     shortcut = button('流程对话', () => setSurface('chat'), 'wfchat-nav');
     shortcut.id = 'workflow-chat-nav';
     canvasShortcut = button('画布', showDirectory, 'wfchat-nav');
     canvasShortcut.id = 'workflow-canvas-nav';
     document.querySelector('.nav')?.append(shortcut, canvasShortcut);
-    directoryRoot.querySelector('#wfcat-new').onclick = () => enterCanvas(null,{empty:true});
-    directoryRoot.querySelector('.wfcat-header .actions').append(button('分析模板',()=>enterCanvas(null)));
-    directoryRoot.querySelector('#wfcat-chat').onclick = () => setSurface('chat');
     el('choose').onclick = choose;
     el('canvas').onclick = () => enterCanvas(flow(), {empty:!flow()});
     el('edit').onclick = () => enterCanvas(flow());
@@ -10210,7 +10325,6 @@ window.WorkflowChat = (() => {
     el('message').oninput = () => { state().draft.message = el('message').value; persist(); };
     el('form').onsubmit = event => { event.preventDefault(); send(); };
     el('inputs').ontoggle = () => {
-      if (el('inputs').open) closeOptions();
       if (active() && current) { state().draft.inputsOpen = el('inputs').open; persist(); }
     };
     el('knowledge').onchange = () => { state().draft.knowledge = el('knowledge').value; persist(); };
@@ -10229,5 +10343,5 @@ window.WorkflowChat = (() => {
     window.addEventListener('pagehide', () => { if (active()) persist(); });
     syncView();
   }
-  return {init, syncView, saveCanvas, openTask, openDefinition, showCanvas:() => {setSurface('canvas');window.DesktopWorkbench?.checkWorkflow();}, showDirectory};
+  return {init, syncView, saveCanvas, openTask, openDefinition, showTaskReport, showCanvas:() => {setSurface('canvas');window.DesktopWorkbench?.checkWorkflow();}, showDirectory};
 })();

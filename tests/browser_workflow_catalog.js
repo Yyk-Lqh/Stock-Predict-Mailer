@@ -18,7 +18,8 @@
     window.DesktopWorkbench.setMode('focus'); document.querySelector('#workflow-canvas-nav').click();
     await wait(() => !document.querySelector('.workflow-catalog').hidden, 'Canvas directory did not open');
     assert(document.querySelector('.wfcat-create'), 'Create card missing');
-    button(document.querySelector('.wfcat-header'), '分析模板').click();
+    assert(!document.querySelector('.wfcat-header'), 'Directory banner is still rendered');
+    button(document.querySelector('.wfcat-create'), '分析模板').click();
     await wait(() => !document.querySelector('#desktop-focus').hidden, 'New canvas did not open');
     const saveAs = [...document.querySelectorAll('.desktop-flow-toolbar-actions button')].find(node => node.textContent === '保存为可选流程');
     saveAs.click();

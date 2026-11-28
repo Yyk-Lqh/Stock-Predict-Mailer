@@ -73,7 +73,7 @@
 - **代码执行**用 `value` 读取上游数据，按声明的类型返回单个 JSON 值。它和迭代、循环使用相同的表达式语法，支持字面量、索引、算术、比较与条件运算。
 - **HTTP 请求**从控制台服务端已授权的目标中选择方法与地址。可传入一个上游对象，GET 将它作为查询参数，POST 将它作为 JSON 请求体。成功时输出状态码与响应内容，连接、超时与状态码错误遵循任务失败记录机制。
 
-控制台管理员可在服务进程环境变量 `SPM_WORKFLOW_HTTP_TARGETS` 登记 HTTP 目标。例如 `{"market":{"url":"https://example.com/api/quote","method":"GET","token_env":"SPM_WORKFLOW_HTTP_TOKEN_MARKET"}}`。`token_env` 可省略，使用时将 Bearer 凭据放在对应的服务端环境变量。画布只显示目标名称与方法。请求禁用重定向，每次调用计入工具预算，响应上限为 10 KB。
+控制台管理员可在服务进程环境变量 `STOCK_PREDICT_MAILER_WORKFLOW_HTTP_TARGETS` 登记 HTTP 目标。例如 `{"market":{"url":"https://example.com/api/quote","method":"GET","token_env":"STOCK_PREDICT_MAILER_WORKFLOW_HTTP_TOKEN_MARKET"}}`。`token_env` 可省略，使用时将 Bearer 凭据放在对应的服务端环境变量。画布只显示目标名称与方法。请求禁用重定向，每次调用计入工具预算，响应上限为 10 KB。
 
 ## 草稿迁移和修复
 

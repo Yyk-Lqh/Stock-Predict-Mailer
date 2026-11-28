@@ -11,13 +11,16 @@ import httpx
 
 from ..agent_service.analysis import identity
 from ..agent_service.contracts import ServiceError, decode
+from ..naming import ENV_PREFIX, LEGACY_ENV_PREFIX, env, env_key
 
-TARGETS_ENV = "SPM_WORKFLOW_HTTP_TARGETS"
+TARGETS_KEY = "WORKFLOW_HTTP_TARGETS"
+TARGETS_ENV = env_key(TARGETS_KEY)
+TOKEN_ENV_PATTERN = re.compile(rf"(?:{ENV_PREFIX}|{LEGACY_ENV_PREFIX})_WORKFLOW_HTTP_TOKEN_[A-Z0-9_]{{1,48}}")
 
 
 def targets():
     try:
-        entries = json.loads(os.environ.get(TARGETS_ENV, "{}"))
+        entries = json.loads(env(TARGETS_KEY, "{}"))
     except ValueError:
         return {}
     approved = {}
@@ -27,7 +30,7 @@ def targets():
         url, method, secret = (target.get(name) for name in ("url", "method", "token_env"))
         if (not isinstance(url, str) or len(url) > 1000 or method not in ("GET", "POST") or
                 (secret is not None and (not isinstance(secret, str) or
-                 not re.fullmatch(r"SPM_WORKFLOW_HTTP_TOKEN_[A-Z0-9_]{1,48}", secret)))):
+                 not TOKEN_ENV_PATTERN.fullmatch(secret)))):
             continue
         try:
             parsed = urlsplit(url)

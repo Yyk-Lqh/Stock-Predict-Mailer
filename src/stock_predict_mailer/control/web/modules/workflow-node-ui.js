@@ -342,7 +342,7 @@ window.WorkflowNodeUI = (() => {
       if(cfg.target && !Object.hasOwn(targets,cfg.target))targets[cfg.target]='目标授权已失效 · '+cfg.target;
       const target=control(host,'授权目标','select',cfg.target,{'':'选择 HTTP 目标',...targets});
       markRequired(target);read('target',target);
-      if(!Object.keys(options).length)text(host,'p','还没有授权目标。请在控制台服务端配置 SPM_WORKFLOW_HTTP_TARGETS。','hint');
+      if(!Object.keys(options).length)text(host,'p','还没有授权目标。请在控制台服务端配置 STOCK_PREDICT_MAILER_WORKFLOW_HTTP_TARGETS。','hint');
       integer('timeout','请求超时（秒）',1,30);
     }
     if(kind==='list') {

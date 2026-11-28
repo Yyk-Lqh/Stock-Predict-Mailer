@@ -103,9 +103,26 @@ class ExtendedWorkflowTests(unittest.TestCase):
         self.waiting(timed_out)
         self.assertEqual(self.terminal(timed_out)["metadata"]["error"]["code"], "WORKFLOW_INPUT_TIMEOUT")
 
+    def test_http_targets_prefer_canonical_configuration_and_keep_legacy_credentials(self):
+        target = {"url": "https://api.example.test/prices", "method": "GET"}
+        old_token = "SPM_WORKFLOW_HTTP_TOKEN_QUOTES"
+        new_token = "STOCK_PREDICT_MAILER_WORKFLOW_HTTP_TOKEN_QUOTES"
+        old_targets = json.dumps({"legacy": {**target, "token_env": old_token}})
+        new_targets = json.dumps({
+            "quotes": {**target, "token_env": new_token},
+            "invalid": {**target, "token_env": "STOCK_PREDICT_MAILER_MASTER_KEY"},
+        })
+        with patch.dict(os.environ, {
+            "SPM_WORKFLOW_HTTP_TARGETS": old_targets, old_token: "legacy-test-token", new_token: "test-token",
+        }, clear=True):
+            self.assertEqual(workflow_http.binding({"target": "legacy"}, "sample")["token_env"], old_token)
+            os.environ["STOCK_PREDICT_MAILER_WORKFLOW_HTTP_TARGETS"] = new_targets
+            self.assertEqual(workflow_http.options(), {"quotes": {"method": "GET"}})
+            self.assertEqual(workflow_http.binding({"target": "quotes"}, "sample")["token_env"], new_token)
+
     def test_http_uses_exact_authorized_target_and_bounded_transport(self):
         self.access()
-        secret_name = "SPM_WORKFLOW_HTTP_TOKEN_QUOTES"
+        secret_name = "STOCK_PREDICT_MAILER_WORKFLOW_HTTP_TOKEN_QUOTES"
         targets = {"quotes": {"url": "https://api.example.test/prices?market=CN", "method": "GET", "token_env": secret_name}}
         graph = chain(node("start", "input", fields=[field("params", "object")]),
                       node("request", "http", target="quotes", source="start.params", timeout=3),

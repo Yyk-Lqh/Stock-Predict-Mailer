@@ -217,6 +217,35 @@ class PreviewHTTPTests(unittest.TestCase):
             response = self.post("due", {"observation": actual(r)})
         self.assertEqual(response.status_code, 200, response.text)
 
+    def test_explicit_save_pins_preview_mode_owner_and_reuses_receipt(self):
+        owner = self.server.engine.memory.create_owner()
+        r = self.record("private-due", hours=2, owner=owner["owner"])
+        task = self.f.store.task("private-due")
+        task.setdefault("metadata", {})["mode"] = "professional"
+        self.f.store.task("private-due", task)
+        path = "/api/tasks/private-due/forecast/evaluate"
+        mode = {"X-Analysis-Mode": "professional"}
+        self.assertEqual(self.client.post(path, headers=mode, json={}).status_code, 403)
+        self.client.headers["X-Memory-Key"] = owner["key"]
+        payload = {"observation": actual(r)}
+        preview = self.post("private-due", payload, headers=mode).json()
+        body = {"preview": {**payload, "as_of": preview["as_of"]}, "forecast_record_id": preview["forecast_record_id"],
+                "observation_id": preview["observation_id"]}
+        self.assertEqual(self.client.post(path, headers={"X-Analysis-Mode": "standard"}, json=body).status_code, 403)
+        self.assertEqual(self.client.post(path, headers=mode, json={**body, "forecast_record_id": "stale"}).json()
+                         ["error"]["code"], "FORECAST_CONFLICT")
+        changed = {"observation": {**payload["observation"], "value": 130}, "as_of": preview["as_of"]}
+        self.assertEqual(self.client.post(path, headers=mode, json={**body, "preview": changed}).json()
+                         ["error"]["code"], "FORECAST_CONFLICT")
+        detail = "/api/tasks/private-due/forecast"
+        self.assertEqual(self.client.get(detail, headers=mode).json()["evaluations"], [])
+        saved = self.client.post(path, headers=mode, json=body)
+        self.assertEqual(saved.status_code, 200, saved.text)
+        evaluation = saved.json()["evaluation"]
+        self.assertTrue(saved.json()["persisted"])
+        self.assertEqual(self.client.post(path, headers=mode, json=body).json()["evaluation"], evaluation)
+        self.assertEqual(self.client.get(detail, headers=mode).json()["evaluations"], [evaluation])
+
     def test_preview_keeps_existing_receipt_and_list_metrics(self):
         r = self.record("evaluated", hours=2, evaluated=True)
         before = self.snapshot()

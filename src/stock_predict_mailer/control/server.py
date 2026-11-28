@@ -24,6 +24,7 @@ from ..naming import env
 from ..operations.components import Component
 from ..plugins.errors import PluginError
 from .a2a import SESSION_COOKIE, A2AService, card
+from .forecast_preview import evaluate as forecast_evaluate
 from .forecast_preview import preview as forecast_preview
 from .forecast_views import detail as forecast_detail
 from .forecast_views import listing as forecast_listing
@@ -489,14 +490,19 @@ def make_server(root, port=8767, master_key=None, market=None):
                     mode = self.request_mode()
                     if len(parts) >= 3 and mode is not None:
                         require_mode(task_mode(store.task(parts[2])), mode)
-                    if method == "POST" and len(parts) == 5 and parts[3:] == ["forecast", "preview"]:
+                    if method == "POST" and len(parts) == 5 and parts[3:] == ["forecast", "evaluate"]:
+                        require_mode(task_mode(store.task(parts[2])), self.request_mode(write=True))
+                        if urlsplit(self.path).query:
+                            raise ServiceError("INVALID_INPUT", "评估参数须通过 JSON 请求体提供")
+                        self.output(forecast_evaluate(store, parts[2], self.body()))
+                    elif method == "POST" and len(parts) == 5 and parts[3:] == ["forecast", "preview"]:
                         if urlsplit(self.path).query:
                             raise ServiceError("INVALID_INPUT", "预览参数须通过 JSON 请求体提供")
                         self.output(forecast_preview(store, parts[2], self.body()))
                     elif method == "GET" and len(parts) == 4 and parts[3] == "forecast":
                         if urlsplit(self.path).query:
                             raise ServiceError("INVALID_INPUT", "任务预测详情不接受查询参数")
-                        self.output(forecast_detail(store, parts[2]))
+                        self.output({**forecast_detail(store, parts[2]), "mode": task_mode(store.task(parts[2]))})
                     elif method == "POST" and len(parts) == 2:
                         from .workflow_values import dataflow, needs_knowledge
 

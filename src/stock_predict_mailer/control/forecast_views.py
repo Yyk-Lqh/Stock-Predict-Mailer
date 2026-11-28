@@ -95,7 +95,8 @@ def listing(store, owner=None, *, before=2**63 - 1, limit=20, state="all"):
             items.append({"task_id": tid, "forecast_id": key, "state": view["state"], "subject": record["prediction"]["subject"],
                           "synthetic": record["prediction"]["synthetic"], "target_at": record["definition"]["target_at"],
                           "metric": record["definition"]["metric"], "unit": record["definition"]["unit"],
-                          "registered_at": record["registered_at"], "evaluation_count": len(view["evaluations"]),
+                          "registered_at": record["registered_at"], "generated_at": record["prediction"]["generated_at"],
+                          "evaluation_count": len(view["evaluations"]),
                           "latest_metrics": latest["metrics"] if latest else None})
     return bounded({"items": items, "as_of": reader.now.isoformat(), "scanned_tasks": min(limit, len(rows)),
                     "next_before": rows[limit - 1][0] if len(rows) > limit else None})

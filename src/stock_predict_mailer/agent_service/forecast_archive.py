@@ -204,12 +204,14 @@ class ForecastArchive:
         return {"as_of": at.isoformat(), "total": len(records), "returned": len(values), "records": values, "offset": offset,
                 "next_offset": offset + len(values) if offset + len(values) < len(records) else None}
 
-    def evaluate(self, key, raw_observation=None, *, as_of=None, now=None, dry_run=False):
+    def evaluate(self, key, raw_observation=None, *, as_of=None, now=None, dry_run=False, expected_record_id=None):
         self.read_bytes = 0
         if type(dry_run) is not bool:
             fail("INVALID_INPUT", "dry_run 必须为布尔值")
         at, now = self._as_of(as_of, now)
         record = self._record(key)
+        if expected_record_id is not None and record["integrity_id"] != expected_record_id:
+            fail("FORECAST_CONFLICT", "预测快照发生变化，请重新校验观测")
         if instant(record["registered_at"]) > at:
             fail("FORECAST_NOT_YET_REGISTERED", "截止时点该预测尚未注册")
         result = {"forecast_id": key, "as_of": at.isoformat(), "persisted": False, "synthetic": record["prediction"]["synthetic"],

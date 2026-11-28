@@ -1,5 +1,6 @@
-"""Pure preview from one task-authorized archive snapshot; no receipt writes."""
+"""Validate observation previews and explicitly save matching evaluations."""
 from ..agent_service.contracts import instant
+from ..agent_service.forecast_archive import ForecastArchive
 from ..agent_service.forecast_contracts import score
 from ..agent_service.observation_input import parse
 from .forecast_views import Reader, bounded, fail
@@ -33,3 +34,17 @@ def preview(store, tid, request):
     else:
         result.update(state="ready", metrics=score(record, imported["observation"]))
     return bounded(result)
+
+
+def evaluate(store, tid, request):
+    if (set(request) != {"preview", "forecast_record_id", "observation_id"}
+            or not isinstance(request["preview"], dict) or "as_of" not in request["preview"]):
+        fail("INVALID_INPUT", "保存评估需要原始观测、固定截止时点和预览标识")
+    receipt = preview(store, tid, request["preview"])
+    if any(receipt[key] != request[key] for key in ("forecast_record_id", "observation_id")):
+        fail("FORECAST_CONFLICT", "预测或观测与预览不一致，请重新预览")
+    if receipt["state"] != "ready":
+        fail("NOT_READY", "目标尚未到期或观测在预览时点不可用")
+    return bounded(ForecastArchive(store.root).evaluate(
+        receipt["forecast_id"], receipt["observation"], as_of=receipt["as_of"],
+        expected_record_id=receipt["forecast_record_id"]))

@@ -309,29 +309,30 @@ class RuntimeTests(unittest.TestCase):
 
     def test_console_lease_remains_stopping_until_active_task_unwinds(self):
         from stock_predict_mailer.control.server import serve
-        called = threading.Event()
+        ready, called = threading.Event(), threading.Event()
         engine = Mock()
         engine.active = {"task": {}}
         engine.close_admission.return_value = ["task"]
         engine.cancel.side_effect = lambda tid: called.set()
         server = Mock(engine=engine, server_port=8767)
-        server.handle_request.side_effect = lambda: time.sleep(.01)
+        def handle_request():
+            ready.set()
+            time.sleep(.01)
+        server.handle_request.side_effect = handle_request
         errors = []
         def runner():
             try:
                 serve(self.root)
             except BaseException as exc:
-                errors.append(type(exc).__name__)
+                errors.append(exc)
         with patch("stock_predict_mailer.control.server.make_server", return_value=server), redirect_stdout(io.StringIO()):
-            thread = threading.Thread(target=runner)
+            thread = threading.Thread(target=runner, daemon=True)
             thread.start()
             try:
-                deadline = time.monotonic() + 3
-                while time.monotonic() < deadline:
-                    view = status(self.root, "console")
-                    if view["state"] == "verified":
-                        break
-                    time.sleep(.02)
+                # Polling status before the lifetime lease is acquired races its exclusive lock.
+                self.assertTrue(ready.wait(5), errors)
+                view = status(self.root, "console")
+                self.assertEqual(view["state"], "verified", view)
                 request_stop(self.root, "console", view["instance"])
                 self.assertTrue(called.wait(3))
                 self.assertTrue(thread.is_alive())

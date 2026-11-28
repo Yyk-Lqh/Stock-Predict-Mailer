@@ -7,6 +7,7 @@ import re
 from collections import defaultdict
 
 from ..agent_service.contracts import ServiceError, decode, utcnow
+from . import workflow_expression, workflow_http
 from .execution import LABELS, PRESETS
 
 TYPES = ("text", "number", "boolean", "object", "list")
@@ -24,14 +25,23 @@ KINDS = {
     "list": ("列表操作", "筛选标量值、排序、切片或取值"),
     "llm": ("LLM", "调用已配置模型并返回文本或 JSON 对象"),
     "output": ("输出", "返回选定的文本或结构化数据"),
+    "human": ("人工介入", "等待运行所有者确认或填写字段，再继续同一次运行"),
+    "iteration": ("迭代", "在节点内逐项计算列表并聚合结果"),
+    "loop": ("循环", "更新本地状态，直到满足条件或达到轮数上限"),
+    "code": ("代码执行", "在受限表达式环境中计算并校验输出类型"),
+    "http": ("HTTP 请求", "请求后端已授权的 HTTPS 目标"),
 }
 CONFIG = {
     "input": {"fields"}, "classifier": {"source", "cases", "fallback"}, "branch": {"source", "cases", "fallback"},
     "template": {"template"}, "aggregate": {"sources", "empty"}, "assign": {"source", "name", "value_type"},
     "extract": {"source", "fields"}, "document": {"source"}, "list": {"source", "operation", "start", "end", "value"},
     "knowledge": {"source", "limit"}, "llm": {"model", "template", "format"}, "output": {"source", "format", "fields"},
+    "human": {"prompt", "fields", "wait_seconds"}, "iteration": {"source", "expression", "limit", "on_error"},
+    "loop": {"source", "expression", "until", "limit"}, "code": {"source", "expression", "value_type"},
+    "http": {"source", "target", "timeout"},
 }
 FIELD_TYPES = dict(zip(TYPES, (str, (int, float), bool, dict, list), strict=True))
+EXPRESSION_SCOPE = {"code": {"value"}, "iteration": {"item", "index"}, "loop": {"state", "round"}}
 
 
 def error(node, message, code="INVALID_WORKFLOW"):
@@ -187,6 +197,30 @@ def validate_config(kind, config, key):
             error(key, "索引须为 -200 至 200 的整数")
         if op == "slice" and (type(end) is not int or not -200 <= end <= 200):
             error(key, "结束索引须为 -200 至 200 的整数")
+    if kind == "human":
+        prompt, wait = config.get("prompt"), config.get("wait_seconds")
+        if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 400:
+            error(key, "人工介入说明须为 1 至 400 字")
+        if any(field["name"] == "value" for field in fields(config, key)):
+            error(key, "人工填写字段不能命名为 value")
+        if type(wait) is not int or not 5 <= wait <= 900:
+            error(key, "等待时限须为 5 至 900 秒")
+    if kind in EXPRESSION_SCOPE:
+        workflow_expression.compile_expression(config.get("expression"), EXPRESSION_SCOPE[kind], key, "计算表达式")
+    if kind in ("iteration", "loop") and (type(config.get("limit")) is not int or not 1 <= config["limit"] <= 50):
+        error(key, "次数上限须为 1 至 50")
+    if kind == "iteration" and config.get("on_error") not in ("stop", "skip"):
+        error(key, "请选择单项失败时的处理方式")
+    if kind == "loop":
+        workflow_expression.compile_expression(config.get("until"), EXPRESSION_SCOPE[kind], key, "停止条件")
+    if kind == "code" and config.get("value_type") not in TYPES:
+        error(key, "请选择表达式输出类型")
+    if kind == "http":
+        timeout = config.get("timeout")
+        if not isinstance(config.get("target"), str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", config["target"]):
+            error(key, "请选择已授权的 HTTP 目标")
+        if type(timeout) is not int or not 1 <= timeout <= 30:
+            error(key, "HTTP 超时须为 1 至 30 秒")
     return config
 
 
@@ -207,6 +241,16 @@ def outputs(node):
         return {"value": "list"}
     if kind == "list":
         return {"value": "any" if config["operation"] == "item" else "list"}
+    if kind == "human":
+        return {"value": "object", **{field["name"]: field["type"] for field in config["fields"]}}
+    if kind == "iteration":
+        return {"value": "list", "processed": "number", "skipped": "number"}
+    if kind == "loop":
+        return {"value": "any", "rounds": "number"}
+    if kind == "code":
+        return {"value": config["value_type"]}
+    if kind == "http":
+        return {"value": "any", "status": "number"}
     if kind == "output" and "fields" in config:
         return {"value": "object"}
     if kind in ("llm", "output"):
@@ -220,12 +264,12 @@ def input_ports(node):
         return {field["name"]: field for field in config["fields"]}
     if kind == "aggregate":
         return {"sources": {"type": "list", "required": True}}
-    if kind in ("classifier", "branch", "assign", "extract", "document", "knowledge", "list", "output"):
+    if kind in ("classifier", "branch", "assign", "extract", "document", "knowledge", "list", "output", "iteration", "loop", "code", "http"):
         expected = {"classifier": "text", "extract": "text", "document": "text", "knowledge": "text", "list": "list",
-                    "assign": config.get("value_type")}.get(kind) or "any"
+                    "iteration": "list", "http": "object", "assign": config.get("value_type")}.get(kind) or "any"
         if kind == "branch" and any(case["operation"] == "contains" for case in config["cases"]):
             expected = "text"
-        return {"source": {"type": expected, "required": True, "single": True}}
+        return {"source": {"type": expected, "required": kind != "http", "single": True}}
     return {}
 
 
@@ -243,6 +287,8 @@ def reference_requirements(node, bound):
     if kind == "aggregate":
         return [] if "sources" in bound else [(ref, "any") for ref in config.get("sources", [])]
     if "source" in input_ports(node) and "source" not in bound:
+        if kind == "http" and not config.get("source"):
+            return []
         return [(config.get("source"), input_ports(node)["source"]["type"])]
     return []
 
@@ -328,10 +374,48 @@ def list_value(items, config, key):
     return items[index] if -len(items) <= index < len(items) else None
 
 
+def compute(kind, config, source, budget, key):
+    scope = EXPRESSION_SCOPE[kind]
+    expression = workflow_expression.compile_expression(config["expression"], scope, key, "计算表达式")
+    if kind == "code":
+        result = workflow_expression.evaluate(expression, {"value": source}, key)
+        if not matches_type(result, config["value_type"]):
+            error(key, f"表达式输出需要 {config['value_type']}", "WORKFLOW_VALUE")
+        return {"value": result}
+    if kind == "iteration":
+        if not isinstance(source, list) or len(source) > config["limit"]:
+            error(key, f"迭代需要不超过 {config['limit']} 项的列表", "WORKFLOW_ITERATION_LIMIT")
+        results, skipped = [], 0
+        for index, item in enumerate(source):
+            budget.check()
+            try:
+                results.append(workflow_expression.evaluate(expression, {"item": item, "index": index}, key))
+            except ServiceError:
+                if config["on_error"] == "stop":
+                    raise
+                skipped += 1
+        return {"value": results, "processed": len(source), "skipped": skipped}
+    until = workflow_expression.compile_expression(config["until"], scope, key, "停止条件")
+    for round_count in range(config["limit"] + 1):
+        budget.check()
+        state = {"state": source, "round": round_count}
+        stop = workflow_expression.evaluate(until, state, key)
+        if type(stop) is not bool:
+            error(key, "停止条件需要返回布尔值", "WORKFLOW_VALUE")
+        if stop:
+            return {"value": source, "rounds": round_count}
+        if round_count < config["limit"]:
+            source = workflow_expression.evaluate(expression, state, key)
+    error(key, f"达到 {config['limit']} 轮上限时仍未满足停止条件", "WORKFLOW_LOOP_LIMIT")
+
+
 async def evaluate(engine, node, request, values, settings, budget, spec, key, bound):
     kind, cfg = node["type"], node["config"]
     if kind == "input":
         return {"message": request["message"], **request["parameters"]}
+    if kind == "human":
+        reply = await engine.wait_for_workflow_input(key, node["label"], cfg, budget)
+        return {"value": reply, **reply}
     if kind in ("classifier", "branch"):
         scope = {**values, ".source": bound["source"]} if "source" in bound else values
         port = choose_port(kind, {**cfg, "source": ".source"} if "source" in bound else cfg, scope, key)
@@ -358,7 +442,14 @@ async def evaluate(engine, node, request, values, settings, budget, spec, key, b
         return {"value": found}
     if kind == "output" and "fields" in cfg:
         return {"value": bind_fields(cfg["fields"], bound, key, "WORKFLOW_VALUE")}
+    if kind == "http":
+        parameters = bound.get("source", {})
+        if "source" not in bound and cfg.get("source"):
+            parameters = resolve(values, cfg["source"], key)
+        return await workflow_http.request(cfg, parameters, spec["bindings"].get("http", {}).get(key), budget, key)
     source = bound["source"] if "source" in bound else resolve(values, cfg["source"], key)
+    if kind in EXPRESSION_SCOPE:
+        return compute(kind, cfg, source, budget, key)
     if kind == "assign":
         if not matches_type(source, cfg["value_type"]):
             error(key, f"赋值需要 {cfg['value_type']}", "WORKFLOW_VALUE")

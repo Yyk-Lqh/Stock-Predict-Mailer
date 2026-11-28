@@ -7,7 +7,7 @@ import re
 from ..agent_service.analysis import identity
 from ..agent_service.contracts import ServiceError
 from ..plugins.registry import renderer_options
-from . import workflow_database, workflow_tools, workflow_values, workflow_wiring
+from . import workflow_database, workflow_http, workflow_tools, workflow_values, workflow_wiring
 
 # Input and output are named ports with one bounded business-object type each.
 NODES = {
@@ -53,6 +53,7 @@ def catalog():
     graph = {"version": 2, "nodes": [], "edges": []}
     nodes["database"]["options"] = workflow_database.options()
     nodes["tool"]["options"] = workflow_tools.catalog()
+    nodes["http"]["options"] = workflow_http.options()
     for kind in ("chart", "report"):
         nodes[kind]["options"] = renderer_options(kind)
     for index, (key, kind) in enumerate(zip(SYSTEM_STEPS, SYSTEM_TYPES, strict=True)):
@@ -117,6 +118,8 @@ def validate_node(item, engine, settings, dataflow):
             config = workflow_tools.validate(config)
         except ServiceError as exc:
             raise ServiceError(exc.code, f"{key} · {exc.message}") from None
+    if kind == "http":
+        workflow_http.binding(config, key)
     if "binding" in config:
         binding = config["binding"]
         if not isinstance(binding, str) or not _TOOL.fullmatch(binding):
@@ -239,6 +242,8 @@ def bindings(engine, graph, settings):
             for binding in ([config["binding"]] if "binding" in config else main["tools"]):
                 reference = binding.split(":", 1)[0]
                 groups["mcp"][reference] = identity(profile_for(engine, "mcp", reference, key))
+        elif data["type"] == "http":
+            groups.setdefault("http", {})[key] = identity(workflow_http.binding(config, key))
     return groups
 
 

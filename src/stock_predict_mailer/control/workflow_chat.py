@@ -299,7 +299,7 @@ class WorkflowChat:
                                 AND json_extract(e.body,'$.step')=CASE json_extract(t.body,'$.metadata.workflow.mode')
                                     WHEN 'system' THEN ? ELSE ? END
                                 AND json_extract(e.body,'$.kind') IN ('step','node_result')
-                                AND json_extract(e.body,'$.status') IN ('running','completed','degraded','failed','canceled'))))
+                                AND json_extract(e.body,'$.status') IN ('running','needs_input','completed','degraded','failed','canceled'))))
                 ORDER BY t.rowid DESC LIMIT 21
                 """, (before, owner, task_id, task_id, flow_id, flow_id, json.dumps(versions),
                       node_id, node_id, node_type, STEP_ID.get(node_id, node_id), node_id)).fetchall()

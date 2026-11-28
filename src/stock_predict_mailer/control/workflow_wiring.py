@@ -203,7 +203,7 @@ def paths(nodes, order, incoming, outgoing, ports, outputs, debug):
         return all(covered(cube, frozenset(refs)) for cube in active)
 
     def optional(node, field):
-        return node["type"] in ("input", "extract") and any(item["name"] == field and not item["required"]
+        return node["type"] in ("input", "extract", "human") and any(item["name"] == field and not item["required"]
                                                           and "default" not in item for item in node["config"]["fields"])
 
     for key in order:

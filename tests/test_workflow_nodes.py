@@ -103,6 +103,7 @@ class VariableWorkflowTests(unittest.TestCase):
             ("TYPE", lambda value: value["edges"].append({**edge("start", "reply", "count"), "input": "summary"})),
             ("MISSING_INPUT", lambda value: value["edges"].pop(2)),
             ("SINGLE_INPUT", lambda value: value["edges"].append({**edge("detail", "reply"), "input": "summary"})),
+            ("CYCLE", lambda value: value["edges"].append(edge("model", "model"))),
             ("CYCLE", lambda value: value["edges"].extend([edge("model", "detail"), edge("detail", "model")])),
         ):
             with self.subTest(code=code):

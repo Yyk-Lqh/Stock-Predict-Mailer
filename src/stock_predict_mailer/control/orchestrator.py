@@ -7,6 +7,7 @@ import re
 import threading
 import time
 import uuid
+from concurrent.futures import Future
 from typing import Literal
 
 from pydantic import Field, ValidationError
@@ -315,6 +316,53 @@ class Orchestrator:
             self.memory.delete_task(tid)
         return {"status": "deleted"}
 
+    async def wait_for_workflow_input(self, node, label, config, budget):
+        progress = budget.progress
+        request_id, response = uuid.uuid4().hex, Future()
+        budget.check()
+        with self.lock:
+            task = self.active[progress.tid]
+            task["input"] = {"id": request_id, "node": node, "future": response, "fields": config["fields"]}
+        started = time.monotonic()
+        budget.timer.reschedule(None)
+        try:
+            progress.emit("step", step=node, label=label, status="needs_input", request_id=request_id,
+                          prompt=config["prompt"], fields=config["fields"], wait_seconds=config["wait_seconds"])
+            async with asyncio.timeout(config["wait_seconds"]):
+                values = await asyncio.shield(asyncio.wrap_future(response))
+        except TimeoutError:
+            raise ServiceError("WORKFLOW_INPUT_TIMEOUT", f"{node} · 等待用户处理超时", True) from None
+        finally:
+            with self.lock:
+                task.pop("input", None)
+                response.cancel()
+            budget.deadline += time.monotonic() - started
+            budget.timer.reschedule(asyncio.get_running_loop().time() + max(0, budget.deadline - time.monotonic()))
+        budget.check()
+        progress.emit("step", step=node, label=label, status="running")
+        return values
+
+    def continue_workflow(self, tid, owner, body):
+        from .workflow_values import bind_fields
+
+        if (not owner or self.memory.task_owner(tid) != owner):
+            raise ServiceError("FORBIDDEN", "仅运行所有者可以提交人工输入")
+        require_mode(task_mode(self.store.task(tid)), PROFESSIONAL)
+        if (set(body) != {"request_id", "node", "values"} or not isinstance(body["request_id"], str)
+                or not isinstance(body["node"], str) or not isinstance(body["values"], dict)):
+            raise ServiceError("INVALID_INPUT", "人工输入需要请求标识、节点和字段值")
+        with self.lock:
+            active = self.active.get(tid)
+            pending = active.get("input") if active else None
+            if (not pending or active["event"].is_set() or pending["id"] != body["request_id"]
+                    or pending["node"] != body["node"] or pending["future"].done()):
+                raise ServiceError("WORKFLOW_CONFLICT", "此节点已处理或本次运行已停止", True)
+            values = bind_fields(pending["fields"], body["values"], pending["node"])
+            if len(json.dumps(values, ensure_ascii=False, allow_nan=False).encode()) > 4000:
+                raise ServiceError("INVALID_INPUT", "人工输入超过 4 KB")
+            pending["future"].set_result(values)
+        return {"status": "accepted"}
+
     async def execute(self, tid, request, event=None, *, workflow=None, frozen_settings=None):
         settings = frozen_settings or self.execution_settings(self.store.settings(), request.get("model_id"), request.get("tools"))
         mode = request.get("_mode", STANDARD)
@@ -336,10 +384,11 @@ class Orchestrator:
         try:
             budget.check()
             persist("working")
-            async with asyncio.timeout(settings["limits"]["timeout_seconds"]):
+            async with asyncio.timeout(settings["limits"]["timeout_seconds"]) as timer:
                 if workflow and workflow.get("variables"):
                     from .workflow_values import run
 
+                    budget.timer = timer
                     output = await run(self, workflow, request, settings, budget, progress)
                 elif workflow and workflow["mode"] == "custom":
                     from .workflow_runtime import run

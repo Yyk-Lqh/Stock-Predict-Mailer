@@ -608,6 +608,10 @@ def make_server(root, port=8767, master_key=None, market=None):
                         self.output({"events": store.events(parts[2], after)})
                     elif method == "POST" and len(parts) == 4 and parts[3] == "cancel":
                         self.output(engine.cancel(parts[2], self.request_mode(write=True)))
+                    elif method == "POST" and len(parts) == 4 and parts[3] == "continue":
+                        require_mode(PROFESSIONAL, self.request_mode(write=True))
+                        owner = engine.memory.owner(self.headers.get("X-Memory-Key", ""))
+                        self.output(engine.continue_workflow(parts[2], owner, self.body()), 202)
                     elif method == "DELETE" and len(parts) == 3:
                         self.output(engine.delete_task(parts[2], self.request_mode(write=True)))
                     else:

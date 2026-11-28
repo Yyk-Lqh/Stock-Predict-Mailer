@@ -164,7 +164,7 @@ const AnalysisMode = (() => {
     return (read('tools') || allowed).filter(tool => allowed.includes(tool));
   };
   return {read, write, configure, importLegacy, activate, capture, current, model, tools,
-    active: () => mode, canImportLegacy: () => legacy};
+    active: () => mode, workspaceId: () => workspace, canImportLegacy: () => legacy};
 })();
 const taskMode = task => task.metadata?.mode || (task.metadata?.workflow ? 'professional' : task.metadata?.request ? 'standard' : 'legacy');
 const displayedTaskMode = () => window.Workbench?.resultMode() || AnalysisMode.active();
@@ -302,6 +302,7 @@ async function api(path, method = 'GET', body, signal, context) {
     signal,
     headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf, 'X-Memory-Key': context?.key ?? memoryKey,
       'X-Knowledge-Scope': context?.knowledgeScope || window.KnowledgeUI?.scope() || 'local',
+      ...(context?.knowledgeLibrary ? {'X-Knowledge-Library': context.knowledgeLibrary} : {}),
       ...(context?.mode ? {'X-Analysis-Mode': context.mode} : {})},
     body: body === undefined ? undefined : JSON.stringify(body)
   });

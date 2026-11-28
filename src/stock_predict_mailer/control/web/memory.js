@@ -1305,7 +1305,12 @@ window.KnowledgeUI = (() => {
   const PAGE = 50;
   const scopeKey = 'spm_knowledge_scope';
   let scope = memoryKey && sessionStorage.getItem(scopeKey) !== 'local' ? 'private' : 'local';
-  const identity = () => scope === 'local' ? 'local' : (memoryKey ? 'private:' + memoryKey : '');
+  let libraryId = 'default', libraryCards = [], libraryRequest = 0;
+  const baseIdentity = () => scope === 'local' ? 'local' : (memoryKey ? 'private:' + memoryKey : '');
+  const identity = () => baseIdentity() && baseIdentity() + ':' + libraryId;
+  const capture = () => ({key:memoryKey, knowledgeScope:scope, knowledgeLibrary:libraryId, workspace:AnalysisMode.workspaceId()});
+  const kbApi = (path, method, body, signal, context=capture()) => api(path,method,body,signal,context);
+  const documentName = item => item.metadata?.origin?.title || item.logical || item.filename;
   sessionStorage.setItem(scopeKey, scope);
   let desktopStatus = '', detailRequest = 0, searchRequest = 0;
   const LIBRARY_DEFAULTS = {name: '预测资料库', description: '', icon: 'library', top_k: 8, retrieval: 'auto'};
@@ -1459,11 +1464,11 @@ window.KnowledgeUI = (() => {
           <small class="hint" id="knowledge-card-count">正在读取</small>
         </span>
       </button>
+      <div id="knowledge-library-cards"></div>
       <div id="knowledge-document-catalog-list"></div>
     </div>`;
   const knowledgeCreate = document.createElement('div');
   knowledgeCreate.className = 'knowledge-dify-main knowledge-create-main'; knowledgeCreate.hidden = true;
-  knowledgeCreate.innerHTML = '<div class="knowledge-step-head"><button type="button" class="btn" data-knowledge-back>← 知识库</button><div class="knowledge-steps"><strong>上传文档</strong></div></div><div class="knowledge-create-body"><h1>选择数据源</h1><div class="knowledge-source-options"><button type="button" class="selected" data-knowledge-source="upload">▤ 导入已有文本</button><button type="button" data-knowledge-source="notion">▣ 同步自 Notion 内容</button><button type="button" data-knowledge-source="web">◉ 同步自 Web 站点</button></div><h2>上传文本文件</h2><div class="knowledge-dropzone">☁&nbsp; 拖拽文件到此处，或 <button type="button" id="knowledge-upload-from-create">选择文件</button><input id="knowledge-create-file" type="file" accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.json" multiple hidden><p>选择后会直接上传到当前知识库。支持 PDF、DOCX、TXT、Markdown、CSV、XLSX、JSON，每次最多 5 个文件，每个不超过 10 MiB。</p><p id="knowledge-create-status" class="hint" aria-live="polite"></p></div><button type="button" class="btn primary knowledge-next-upload" id="knowledge-next-upload">选择文件并上传</button></div>';
   const knowledgeConnect = document.createElement('div');
   knowledgeConnect.className = 'knowledge-dify-main knowledge-connect-main'; knowledgeConnect.hidden = true;
   knowledgeConnect.innerHTML = '<div class="knowledge-connect-layout"><form id="knowledge-external-form" class="knowledge-connect-form"><button type="button" class="btn" data-knowledge-back>← 返回知识库</button><h1>连接外部知识库</h1><p class="lede">通过 API 和知识库 ID 连接外部知识库。目前仅支持检索功能。</p><label class="field"><span>外部知识库名称</span><input id="knowledge-external-name" placeholder="请输入外部知识库名称"></label><label class="field"><span>知识库描述</span><textarea id="knowledge-external-description" rows="3" placeholder="描述知识库内容（可选）"></textarea></label><label class="field"><span>外部知识库 API</span><input id="knowledge-external-api" placeholder="点击此处创建或选择 API"></label><label class="field"><span>外部知识库 ID</span><input id="knowledge-external-id" placeholder="请输入外部知识库 ID"></label><div class="knowledge-connect-actions"><button type="button" class="btn" data-knowledge-back>取消</button><button type="submit" class="btn primary">连接 →</button></div></form><aside class="knowledge-connect-help"><div class="knowledge-sidebar-icon">▣</div><h2>如何连接外部知识库</h2><p>需要先创建一个外部 API，再填写对应的知识库 ID。连接后可以直接进入召回测试。</p><a href="#knowledge" data-knowledge-help>了解更多</a></aside></div>';
@@ -1511,22 +1516,38 @@ window.KnowledgeUI = (() => {
   document.querySelector('main').append(section);
   function renderLanding() {
     const library = profile || LIBRARY_DEFAULTS;
-    for (const selector of ['.knowledge-base-copy strong', '.knowledge-sidebar-card strong', '.knowledge-brand strong']) {
+    const primary = libraryId === 'default' ? {...library, ...catalog} :
+      libraryCards.find(item => item.id === 'default') || LIBRARY_DEFAULTS;
+    section.querySelector('.knowledge-base-copy strong').textContent = primary.name;
+    section.querySelector('.knowledge-base-icon').textContent = LIBRARY_ICONS[primary.icon];
+    for (const selector of ['.knowledge-sidebar-card strong', '.knowledge-brand strong'])
       section.querySelector(selector).textContent = library.name;
-    }
-    for (const selector of ['.knowledge-base-icon', '.knowledge-sidebar-icon', '.knowledge-brand-mark']) {
+    for (const selector of ['.knowledge-sidebar-icon', '.knowledge-brand-mark'])
       section.querySelector(selector).textContent = LIBRARY_ICONS[library.icon];
+    $('knowledge-card-description').textContent = primary.description;
+    $('knowledge-card-description').hidden = !primary.description;
+    $('knowledge-card-count').textContent = `${primary.total || 0} 个资料版本 · ${primary.review || 0} 待审阅`;
+    const cards = $('knowledge-library-cards'); cards.replaceChildren();
+    for (const item of libraryCards.filter(item => item.id !== 'default')) {
+      const button = action(item.name, () => chooseLibrary(item.id));
+      button.className = 'knowledge-base-card';
+      button.dataset.libraryId = item.id;
+      button.replaceChildren();
+      text(button,'span',LIBRARY_ICONS[item.icon],'knowledge-base-icon').setAttribute('aria-hidden','true');
+      const copy = text(button,'span','','knowledge-base-copy');
+      const card = item.id === libraryId ? {...item, ...catalog, ...profile} : item;
+      text(copy,'strong',card.name);
+      if(card.description)text(copy,'small',card.description,'hint');
+      text(copy,'small',`${card.total || 0} 个资料版本 · ${card.review || 0} 待审阅`,'hint');
+      cards.append(button);
     }
-    $('knowledge-card-description').textContent = library.description;
-    $('knowledge-card-description').hidden = !library.description;
-    $('knowledge-card-count').textContent = `${catalog.total || documents.length || 0} 个资料版本 · ${catalog.review || 0} 待审阅`;
     $('knowledge-sidebar-count').textContent = catalog.total;
     const host = $('knowledge-document-catalog-list'); host.replaceChildren();
     for (const item of documents) {
       const card = document.createElement('button'); card.type = 'button'; card.className = 'knowledge-document-catalog-card';
       text(card, 'span', '▤', 'knowledge-document-icon').setAttribute('aria-hidden', 'true');
       const copy = document.createElement('span');
-      text(copy, 'strong', item.logical || item.filename);
+      text(copy, 'strong', documentName(item));
       if (item.filename !== item.logical) text(copy, 'small', item.filename, 'hint');
       text(copy, 'small', `${STATE[item.status] || item.status} · ${fmt(item.uploaded)}`, 'hint');
       card.append(copy);
@@ -1537,6 +1558,7 @@ window.KnowledgeUI = (() => {
   }
   function showSurface(name) {
     if (surface === 'documents' && name !== 'documents') closeDetail();
+    if (surface === 'create' && name !== 'create') window.KnowledgeImport?.leave();
     surface = name;
     section.classList.toggle('knowledge-catalog-mode', name === 'catalog');
     section.classList.toggle('knowledge-create-mode', name === 'create');
@@ -1556,17 +1578,49 @@ window.KnowledgeUI = (() => {
     }
     if (id) await detail(id);
   }
-  const goCatalog = () => showSurface('catalog');
-  const goCreate = () => showSurface('create');
+  const goCatalog = () => {
+    showSurface('catalog');
+    const key=baseIdentity();
+    loadLibraries().catch(error=>{if(key===baseIdentity())notice(error.message,true);});
+  };
+  const goCreate = (existing=false, resume=false) => {
+    if (!baseIdentity()) return notice('请先选择可访问的资料库。', true);
+    showSurface('create');
+    window.KnowledgeImport.open(knowledgeCreate, {
+      context:capture(), existing, resume,
+      name:profile?.name || libraryCards.find(item=>item.id===libraryId)?.name || LIBRARY_DEFAULTS.name,
+      back:goCatalog, upload:uploadDocumentFile,
+      viewDocument:(id, did) => chooseLibrary(id, did),
+      recall:async id => {await chooseLibrary(id);await openTab('search');},
+      refresh:async id => { await loadLibraries();if (id===libraryId)await load(); },
+    });
+  };
   const goConnect = () => showSurface('connect');
-  $('knowledge-create-landing').onclick = goCreate;
-  $('knowledge-create-panel').onclick = goCreate;
-  $('knowledge-pipeline-panel').onclick = goCreate;
+  $('knowledge-create-landing').onclick = () => goCreate();
+  $('knowledge-create-panel').onclick = () => goCreate();
+  $('knowledge-pipeline-panel').onclick = () => goCreate();
   $('knowledge-connect-landing').onclick = goConnect;
   $('knowledge-external-panel').onclick = goConnect;
-  $('knowledge-open-card').onclick = safe(() => openDocuments());
+  $('knowledge-open-card').onclick = safe(() => chooseLibrary('default'));
+  async function chooseLibrary(id, did='') {
+    if (id !== libraryId) {
+      libraryId=id;
+      identityReset(false);
+    }
+    const key=identity();
+    await openDocuments();
+    await load();
+    if(did&&key===identity()&&surface==='documents')await detail(did);
+  }
+  async function loadLibraries() {
+    const key=baseIdentity();
+    if (!key) return;
+    const request=++libraryRequest;
+    const data=await kbApi('knowledge/libraries');
+    if(key===baseIdentity()&&request===libraryRequest){libraryCards=data.items;renderLanding();}
+  }
   section.querySelectorAll('[data-knowledge-back]').forEach(button => { button.onclick = goCatalog; });
-  $('knowledge-documents-add').onclick = goCreate;
+  $('knowledge-documents-add').onclick = () => goCreate(true);
   $('knowledge-documents-search').oninput = () => renderDifyDocuments();
   $('knowledge-documents-filter').onchange = () => renderDifyDocuments();
   $('knowledge-documents-refresh').onclick = safe(() => load());
@@ -1576,67 +1630,6 @@ window.KnowledgeUI = (() => {
     $('knowledge-documents-sort').textContent = `上传时间 ${newestFirst ? '↓' : '↑'}`;
     renderDifyDocuments();
   };
-  const openCreatePicker = () => $('knowledge-create-file').click();
-  $('knowledge-upload-from-create').onclick = openCreatePicker;
-  $('knowledge-next-upload').onclick = openCreatePicker;
-  async function uploadCreateFiles(files) {
-    if (!files.length) return;
-    const picker = $('knowledge-upload-from-create');
-    const action = $('knowledge-next-upload');
-    const status = $('knowledge-create-status');
-    if (picker.disabled) return;
-    if (files.length > 5) {
-      status.textContent = '每次最多选择 5 个文件。';
-      return;
-    }
-    const key = identity();
-    if (!key) {
-      status.textContent = '当前资料库暂不可用。请返回并选择本机资料库。';
-      return;
-    }
-    let uploaded = 0;
-    const failures = [];
-    picker.disabled = true; action.disabled = true;
-    try {
-      for (const [index, file] of files.entries()) {
-        if (key !== identity()) break;
-        status.textContent = `正在上传 ${index + 1}/${files.length}：${file.name}`;
-        try {
-          await uploadDocumentFile(file, {key});
-          ++uploaded;
-        } catch (error) {
-          failures.push(`${file.name}：${error.message}`);
-        }
-      }
-      if (key !== identity()) return;
-      const message = `已上传 ${uploaded} 个文件${failures.length ? `，${failures.length} 个失败。 ${failures.join('；')}` : '，资料已排队处理。'}`;
-      status.textContent = message;
-      if (uploaded) await load();
-      notice(message, Boolean(failures.length));
-      if (surface === 'create' && uploaded && !failures.length) goCatalog();
-    } finally {
-      picker.disabled = false; action.disabled = false;
-    }
-  }
-  $('knowledge-create-file').onchange = safe(async event => {
-    const input = event.currentTarget;
-    const files = [...input.files];
-    input.value = '';
-    await uploadCreateFiles(files);
-  });
-  const dropzone = knowledgeCreate.querySelector('.knowledge-dropzone');
-  const setDragState = active => dropzone.classList.toggle('is-dragging', active);
-  dropzone.addEventListener('dragenter', event => { event.preventDefault(); setDragState(true); });
-  dropzone.addEventListener('dragover', event => { event.preventDefault(); setDragState(true); });
-  dropzone.addEventListener('dragleave', event => { event.preventDefault(); if (!dropzone.contains(event.relatedTarget)) setDragState(false); });
-  dropzone.addEventListener('drop', safe(async event => {
-    event.preventDefault(); setDragState(false);
-    if ([...event.dataTransfer.items].some(item => item.webkitGetAsEntry?.()?.isDirectory)) {
-      $('knowledge-create-status').textContent = '请打开文件夹并拖入其中的文件。';
-      return;
-    }
-    await uploadCreateFiles([...event.dataTransfer.files]);
-  }));
   $('knowledge-external-form').onsubmit = event => {
     event.preventDefault();
     notice('外部知识库连接暂未接入。', true);
@@ -1695,7 +1688,8 @@ window.KnowledgeUI = (() => {
     $('task-knowledge-consent').checked = false;
     taskScopeField.value = scope;
   }
-  function identityReset() {
+  function identityReset(resetLibrary=true) {
+    if(resetLibrary){libraryId='default';libraryCards=[];if(surface==='create')goCatalog();}
     ++detailRequest; ++searchRequest; ++historyRequest; desktopStatus = ''; window.DesktopLibrary?.resetKnowledge();
     ++epoch; clearTimeout(timer); clearTimeout(queueTimer); waiting = null;
     documents = []; catalog = {total: 0, review: 0};
@@ -1718,7 +1712,7 @@ window.KnowledgeUI = (() => {
     const row = document.createElement('article'); row.className = 'document-row';
     row.dataset.documentId = item.id; row.dataset.documentState = item.status;
     const name = document.createElement('div');
-    text(name, 'h3', item.logical);
+    text(name, 'h3', documentName(item));
     text(name, 'p', `${item.filename} · ${fmt(item.uploaded)} · ${item.id.slice(0, 8)}`, 'hint');
     row.append(name);
     const status = document.createElement('div');
@@ -1730,7 +1724,7 @@ window.KnowledgeUI = (() => {
   function renderDifyDocuments() {
     const host = $('knowledge-documents-list'); host.replaceChildren();
     const query = $('knowledge-documents-search').value.trim().toLowerCase(), status = $('knowledge-documents-filter').value;
-    const items = documents.filter(item => (!status || item.status === status) && (!query || `${item.logical} ${item.filename}`.toLowerCase().includes(query)));
+    const items = documents.filter(item => (!status || item.status === status) && (!query || `${documentName(item)} ${item.filename}`.toLowerCase().includes(query)));
     if (items.length) renderDocumentsTable(host, newestFirst ? items : items.reverse());
     else text(host, 'p', documents.length ? '已载入的文档中没有匹配项。' : '尚未上传文档。', 'empty');
     if (documents.length < catalog.total) host.append(action('加载更多文档', () => load(true)));
@@ -1743,7 +1737,7 @@ window.KnowledgeUI = (() => {
       const row = document.createElement('tr');
       row.dataset.documentId = item.id;
       const name = document.createElement('td');
-      name.append(action(item.logical || item.filename, () => detail(item.id)));
+      name.append(action(documentName(item), () => detail(item.id)));
       if (item.logical !== item.filename) text(name, 'small', item.filename, 'hint');
       row.append(name);
       text(row, 'td', item.metadata?.source || '用户上传');
@@ -1811,7 +1805,7 @@ window.KnowledgeUI = (() => {
     if (!key) { $('knowledge-queue').replaceChildren(); waiting = null; return; }
     let busy = waiting;
     try {
-      const data = await api('knowledge/queue');
+      const data = await kbApi('knowledge/queue');
       if (key !== identity()) return;
       renderQueue(data);
       busy = data.waiting || 0;
@@ -1824,6 +1818,14 @@ window.KnowledgeUI = (() => {
   }
   async function load(append = false) {
     clearTimeout(timer);
+    const resume = surface === 'catalog' && baseIdentity() && window.KnowledgeImport?.shouldResume(capture());
+    if (resume) {
+      if (resume.existing && resume.library !== libraryId) {
+        libraryId = resume.library;
+        identityReset(false);
+      }
+      goCreate(resume.existing, true);
+    }
     const extend = append === true;
     const requestEpoch = ++epoch;
     const key = identity();
@@ -1836,6 +1838,7 @@ window.KnowledgeUI = (() => {
       return;
     }
     window.DesktopLibrary?.knowledgeLoading(desktopStatus);
+    if (!libraryCards.length) loadLibraries().catch(error => {if(key===identity())notice(error.message,true);});
     queueStatus(false);
     if (surface === 'tools') {
       const tab = section.querySelector('[data-dify-kb-tab].active')?.dataset.difyKbTab;
@@ -1845,7 +1848,7 @@ window.KnowledgeUI = (() => {
       const offset = extend ? documents.length : 0;
       const limit = extend ? PAGE : Math.min(500, Math.max(PAGE, documents.length));
       const status = matchMedia('(min-width: 761px)').matches ? desktopStatus : '';
-      const data = await api(`knowledge/documents?limit=${limit}&offset=${offset}${status ? '&status=' + status : ''}`);
+      const data = await kbApi(`knowledge/documents?limit=${limit}&offset=${offset}${status ? '&status=' + status : ''}`);
       if (requestEpoch !== epoch || key !== identity()) return;
       if (!extend) { documents = []; $('knowledge-list').replaceChildren(); }
       documents = documents.concat(data.items); catalog = data;
@@ -1871,11 +1874,19 @@ window.KnowledgeUI = (() => {
       host.append(article);
     }
   }
+  function renderOrigin(host,origin) {
+    if (!origin) return;
+    text(host,'p',origin.title+' · 获取于 '+fmt(origin.fetched_at),'hint');
+    if (/^https?:\/\//i.test(origin.url)) {
+      const link=text(host,'a','打开原始来源','btn tiny');link.href=origin.url;
+      link.target='_blank';link.rel='noopener noreferrer';
+    }
+  }
   async function detail(id) {
     const key = identity();
     const request = ++detailRequest;
     const current = () => key === identity() && request === detailRequest;
-    const [item, versions] = await Promise.all([api('knowledge/documents/' + id), api(`knowledge/documents/${id}/versions`)]);
+    const [item, versions] = await Promise.all([kbApi('knowledge/documents/' + id), kbApi(`knowledge/documents/${id}/versions`)]);
     if (!current()) return;
     const summary = documents.find(doc => doc.id === id);
     if (summary && (summary.status !== item.status || summary.active !== item.active)) {
@@ -1883,16 +1894,20 @@ window.KnowledgeUI = (() => {
       renderLanding(); renderDifyDocuments();
     }
     const host = $('knowledge-detail'); host.replaceChildren(); host.hidden = false;
-    text(host, 'h2', item.logical);
+    text(host, 'h2', documentName(item));
     text(host, 'p', `${item.filename} · 上传于 ${fmt(item.uploaded)} · ${item.chunks?.length || 0} 个片段`, 'hint');
     if (item.error_message) text(host, 'p', item.error_message, 'error-text');
     text(host, 'p', `${STATE[item.status] || item.status} · ${item.active ? '活动版本' : '非活动版本'} · ${item.id}`, 'hint');
     text(host, 'p', `来源：${item.metadata.source} · 文档日期 ${item.metadata.document_date || '未知'} · 可用日期 ${item.metadata.available_date} · 失效日期 ${item.metadata.valid_to || '未声明'}`, 'hint');
+    renderOrigin(host,item.metadata?.origin);
     const tags = TAGS.filter(([key]) => (item.metadata[key] || []).length);
     if (tags.length) text(host, 'p', tags.map(([key]) => `${TAG_LABEL[key]}：${item.metadata[key].join('、')}`).join(' · '), 'hint');
     if (versions.length > 1) {
       const history = document.createElement('details'); history.className = 'knowledge-version-history'; text(history, 'summary', `版本历史 · ${versions.length} 个版本`);
-      for (const version of versions) text(history, 'p', `${version.id.slice(0, 8)}${version.id === id ? '（当前查看）' : ''} · ${STATE[version.status] || version.status}${version.active ? ' · 活动版本' : ''} · ${fmt(version.uploaded)}`, 'hint');
+      for (const version of versions) {
+        const row = text(history, 'p', `${version.id.slice(0, 8)}${version.id === id ? '（当前查看）' : ''} · ${STATE[version.status] || version.status}${version.active ? ' · 活动版本' : ''} · ${fmt(version.uploaded)}`, 'hint');
+        if(version.id!==id)row.append(action('查看此版本',()=>detail(version.id)));
+      }
       text(history, 'p', '检索按截止日期选用当时有效的最新版本；下架不退回到旧版本。', 'hint');
       host.append(history);
     }
@@ -1900,24 +1915,24 @@ window.KnowledgeUI = (() => {
     const actions = document.createElement('div'); actions.className = 'actions mt-16';
     const close = action('关闭详情', closeDetail); close.classList.add('knowledge-detail-close'); actions.append(close);
     actions.append(action('下载原件', async () => {
-      const original = await api(`knowledge/documents/${id}/original`);
+      const original = await kbApi(`knowledge/documents/${id}/original`);
       const raw = Uint8Array.from(atob(original.data), char => char.charCodeAt(0));
       const url = URL.createObjectURL(new Blob([raw], {type: 'application/octet-stream'}));
       const link = document.createElement('a'); link.href = url; link.download = original.filename; link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     }));
-    if (item.status === 'failed') actions.append(action('重试处理', async () => { await api(`knowledge/documents/${id}/retry`, 'POST', {}); await load(); await detail(id); }));
+    if (item.status === 'failed') actions.append(action('重试处理', async () => { await kbApi(`knowledge/documents/${id}/retry`, 'POST', {}); await load(); await detail(id); }));
     if (!item.active && ['failed', 'review', 'rejected'].includes(item.status)) actions.append(action('重新提取', async () => {
       if (!confirm('重新提取会清除这个未发布版本的提取和审批检查点，保留原文件。继续？')) return;
-      await api(`knowledge/documents/${id}/reextract`, 'POST', {}); await load(); await detail(id);
+      await kbApi(`knowledge/documents/${id}/reextract`, 'POST', {}); await load(); await detail(id);
     }));
     if (item.active) actions.append(action('下架此版本', async () => {
       if (!confirm('下架后该版本不再参与检索与任务证据，加密原件与历史引用仍保留。下架不退回旧版本。继续？')) return;
-      await api(`knowledge/documents/${id}/retire`, 'POST', {}); await load(); await detail(id);
+      await kbApi(`knowledge/documents/${id}/retire`, 'POST', {}); await load(); await detail(id);
     }));
     actions.append(action('永久删除', async () => {
       if (!confirm(`确定永久删除「${item.filename}」的这个版本？删除后无法恢复。`)) return;
-      await api('knowledge/documents/' + id, 'DELETE'); host.hidden = true; await load();
+      await kbApi('knowledge/documents/' + id, 'DELETE'); host.hidden = true; await load();
     }));
     host.append(actions);
     const excerpts = document.createElement('details'); excerpts.open = true; text(excerpts, 'summary', '清洗后的来源片段与定位');
@@ -1930,7 +1945,7 @@ window.KnowledgeUI = (() => {
   }
   async function review(id, host, sourceDocument, current = () => true) {
     const key = identity();
-    const batch = await api(`knowledge/documents/${id}/review`);
+    const batch = await kbApi(`knowledge/documents/${id}/review`);
     if (key !== identity() || !current()) return;
     if (!batch.extraction?.complete) { text(host, 'p', '当前资料需要人工处理原件或补充字段，尚无完整的模型候选可批准。请核对警告，修正后上传新版本。', 'note warn'); return; }
     const group = document.createElement('section'); group.className = 'review-group';
@@ -1952,12 +1967,12 @@ window.KnowledgeUI = (() => {
     for (const [label, decision] of [['批准所选并继续处理', 'approve'], ['拒绝本批候选', 'reject']]) actions.append(action(label, async () => {
       const ids = decision === 'approve' ? [...group.querySelectorAll('input:checked')].map(input => input.value) : [];
       if (!confirm(decision === 'approve' ? `批准 ${ids.length} 条候选并继续处理？` : '拒绝本批候选并保留旧活动版本？')) return;
-      await api(`knowledge/documents/${id}/review`, 'POST', {decision, digest: batch.digest, approved_ids: ids});
+      await kbApi(`knowledge/documents/${id}/review`, 'POST', {decision, digest: batch.digest, approved_ids: ids});
       await load(); await detail(id);
     }));
     group.append(actions); host.append(group);
   }
-  function renderGroups(container, data) {
+  function renderGroups(container, data, referenceContext) {
     const found = data.results || data.citations || [], groups = data.groups || [];
     const order = groups.length ? groups.map(group => group.logical) : [...new Set(found.map(item => item.logical || item.document_id))];
     for (const slot of order) {
@@ -1982,10 +1997,12 @@ window.KnowledgeUI = (() => {
         text(article, 'p', `文档日期 ${item.metadata?.document_date || '未知'} · ${JSON.stringify(item.location || {})}`, 'hint');
         for (const warning of item.warnings || []) text(article, 'p', warning, 'note warn');
         article.append(action('查看来源定位', async () => {
-          const cite = await api('knowledge/citations/' + item.citation_id);
+          const cite = await kbApi('knowledge/citations/' + item.citation_id,'GET',undefined,undefined,referenceContext);
           const source = document.createElement('div');
           text(source, 'p', `${cite.document.filename} · 版本 ${cite.document.id}`, 'hint');
-          chunkText(source, [cite.chunk]); article.append(source);
+          chunkText(source, [cite.chunk]); renderOrigin(source,cite.document.metadata?.origin);
+          if(!referenceContext)source.append(action('查看文档与版本',()=>openDocuments(cite.document.id)));
+          article.append(source);
         })); wrap.append(article);
       }
       container.append(wrap);
@@ -2009,7 +2026,7 @@ window.KnowledgeUI = (() => {
     });
     text(host, 'p', `已锚定主体：${items.join('；')}。锚定只决定先看谁的资料，不改变证据本身。`, 'hint');
   }
-  function renderEvidence(host, data) {
+  function renderEvidence(host, data, referenceContext) {
     host.replaceChildren();
     const found = data.citations || data.results || [];
     const groups = data.groups || [];
@@ -2021,7 +2038,7 @@ window.KnowledgeUI = (() => {
     aliasHint(host, data);
     anchorHint(host, data);
     if (!found.length) text(host, 'p', '没有找到满足权限与截止时间的证据。', 'empty');
-    renderGroups(host, data);
+    renderGroups(host, data, referenceContext);
     for (const warning of data.warnings || []) text(host, 'p', typeof warning === 'string' ? warning : JSON.stringify(warning), 'note warn');
     if (data.conflicts?.length) { const d = document.createElement('details'); text(d, 'summary', `冲突候选 ${data.conflicts.length} 项`); text(d, 'pre', JSON.stringify(data.conflicts, null, 2), 'mono'); host.append(d); }
     window.DesktopLibrary?.searchRendered(host, data);
@@ -2066,7 +2083,7 @@ window.KnowledgeUI = (() => {
         if (card.querySelector('.citation-pop')) return;
         const pop = document.createElement('div'); pop.className = 'citation-pop';
         for (const ref of item.evidence_ids) {
-          const cite = await api('knowledge/citations/' + ref);
+          const cite = await kbApi('knowledge/citations/' + ref);
           text(pop, 'p', `${ref} · ${cite.document.filename} · 文档日期 ${cite.document.metadata?.document_date || '未知'}`, 'hint');
           chunkText(pop, [cite.chunk]);
         }
@@ -2111,7 +2128,7 @@ window.KnowledgeUI = (() => {
   function evidence(data) {
     let host = $('knowledge-report-evidence');
     if (!host) { host = document.createElement('section'); host.id = 'knowledge-report-evidence'; ($('analysis-pane-report') || $('inspector-content')).append(host); }
-    renderEvidence(host, data); host.scrollIntoView({block: 'start'});
+    renderEvidence(host, data, {...capture(),knowledgeLibrary:'default'}); host.scrollIntoView({block: 'start'});
   }
   const CONFIG_LABELS = {provider: '服务类型', base_url: '服务地址', model: '模型名称', version: '模型版本', timeout_seconds: '单次超时（秒）', allow_external: '允许向远程服务发送资料与查询', mode: '处理范围', document_timeout_seconds: '每份资料总超时（秒）', max_calls: '每份资料最大调用次数', max_input_chars: '单次输入字符上限', max_output_tokens: '单次输出 Token 上限', budget_usd: '每份资料预算（美元）', input_usd_per_million: '每百万输入 Token 单价（美元）', output_usd_per_million: '每百万输出 Token 单价（美元）'};
   function renderIndex(embedding) {
@@ -2123,7 +2140,7 @@ window.KnowledgeUI = (() => {
   }
   async function loadActiveIndex() {
     const key = identity();
-    const embedding = await api('knowledge/config');
+    const embedding = await kbApi('knowledge/config');
     if (key === identity()) renderIndex(embedding);
   }
   function applyProfile() {
@@ -2144,7 +2161,7 @@ window.KnowledgeUI = (() => {
     if (profile) return Promise.resolve();
     if (!profileRequest) {
       const key = identity(), status = $('knowledge-profile-status');
-      const pending = api('knowledge/profile').then(data => {
+      const pending = kbApi('knowledge/profile').then(data => {
         if (profileRequest !== pending || key !== identity()) return;
         profile = data;
         applyProfile();
@@ -2178,7 +2195,7 @@ window.KnowledgeUI = (() => {
     button.disabled = true;
     status.textContent = '正在保存…';
     try {
-      const data = await api('knowledge/profile', 'PUT', {
+      const data = await kbApi('knowledge/profile', 'PUT', {
         name: $('knowledge-name').value, description: $('knowledge-description').value, icon: $('knowledge-icon').value,
         top_k: Number($('knowledge-top-k').value), retrieval: $('knowledge-retrieval').value
       });
@@ -2195,7 +2212,7 @@ window.KnowledgeUI = (() => {
   });
   async function configs() {
     const key = identity();
-    const [embedding, cleaner, indexes] = await Promise.all([api('knowledge/config'), api('knowledge/cleaner/config'), api('knowledge/indexes')]);
+    const [embedding, cleaner, indexes] = await Promise.all([kbApi('knowledge/config'), kbApi('knowledge/cleaner/config'), kbApi('knowledge/indexes')]);
     if (key !== identity()) return;
     renderIndex(embedding);
     const host = $('knowledge-configs'); host.replaceChildren();
@@ -2224,12 +2241,12 @@ window.KnowledgeUI = (() => {
         const body = {};
         for (const [name, input] of Object.entries(fields)) body[name] = input.type === 'checkbox' ? input.checked : input.type === 'number' ? Number(input.value) : input.value;
         if (secret.value) body.api_key = secret.value;
-        await api(path, 'PUT', body); secret.value = ''; notice('配置已保存。'); await configs();
-      }), action('测试连接', async () => { if (!confirm('测试将使用已保存的配置发起模型请求，远程服务可能计费。继续？')) return; const result = await api(path === 'knowledge/config' ? 'knowledge/test' : 'knowledge/cleaner/test', 'POST', {}); notice(result.message || (result.status === 'lexical_only' ? '使用关键词检索，无需模型。' : '测试已完成')); }));
+        await kbApi(path, 'PUT', body); secret.value = ''; notice('配置已保存。'); await configs();
+      }), action('测试连接', async () => { if (!confirm('测试将使用已保存的配置发起模型请求，远程服务可能计费。继续？')) return; const result = await kbApi(path === 'knowledge/config' ? 'knowledge/test' : 'knowledge/cleaner/test', 'POST', {}); notice(result.message || (result.status === 'lexical_only' ? '使用关键词检索，无需模型。' : '测试已完成')); }));
       if (path === 'knowledge/cleaner/config') buttons.append(action('清除已保存密钥', async () => {
         if (!confirm('清除此模型已保存的 API Key？')) return;
         const body = Object.fromEntries(Object.keys(CONFIG_LABELS).filter(name => name in cfg).map(name => [name, cfg[name]]));
-        await api(path, 'PUT', {...body, clear_secret: true}); secret.value = ''; await configs();
+        await kbApi(path, 'PUT', {...body, clear_secret: true}); secret.value = ''; await configs();
       })); form.append(buttons); details.append(form); host.append(details);
     }
     const target = $('knowledge-indexes'); target.replaceChildren();
@@ -2243,12 +2260,13 @@ window.KnowledgeUI = (() => {
   }
   async function uploadDocumentFile(file, options = {}) {
     if (!file || !file.size || file.size > 10 * 1024 * 1024) throw new Error('请选择 1 字节至 10 MiB 的受支持文件');
-    const key = options.key ?? identity();
+    const key = identity(), context = options.context || capture();
     const bytes = new Uint8Array(await file.arrayBuffer()); let binary = '';
     for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
     const metadata = {source: '用户上传', available_date: localInput(new Date()).slice(0, 10), ...(options.metadata || {})};
-    if (!key || key !== identity()) throw new Error('资料库已切换，请重新上传');
-    await api('knowledge/documents', 'POST', {filename: file.name, data: btoa(binary), logical: options.logical || file.name, metadata});
+    if (!options.context && (!key || key !== identity())) throw new Error('资料库已切换，请重新上传');
+    return kbApi('knowledge/documents', 'POST', {filename:file.name, data:btoa(binary), logical:options.logical||file.name,
+      metadata, chunk_size:options.chunkSize ?? 1600},undefined,context);
   }
   $('knowledge-refresh').onclick = safe(() => load());
   $('knowledge-upload').onsubmit = safe(async event => {
@@ -2309,7 +2327,7 @@ window.KnowledgeUI = (() => {
     const current = () => key === identity() && request === historyRequest;
     const status = $('knowledge-history-status');
     try {
-      const data = await api(`knowledge/recall-history?page=${page}`);
+      const data = await kbApi(`knowledge/recall-history?page=${page}`);
       if (!current()) return;
       const host = $('knowledge-history');
       host.replaceChildren();
@@ -2400,7 +2418,7 @@ window.KnowledgeUI = (() => {
     window.DesktopLibrary?.searchLoading(label);
     try {
       const record = Boolean(profile) && !answer;
-      const data = await api(answer ? 'knowledge/answer' : 'knowledge/search', 'POST', record ? {...filters, record} : filters);
+      const data = await kbApi(answer ? 'knowledge/answer' : 'knowledge/search', 'POST', record ? {...filters, record} : filters);
       if (current()) {
         if (signature === JSON.stringify(searchFilters())) {
           searchStatus('');
@@ -2426,11 +2444,531 @@ window.KnowledgeUI = (() => {
   $('knowledge-rebuild').onclick = safe(async () => {
     if (!confirm('按已保存的配置重建索引？启用远程 Embedding 时会发送资料并可能计费，失败时保留旧索引。')) return;
     const button = $('knowledge-rebuild'); button.disabled = true;
-    try { await api('knowledge/rebuild', 'POST', {}); notice('索引重建完成。'); await configs(); } finally { button.disabled = false; }
+    try { await kbApi('knowledge/rebuild', 'POST', {}); notice('索引重建完成。'); await configs(); } finally { button.disabled = false; }
   });
   return {init, load, reset, identityReset, scope: () => scope, taskScope: () => taskScopeField.value,
     restore, selection, evidence, open:openDocuments, close:closeDetail, filter:filterStatus,
     filterStatus:() => desktopStatus, processing: safe(() => openTab('processing'))};
+})();
+
+/* The import surface retains each source draft and follows real document receipts. */
+window.KnowledgeImport = (() => {
+  const sources=[['upload','▤','导入已有文本'],['notion','▣','同步自 Notion 内容'],['web','◎','同步自 Web 站点']];
+  const tools=[['jina','Jina Reader'],['firecrawl','Firecrawl'],['watercrawl','WaterCrawl']];
+  const names={notion:'Notion',...Object.fromEntries(tools)};
+  const availability={connected:'已配置',unconfigured:'未配置',failed:'连接失败',unavailable:'暂未接入'};
+  const statuses={pending:'等待处理',processing:'处理中',review:'待审阅',ready:'可检索',failed:'处理失败',rejected:'已拒绝',deleting:'等待删除'};
+  const defaults={formats:['.pdf','.docx','.txt','.md','.csv','.xlsx','.json'],
+    max_files:5,max_file_bytes:10*1024*1024,chunk_size:1600};
+  const drafts=new Map();
+  let active, host, timer;
+  const mk=(tag,cls)=>Object.assign(document.createElement(tag),{className:cls||''});
+  const id=()=>crypto.randomUUID().replaceAll('-','');
+  const storage=(context,suffix)=>'knowledge.import.'+context.knowledgeScope+'.'+suffix;
+  const scopeKey=context=>context.knowledgeScope==='private'?context.key:'local';
+  const draftKey=(context,slot)=>context.workspace+'.'+storage(context,slot);
+  function read(context,slot){
+    if(context.knowledgeScope!=='private')return AnalysisMode.read(storage(context,slot),'shared');
+    try{return JSON.parse(sessionStorage.getItem(draftKey(context,slot)));}catch(_){return null;}
+  }
+  function write(context,slot,value){
+    if(context.knowledgeScope!=='private')return AnalysisMode.write(storage(context,slot),value,'shared');
+    try{
+      const key=draftKey(context,slot);
+      if(value===null)sessionStorage.removeItem(key);
+      else sessionStorage.setItem(key,JSON.stringify(value));
+    }catch(_){/* Storage is optional. */}
+  }
+  const visible=draft=>active===draft&&!host.hidden&&document.body.dataset.view==='knowledge';
+  const current=draft=>job(draft);
+  function job(draft, source=draft.source==='web'?draft.tool:draft.source){
+    return draft.jobs[source] ||= {source,step:1,items:[],selected:{},size:draft.rules?.chunk_size||1600};
+  }
+  function persist(draft){
+    const context=draft.bridge.context;
+    if(context.workspace!==AnalysisMode.workspaceId())return;
+    const {source,tool,jobs,target,library,name,description}=draft;
+    const plain=Object.fromEntries(Object.entries(jobs).map(([key,value])=>{
+      const {step,items,selected,size,custom,query,addresses,history=[]}=value;
+      return [key,{source:key,step,selected,size,custom,query,addresses,
+        items:items.map(({file,segments,...item})=>item),history}];
+    }));
+    const value={source,tool,jobs:plain,target,library,name,description};
+    if(drafts.get(draftKey(context,draft.slot))===draft)write(context,draft.slot,value);
+    if(!draft.existing&&target){
+      const slot='library.'+target+'.'+scopeKey(context), key=draftKey(context,slot);
+      if(!drafts.has(key))drafts.set(key,draft);
+      if(drafts.get(key)===draft)write(context,slot,value);
+    }
+  }
+  function call(draft,path,method='GET',body,library=draft.target||draft.library){
+    return api('knowledge/'+path,method,body,undefined,{...draft.bridge.context,knowledgeLibrary:library});
+  }
+  function button(label,fn,primary=false,id=''){
+    const control=mk('button',primary?'btn primary':'btn');
+    control.type='button';control.textContent=label;
+    if(id)control.id=id;
+    control.onclick=fn;return control;
+  }
+  function label(host,caption,control){
+    const field=text(host,'label','','field');text(field,'span',caption);field.append(control);return control;
+  }
+  function same(draft,entry){return visible(draft)&&current(draft)===entry;}
+  function message(draft,entry,value){
+    entry.message=value;
+    if(same(draft,entry))render();
+  }
+  function refreshView(draft,entry){
+    persist(draft);if(same(draft,entry))render();
+  }
+  async function ensureTarget(draft){
+    if(draft.target)return draft.target;
+    if(!draft.name.trim())throw Error('请先填写知识库名称。');
+    if(!draft.creation){
+      draft.creation=call(draft,'libraries','POST',{id:draft.library,name:draft.name.trim(),description:draft.description},'default')
+        .then(value=>{draft.target=value.id;draft.name=value.name;persist(draft);return value.id;})
+        .finally(()=>{draft.creation=null;});
+    }
+    return draft.creation;
+  }
+  function settings(draft){
+    if(draft.reading)return draft.reading;
+    const library=draft.target||'default';
+    draft.reading=Promise.allSettled([call(draft,'import/options','GET',undefined,library),call(draft,'sources')])
+      .then(([rules,connections])=>{
+        if(rules.status==='fulfilled'&&(draft.target||'default')===library){
+          draft.rules={...rules.value,cleaner:draft.target?rules.value.cleaner:'none'};
+          draft.settingsError='';
+        }
+        else if(rules.status==='rejected')draft.settingsError=rules.reason.message;
+        if(connections.status==='fulfilled'){
+          draft.connections=Object.fromEntries(connections.value.items.map(item=>[item.id,item]));
+          draft.connectionError='';
+        }else draft.connectionError=connections.reason.message;
+        if(visible(draft)&&!current(draft).configuring)render();
+      }).finally(()=>{draft.reading=null;});
+    return draft.reading;
+  }
+  function open(container,bridge){
+    host=container;
+    const library=bridge.context.knowledgeLibrary;
+    const slot=(bridge.existing?'library.'+library:'new')+'.'+scopeKey(bridge.context);
+    const key=draftKey(bridge.context,slot);
+    let saved=read(bridge.context,slot)||{};
+    let draft=drafts.get(key);
+    if(!bridge.existing&&!bridge.resume&&(draft?.target||saved.target)){saved={};draft=null;}
+    if(!draft){
+      draft={slot, existing:bridge.existing,library:bridge.existing?library:id(),target:bridge.existing?library:'',
+        name:bridge.existing?bridge.name:'',description:'',source:'upload',tool:'jina',jobs:{},...saved};
+      for(const entry of Object.values(draft.jobs)){
+        for(const item of entry.items){
+          if(item.status==='sending'||entry.source==='upload'&&item.status==='candidate'){
+            item.status='submit_failed';item.error=item.preview?'上次提交尚未确认，可以重试。':'请重新选择原文件以继续。';
+          }
+        }
+        if(entry.step===2&&!entry.items.some(item=>item.status==='candidate'))entry.step=1;
+      }
+      drafts.set(key,draft);
+    }
+    draft.bridge=bridge;active=draft;
+    write(bridge.context,'open',{existing:bridge.existing,library,key:scopeKey(bridge.context)});
+    persist(draft);render();settings(draft);schedule();
+  }
+  function shouldResume(context){
+    const record=read(context,'open');
+    return record?.key===scopeKey(context)?record:null;
+  }
+  function leave(){
+    if(active){
+      const context=active.bridge.context;
+      write(context,'open',null);
+      persist(active);
+    }
+    active=null;clearTimeout(timer);
+  }
+  function choose(draft,source){
+    draft.source=source;persist(draft);render();schedule();
+  }
+  function settingsPanel(draft,entry,main){
+    if(draft.settingsError){
+      text(main,'p','暂未读取目标库设置 · '+draft.settingsError,'error-text');
+      main.append(button('重试读取设置',()=>settings(draft)));
+    }
+    const cleaner={none:'规则清洗与去重'}[draft.rules?.cleaner]||'规则清洗、配置的模型抽取与审阅';
+    text(main,'p',`通用分段 · 默认 ${draft.rules?.chunk_size||1600} 字符 · ${cleaner}`,'hint');
+    const size=mk('input');size.type='number';size.min='400';size.max='4000';size.step='1';size.value=entry.size;
+    label(main,'本次最大分段长度（字符）',size);
+    size.oninput=()=>{entry.size=Number(size.value);persist(draft);};
+    listItems(draft,entry,main);
+    const smallText=item=>item.file&&/\.(txt|md)$/i.test(item.name)&&item.file.size<=(draft.rules?.preview_max_bytes||512*1024);
+    const first=entry.items.find(item=>item.status==='candidate'&&(item.preview||smallText(item)));
+    if(!first&&entry.source==='upload')text(main,'p','提交前可预览 512 KiB 以内的 TXT 和 Markdown，其余格式在处理后查看分段。','hint');
+    if(first){
+      main.append(button('查看分段预览',async()=>{
+        if(!size.reportValidity())return;
+        const selectedSize=entry.size;
+        try{
+          let request={id:first.preview};
+          if(!first.preview){
+            let value;
+            try{value=new TextDecoder('utf-8',{fatal:true}).decode(await first.file.arrayBuffer());}
+            catch(_){throw Error('文件无法按 UTF-8 解码，请检查编码。');}
+            request={filename:first.name,text:value};
+          }
+          const segments=await call(draft,'import/segments','POST',{...request,chunk_size:selectedSize},draft.target||draft.library);
+          if(selectedSize===entry.size&&same(draft,entry)&&entry.step===2){first.segments=segments;render();}
+        }catch(error){message(draft,entry,error.message);}
+      }));
+      for(const item of entry.items.filter(item=>item.segments)){
+        text(main,'h3',item.name+' · '+item.segments.count+' 段');
+        for(const chunk of item.segments.chunks)text(main,'p',chunk,'source-excerpt source-text');
+      }
+    }
+    const actions=mk('div','actions');main.append(actions);
+    actions.append(button('返回数据源',()=>{entry.step=1;refreshView(draft,entry);}),
+      button('开始导入',()=>{if(size.reportValidity())submit(draft,entry);},true));
+  }
+  function filesPanel(draft,entry,main){
+    const rules=draft.rules||defaults;
+    const file=mk('input');file.type='file';file.accept=rules.formats.join(',');file.multiple=true;
+    file.hidden=true;file.id='knowledge-create-file';
+    const drop=mk('div','knowledge-dropzone');main.append(drop);
+    const check=mk('input');check.type='checkbox';check.checked=Boolean(entry.custom);
+    const option=text(main,'label','','check knowledge-import-custom');
+    option.append(check,document.createTextNode('自定义本次分段与清洗'));
+    check.onchange=()=>{entry.custom=check.checked;persist(draft);};
+    drop.append(button('选择文件',()=>file.click(),true,'knowledge-upload-from-create'),file);
+    text(drop,'p',`也可拖放文件。支持 ${rules.formats.join('、')}，每次最多 ${rules.max_files} 个，每个不超过 ${rules.max_file_bytes/1024/1024} MiB。`,'hint');
+    file.onchange=()=>selectFiles(draft,entry,[...file.files]);
+    for(const event of ['dragover','dragleave','drop'])drop.addEventListener(event,value=>{
+      value.preventDefault();drop.classList.toggle('is-dragging',event==='dragover');
+      if(event==='drop')selectFiles(draft,entry,[...value.dataTransfer.files]);
+    });
+    if(entry.items.length)listItems(draft,entry,main);
+    if(entry.items.some(item=>item.doc))
+      main.append(button('查看处理结果',()=>{entry.step=3;refreshView(draft,entry);schedule();}));
+  }
+  function selectFiles(draft,entry,files){
+    if(!files.length||entry.busy)return;
+    if(!draft.target&&!draft.name.trim())return message(draft,entry,'请先填写知识库名称。');
+    const rules=draft.rules||defaults;
+    const metadata={available_date:localInput(new Date()).slice(0,10)};
+    const items=files.slice(0,rules.max_files).map(file=>{
+      let error;
+      if(!file.size)error='文件为空';
+      else if(file.size>rules.max_file_bytes)error='文件体积超过上限';
+      else if(!rules.formats.some(ext=>file.name.toLowerCase().endsWith(ext)))error='文件格式不支持';
+      return {key:id(),name:file.name,file,metadata,status:error?'invalid':'candidate',error};
+    });
+    keepPrevious(entry);
+    entry.items=items;
+    if(!entry.custom)entry.size=rules.chunk_size;
+    entry.message=files.length>rules.max_files?`本批只接收前 ${rules.max_files} 个文件，请另开一批处理其余文件。`:'';
+    entry.step=entry.custom?2:3;
+    refreshView(draft,entry);
+    if(!entry.custom)submit(draft,entry);
+  }
+  function connectionPanel(draft,entry,main){
+    const connection=draft.connections?.[entry.source];
+    const state=connection?.state;
+    const panel=mk('section','knowledge-source-panel');main.append(panel);
+    if(!connection){
+      text(panel,'h3',draft.connectionError?'来源状态暂未读取':'正在读取来源状态');
+      if(draft.connectionError){text(panel,'p',draft.connectionError,'error-text');panel.append(button('重试读取',()=>settings(draft)));}
+      return false;
+    }
+    const name=names[entry.source];
+    text(panel,'h3',name+' '+(entry.source==='notion'?{connected:'已绑定',unconfigured:'未绑定'}[state]||availability[state]:availability[state]));
+    if(connection.tested_at)text(panel,'p',[connection.workspace,'连接测试 '+fmt(connection.tested_at)].filter(Boolean).join(' · '),'hint');
+    if(connection.error)text(panel,'p',connection.error,'error-text');
+    if(state==='unavailable'){
+      text(panel,'p','当前控制台尚无该工具的读取适配器。可选择 Jina Reader。','hint');return false;
+    }
+    if(!entry.configuring){
+      if(state!=='connected')text(panel,'p',entry.source==='notion'?'使用官方内部集成令牌，先在 Notion 中向集成共享要导入的页面。':'保存并测试 Reader API Key 后可预览公开网页。','hint');
+      panel.append(button(state==='connected'?'更换凭据':entry.source==='notion'?'去绑定':'配置工具',()=>{
+        entry.configuring=true;render();
+      },state!=='connected'));
+      if(state==='connected'||state==='failed')panel.append(button(entry.source==='notion'?'解除绑定':'清除配置',async()=>{
+        try{
+          await call(draft,'sources/'+entry.source,'DELETE');
+          keepPrevious(entry);entry.pages=[];entry.selected={};entry.items=[];
+          await settings(draft);
+        }
+        catch(error){message(draft,entry,error.message);}
+      }));
+      return state==='connected';
+    }
+    const secret=mk('input');secret.type='password';secret.autocomplete='new-password';
+    secret.placeholder=entry.source==='notion'?'粘贴内部集成令牌':'粘贴 Reader API Key';
+    label(panel,entry.source==='notion'?'Notion 集成令牌':'Reader API Key',secret);
+    const actions=mk('div','actions mt-12');panel.append(actions);
+    if(entry.source==='notion'){
+      const guide=text(panel,'a','管理 Notion 内部集成','hint');
+      guide.href='https://www.notion.so/my-integrations';guide.target='_blank';guide.rel='noopener noreferrer';
+    }
+    const cancel=button('取消配置',()=>{entry.configuring=false;entry.message='配置已取消，表单内容已保留。';render();});
+    actions.append(cancel,button('保存并测试',async event=>{
+      if(!secret.value.trim()){secret.focus();return;}
+      const control=event.currentTarget;control.disabled=cancel.disabled=true;
+      const status=text(panel,'p','正在测试连接…','hint');
+      try{
+        await call(draft,'sources/'+entry.source,'PUT',{token:secret.value.trim()});
+        entry.configuring=false;entry.message='连接测试通过。';entry.pages=null;
+        await settings(draft);
+      }catch(error){
+        entry.message=error.message;status.textContent=error.message;status.className='error-text';
+      }finally{secret.value='';control.disabled=cancel.disabled=false;}
+    },true));
+    return false;
+  }
+  async function findPages(draft,entry,append=false){
+    const request=entry.searchRequest=(entry.searchRequest||0)+1;
+    entry.searching=true;entry.error='';
+    try{
+      const value=await call(draft,'sources/notion/pages','POST',{q:entry.query||'',cursor:append?entry.cursor:null});
+      if(request!==entry.searchRequest)return;
+      const pages=new Map((append?entry.pages:[]).map(item=>[item.id,item]));
+      for(const item of value.items)pages.set(item.id,item);
+      entry.pages=[...pages.values()];entry.cursor=value.next_cursor;
+    }catch(error){
+      if(request===entry.searchRequest){entry.error=error.message;await settings(draft);}
+    }finally{
+      if(request===entry.searchRequest){entry.searching=false;if(same(draft,entry)&&entry.step===1)render();}
+    }
+  }
+  function notionPages(draft,entry,main){
+    const query=mk('input');query.type='search';query.placeholder='按页面标题搜索';query.value=entry.query||'';query.maxLength=100;
+    label(main,'选择共享给集成的页面',query);
+    query.oninput=()=>{entry.query=query.value;persist(draft);};
+    main.append(button('搜索页面',()=>findPages(draft,entry)));
+    if(entry.error)text(main,'p',entry.error,'error-text');
+    if(!entry.pages&&!entry.searching&&!entry.error)queueMicrotask(()=>findPages(draft,entry));
+    if(entry.searching)text(main,'p','正在读取页面…','hint');
+    if(entry.pages&&!entry.pages.length)text(main,'p','暂无匹配页面。请核对共享权限或搜索词。','hint');
+    const list=mk('div','knowledge-source-pages');main.append(list);
+    const selected=Object.values(entry.selected);
+    const caption=text(main,'p',`已选 ${selected.length} 个页面`,'hint');
+    const next=button('读取所选页面',()=>preview(draft,entry,Object.keys(entry.selected)),true);
+    next.disabled=!selected.length||entry.busy;
+    for(const page of new Map([...selected,...(entry.pages||[])].map(item=>[item.id,item])).values()){
+      const row=text(list,'label','','check'), check=mk('input');
+      check.type='checkbox';check.checked=Boolean(entry.selected[page.id]);row.append(check,document.createTextNode(page.title));
+      check.onchange=()=>{
+        if(check.checked&&Object.keys(entry.selected).length>=defaults.max_files){
+          check.checked=false;caption.textContent='每批最多选择 5 个页面。';return;
+        }
+        if(check.checked)entry.selected[page.id]=page;else delete entry.selected[page.id];
+        next.disabled=!Object.keys(entry.selected).length||entry.busy;
+        caption.textContent=`已选 ${Object.keys(entry.selected).length} 个页面`;persist(draft);
+      };
+    }
+    if(entry.cursor)main.append(button('加载更多页面',()=>findPages(draft,entry,true)));
+    main.append(next);
+  }
+  function webPanel(draft,entry,main){
+    const field=mk('textarea');field.rows=3;field.value=entry.addresses||'';field.placeholder='https://example.com/report';
+    label(main,'公开网页地址（每行一个，最多 5 个）',field);
+    field.oninput=()=>{entry.addresses=field.value;persist(draft);};
+    const read=button('读取网页预览',()=>preview(draft,entry,lines(field.value)),true);
+    read.disabled=Boolean(entry.busy);main.append(read);
+  }
+  async function preview(draft,entry,inputs,retry=false){
+    if(entry.busy)return;
+    if(!inputs.length||inputs.length>defaults.max_files)return message(draft,entry,'请提供 1 至 5 条来源。');
+    if(!draft.target&&!draft.name.trim())return message(draft,entry,'请先填写知识库名称。');
+    entry.busy=true;message(draft,entry,'正在读取来源，请稍候。');
+    try{
+      const response=await call(draft,'sources/'+entry.source+'/preview','POST',{items:inputs},draft.target||draft.library);
+      const items=response.items.map(item=>({key:id(),input:item.input,name:item.title||entry.selected[item.input]?.title||item.input,
+        preview:item.id,url:item.url,excerpt:item.excerpt,status:item.error?'preview_failed':'candidate',error:item.error}));
+      if(retry){
+        entry.items=entry.items.map(item=>item.status==='preview_failed'?items.find(newItem=>newItem.input===item.input)||item:item);
+      }else {
+        keepPrevious(entry);
+        entry.items=items;
+      }
+      entry.step=1;
+      entry.message=items.some(item=>item.error)?'部分来源读取失败，可重试失败项。':'已读取来源，请核对预览。';
+      if(response.items.some(item=>item.code==='SOURCE_AUTH'))await settings(draft);
+    }catch(error){entry.message=error.message;}
+    finally{entry.busy=false;refreshView(draft,entry);}
+  }
+  function keepPrevious(entry){
+    const receipts=entry.items.filter(item=>item.doc||item.error)
+      .map(({file,segments,excerpt,preview,...item})=>item);
+    if(receipts.length)entry.history=[...receipts,...(entry.history||[])].slice(0,20);
+  }
+  async function submit(draft,entry,one=null){
+    if(entry.busy)return;
+    const candidates=one?[one]:entry.items.filter(item=>item.status==='candidate');
+    if(!candidates.length){message(draft,entry,'请先选择可导入的资料。');return;}
+    if(entry.source!=='upload')entry.message='';
+    entry.busy=true;entry.step=3;refreshView(draft,entry);
+    try{
+      const target=await ensureTarget(draft);
+      for(const item of candidates){
+        item.status='sending';item.error='';refreshView(draft,entry);
+        try{
+          const result=item.preview
+            ? await call(draft,'import/submit','POST',{id:item.preview,chunk_size:entry.size})
+            : await draft.bridge.upload(item.file,{context:{...draft.bridge.context,knowledgeLibrary:target},chunkSize:entry.size,metadata:item.metadata});
+          item.doc=result.id;item.status=result.status;item.error=result.error_message;
+        }catch(error){item.status='submit_failed';item.error=error.message;}
+        refreshView(draft,entry);
+      }
+      if(visible(draft))await draft.bridge.refresh(target);
+    }catch(error){
+      entry.step=1;entry.message=error.message;
+    }finally{
+      entry.busy=false;refreshView(draft,entry);schedule();
+    }
+  }
+  function listItems(draft,entry,main,items=entry.items){
+    const list=mk('div','knowledge-import-list');main.append(list);
+    for(const item of items){
+      const row=mk('article','knowledge-import-row');list.append(row);
+      text(row,'strong',item.name);
+      text(row,'span',statuses[item.status]||({candidate:'待确认',sending:'正在提交',invalid:'无效文件',
+        preview_failed:'读取失败',submit_failed:'提交失败'})[item.status]||item.status,'tag');
+      if(item.url)text(row,'p',item.url,'hint');
+      if(item.error)text(row,'p',item.error,'error-text');
+      if(item.excerpt&&entry.step!==3){
+        const details=mk('details');row.append(details);
+        text(details,'summary','正文预览');text(details,'p',item.excerpt,'source-text');
+      }
+      const actions=mk('div','actions');row.append(actions);
+      if(item.doc){
+        actions.append(button('查看文档',()=>draft.bridge.viewDocument(draft.target,item.doc)));
+        if(item.status==='ready')actions.append(button('召回测试',()=>draft.bridge.recall(draft.target)));
+        if(item.status==='failed')actions.append(button('重试处理',async()=>{
+          try{const result=await call(draft,'documents/'+item.doc+'/retry','POST',{});
+            item.status=result.status;item.error=result.error_message;refreshView(draft,entry);schedule();}
+          catch(error){message(draft,entry,error.message);}
+        }));
+      }
+      if(items===entry.items&&item.status==='submit_failed'){
+        if(item.file||item.preview)actions.append(button('重试提交',()=>submit(draft,entry,item)));
+        else text(actions,'span','请选择原文件以重试。','hint');
+      }
+    }
+    if(items===entry.items&&items.some(item=>item.status==='preview_failed'))main.append(button('重试读取失败项',()=>
+      preview(draft,entry,entry.items.filter(item=>item.status==='preview_failed').map(item=>item.input),true)));
+  }
+  function previousImports(draft,entry,main){
+    if(!entry.history?.length)return;
+    const history=mk('details','knowledge-import-history');
+    text(history,'summary',`近期导入 · ${entry.history.length} 条`);
+    listItems(draft,entry,history,entry.history);
+    main.append(history);
+  }
+  function schedule(){
+    clearTimeout(timer);
+    const draft=active;
+    if(!draft||!visible(draft)||!draft.target)return;
+    const items=Object.values(draft.jobs).flatMap(entry=>[...entry.items,...(entry.history||[])])
+      .filter(item=>item.doc&&['pending','processing'].includes(item.status));
+    if(!items.length)return;
+    timer=setTimeout(async()=>{
+      const responses=await Promise.allSettled([call(draft,'queue'),...items.map(item=>call(draft,'documents/'+item.doc))]);
+      const [queue,...details]=responses;
+      if(queue.status==='fulfilled')draft.worker=queue.value.worker;
+      else draft.pollError=queue.reason.message;
+      let published=false;
+      for(const [index,result]of details.entries()){
+        if(result.status==='fulfilled'){
+          items[index].status=result.value.status;items[index].error=result.value.error_message;
+          published ||= result.value.status==='ready';
+        }else draft.pollError=result.reason.message;
+      }
+      if(details.every(result=>result.status==='fulfilled')&&queue.status==='fulfilled')draft.pollError='';
+      persist(draft);
+      if(visible(draft)){if(current(draft).step===3)render();if(published)draft.bridge.refresh(draft.target);schedule();}
+    },1800);
+  }
+  function resultPanel(draft,entry,main){
+    text(main,'h2','处理结果');
+    text(main,'p','文件接收后进入处理队列，显示「可检索」时可查看召回来源。','hint');
+    if(entry.items.some(item=>item.status==='pending')&&draft.worker&&!draft.worker.online)
+      text(main,'p','处理进程离线。资料仍在队列中，进程恢复后继续处理。','warn');
+    if(draft.pollError)text(main,'p','读取处理状态失败 · '+draft.pollError+'。将自动重试。','error-text');
+    listItems(draft,entry,main);
+    const more=button('继续添加资料',()=>{entry.step=1;refreshView(draft,entry);});
+    more.disabled=Boolean(entry.busy);main.append(more);
+    if(draft.target)main.append(button('查看文档列表',()=>draft.bridge.viewDocument(draft.target),true));
+    previousImports(draft,entry,main);
+  }
+  function render(){
+    const draft=active;
+    if(!draft||!visible(draft))return;
+    const entry=job(draft), head=mk('div','knowledge-step-head'), main=mk('div','knowledge-create-body');
+    host.replaceChildren(head,main);head.append(button('← 返回知识库',draft.bridge.back));
+    const steps=mk('ol','knowledge-steps');steps.setAttribute('aria-label','导入步骤');head.append(steps);
+    ['选择数据源','分段与清洗','处理结果'].forEach((title,index)=>{
+      const row=mk('li');steps.append(row);
+      const control=button(title,()=>{entry.step=index+1;entry.configuring=false;refreshView(draft,entry);});
+      control.disabled=entry.busy||index+1>entry.step||index+1===entry.step;
+      if(index+1===entry.step)control.setAttribute('aria-current','step');
+      text(control,'span',String(index+1),'knowledge-step-number').setAttribute('aria-hidden','true');
+      row.append(control);
+    });
+    text(main,'h1',draft.target?'添加资料':'创建知识库');
+    if(draft.target)text(main,'p','目标知识库 · '+draft.name,'hint');
+    else{
+      const fields=mk('div','knowledge-create-target');main.append(fields);
+      const name=mk('input');name.value=draft.name;name.maxLength=80;name.required=true;
+      const description=mk('input');description.value=draft.description;description.maxLength=500;
+      label(fields,'知识库名称',name);label(fields,'描述（可选）',description);
+      name.oninput=()=>{draft.name=name.value;persist(draft);};
+      description.oninput=()=>{draft.description=description.value;persist(draft);};
+      fields.append(button('创建空知识库',async event=>{
+        if(!name.reportValidity())return;
+        const control=event.currentTarget;control.disabled=true;
+        try{const target=await ensureTarget(draft);if(visible(draft))await draft.bridge.viewDocument(target);}
+        catch(error){message(draft,entry,error.message);}
+        finally{control.disabled=false;}
+      }));
+    }
+    if(entry.message)text(main,'p',entry.message,'hint').setAttribute('role','status');
+    if(entry.step===2){settingsPanel(draft,entry,main);return;}
+    if(entry.step===3){resultPanel(draft,entry,main);return;}
+    text(main,'h2','选择数据源');
+    const options=mk('div','knowledge-source-options');options.setAttribute('role','group');options.setAttribute('aria-label','资料来源');main.append(options);
+    for(const [key,icon,title]of sources){
+      const control=button('',()=>choose(draft,key));
+      control.dataset.knowledgeSource=key;control.classList.toggle('selected',draft.source===key);
+      control.setAttribute('aria-pressed',String(draft.source===key));
+      text(control,'span',icon,'knowledge-source-mark').setAttribute('aria-hidden','true');
+      text(control,'span',title);options.append(control);
+    }
+    options.onkeydown=event=>{
+      const keys=['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'];
+      if(!keys.includes(event.key))return;
+      event.preventDefault();
+      const index=sources.findIndex(([key])=>key===draft.source);
+      const next=sources[(index+(keys.indexOf(event.key)%2?1:2))%3][0];
+      choose(draft,next);host.querySelector('[data-knowledge-source="'+next+'"]')?.focus();
+    };
+    if(draft.source==='upload'){filesPanel(draft,entry,main);previousImports(draft,entry,main);return;}
+    if(draft.source==='web'){
+      const group=mk('div','actions knowledge-web-tools');group.setAttribute('role','group');group.setAttribute('aria-label','网页读取工具');
+      main.append(group);
+      for(const [key,title]of tools){
+        const status=draft.connections?.[key]?.state;
+        const choice=button(title+(status?' · '+availability[status]:''),()=>{draft.tool=key;persist(draft);render();});
+        choice.setAttribute('aria-pressed',String(draft.tool===key));group.append(choice);
+      }
+    }
+    if(!connectionPanel(draft,entry,main)){previousImports(draft,entry,main);return;}
+    if(draft.source==='notion')notionPages(draft,entry,main);else webPanel(draft,entry,main);
+    if(entry.items.length)listItems(draft,entry,main);
+    if(entry.items.some(item=>item.status==='candidate'))
+      main.append(button('下一步',()=>{entry.step=2;refreshView(draft,entry);},true));
+    if(entry.items.some(item=>item.doc))
+      main.append(button('查看处理结果',()=>{entry.step=3;refreshView(draft,entry);schedule();}));
+    previousImports(draft,entry,main);
+  }
+  return {open,leave,shouldResume};
 })();
 
 /* Shared projected door geometry and contact timing, independent of the DOM. */

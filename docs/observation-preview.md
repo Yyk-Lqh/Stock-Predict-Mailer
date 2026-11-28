@@ -68,6 +68,8 @@ file_request = {"format": "csv", "content": Path("actual.csv").read_bytes().deco
 
 input 含 format、content_sha256、bytes。JSON/CSV 原文摘要识别接收到的 UTF-8 内容；对象方式识别其规范 JSON 字节。observation_id 则识别校验后标准观测。相同观测的不同空白排版可有不同原文摘要。浏览器保留未编辑文件的 BOM 和 CRLF；原文经用户编辑后，摘要改为识别编辑后的文本。预览针对单份已校验的预测记录快照计算，不二次读入不同版本评分，也不调用归档 evaluate/写锁/发布方法。
 
+已到期且观测可用时，可从预测详情显式「提交观测并保存评估」。`POST /api/tasks/{task_id}/forecast/evaluate` 接受 `preview`（原请求与预览返回的固定 `as_of`）、`forecast_record_id` 和 `observation_id`。服务端校验任务所有者及模式，核对预测和观测摘要，再使用现有归档机制保存回执。同一预测与观测的重试返回已有回执。
+
 ## 验证
 
 - 新增 25 项专项全部通过，覆盖 JSON/CSV、编码/摘要、数值/字段、时点、权限/CSRF、已有回执及整工作区无写入。完整回归 783 项，781 通过、2 项 Windows 符号链接权限跳过，耗时 331.760 秒。

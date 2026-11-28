@@ -6,11 +6,17 @@
 
 `GET /api/session` 返回稳定的 `workspace_id`，供浏览器区分同源下的不同工作区。浏览器对会话、任务及记忆请求发送 `X-Analysis-Mode: standard` 或 `professional`。任务响应在 `metadata.mode` 返回归属，会话和记忆条目使用 `mode`。带模式的读取会校验归属，列表按模式过滤。省略请求头可汇总可访问的历史。新会话和维护操作默认使用普通模式，旧的任务提交仍可通过有无 `workflow` 推断模式。未能归类的记录可通过 `legacy` 读取和导出。
 
+任务记录使用 `GET /api/tasks/records` 查询可访问的主任务。支持 `mode`（`all`、`standard`、`professional`、`legacy`）、`state`（`all`、`active` 或任务状态）、`q`（最多 128 字）、`limit`（1–100）与 `before`。关键词按字面匹配标的、任务或流程名称、任务 ID 和错误码。结果按状态更新时间倒序分页，下一页传入 `next_before`。`counts` 统计当前模式和关键词下各状态的完整匹配数。原 `/api/tasks` 继续按提交顺序提供游标。
+
 专业任务提交包含 `workflow`。两种模式均可在提交时传入 `model_id` 和 `tools`，后者只接受主 Agent 已授权的 MCP 工具。工具配置、模型配置和知识库仍使用原有权限。`DELETE /api/tasks/{id}` 删除指定模式的终态任务及其进度，保留会话消息。取消、删除和邮件回执更正均校验模式及原有权限。
 
 ### 专业模式的流程对话
 
 `GET /api/workflows/definitions` 返回当前所有者的命名流程、系统模板、开始节点的参数定义和可运行状态。`POST /api/workflows/definitions` 保存流程，`PUT /api/workflows/definitions/{id}` 使用 `base_revision` 更新，并保留以前的版本。提交 `draft: true` 可保存未通过执行校验的图，`draft_edits` 可保存尚未提交的节点表单。运行前会重新校验所提交的流程快照。
+
+自定义流程卡片的「版本记录」使用 `GET /api/workflows/definitions/{id}/revisions`，按保存顺序倒序返回，使用 `next_before` 继续分页。追加 `/{revision}` 可读取该版本的定义。向 `/{revision}/restore` 提交当前的 `base_revision`，可将旧定义按现行校验规则保存为同一流程的新版本。新版本的 `restored_from` 指向来源版本，保留原版本和独立的运行记录。
+
+「与当前版本对比」读取打开版本记录时确认的当前版本和所选版本。对比方向是当前版本到所选版本，节点以 ID 匹配，连线按端口、字段和条件匹配。对比读取已保存的定义，恢复时仍以服务端校验为准。
 
 `POST /api/workflows/validate` 接收 `workflow`，可附带本轮 `model_id` 和 `tools`，返回 `runnable` 和 `issues`。问题包含严重级别、原因，以及适用的节点、连线和端口定位信息。错误阻止创建任务，提醒可在运行前核对。
 
@@ -37,7 +43,7 @@
 
 - GET `/api/{models|mcp|agents}`：列出配置；POST 同路径创建，返回 201。
 - GET `/api/{collection}/{id}`：查看；PUT 完整替换配置，未提交的凭据保留；DELETE 删除，无引用才允许。
-- POST `/api/models/{id}/test`：用 Mock 预测实际请求 Chat Completions 并校验结果；有调用及费用预算。
+- POST `/api/models/{id}/test` 使用示例预测测试连接与结构化输出，沿用调用及费用预算。可提交模型的 `config_revision`，成功响应标记测试对应的配置版本。配置更新会生成新的版本标识。
 - POST `/api/mcp/{id}/test`：MCP initialize + tools/list + resources/list，返回工具输入/输出 Schema、资源及协商版本。此操作不赋予工具调用权限。
 - POST `/api/mcp/{id}/call`：`{"tool":"get_context","arguments":{"subject":"DEMO.SZ"}}`，仅允许被用户标记 read 的白名单工具。
 - POST `/api/mcp/{id}/read`：`{"uri":"stock://demo/contract"}`，精确 URI 白名单。

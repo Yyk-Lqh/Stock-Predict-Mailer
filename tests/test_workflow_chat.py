@@ -76,6 +76,78 @@ class WorkflowChatTests(unittest.TestCase):
         self.assertEqual(self.client.put(f"{BASE}/{base['id']}", headers=MODE, json=update).status_code, 404)
         self.client.headers["X-Memory-Key"] = owner_key
 
+    def test_restore_revision_keeps_original_run_and_current_draft(self):
+        owner_key = self.access()
+        value = graph()
+        value["canvas"] = {"notes": [{"id": "note-1", "x": 123, "y": 61, "width": 280, "height": 150,
+                                      "font": 16, "color": "green", "body": "原版说明"}], "comments": []}
+        image = {"mime": "image/png", "data": base64.b64encode(b"\x89PNG\r\n\x1a\n").decode()}
+        source = self.save("原版", value, image=image, inputs={"prediction": True, "constraints": True})
+        old_run = self.submit(source, self.payload(source, constraints=["只隔离本轮约束"]))
+        self.assertEqual(self.terminal(old_run)["status"]["state"], "completed")
+        definition = f"{BASE}/{source['id']}"
+        revisions = definition + "/revisions"
+        value["nodes"][3]["data"]["label"] = "调整后"
+        current = self.client.put(definition, headers=MODE, json={
+            "name": "当前草稿", "graph": value, "base_revision": source["revision"], "draft": True, "image": None,
+            "draft_edits": [["main", {"label": "仍在编辑"}]],
+        }).json()
+        old_path = revisions + "/" + source["revision"]
+        restore_path = old_path + "/restore"
+        payload = {"base_revision": current["revision"]}
+        self.assertEqual(self.client.get(old_path, headers=MODE).json(), source)
+        self.assertEqual(self.client.get(revisions, headers={"X-Analysis-Mode": "standard"}).status_code, 403)
+        self.assertEqual(self.client.post(restore_path, headers=MODE, json={"base_revision": "stale"}).json()
+                         ["error"]["code"], "WORKFLOW_CONFLICT")
+        self.access()
+        self.assertEqual(self.client.get(revisions, headers=MODE).status_code, 404)
+        self.assertEqual(self.client.get(old_path, headers=MODE).status_code, 404)
+        self.assertEqual(self.client.post(restore_path, headers=MODE, json=payload).status_code, 404)
+        self.client.headers["X-Memory-Key"] = owner_key
+
+        response = self.client.post(restore_path, headers=MODE, json=payload)
+        self.assertEqual(response.status_code, 201, response.text)
+        restored = response.json()
+        self.assertEqual(restored["restored_from"], source["revision"])
+        for key in ("id", "name", "graph", "graph_version", "image", "inputs"):
+            self.assertEqual(restored[key], source[key], key)
+        self.assertEqual(self.client.post(restore_path, headers=MODE, json=payload).json()
+                         ["error"]["code"], "WORKFLOW_CONFLICT")
+        listing = self.client.get(revisions, headers=MODE).json()["items"]
+        self.assertEqual([row["revision"] for row in listing],
+                         [restored["revision"], current["revision"], source["revision"]])
+        self.assertTrue(listing[1]["draft"])
+        self.assertNotIn("graph", listing[0])
+        self.assertNotIn("image", listing[0])
+        detail = self.client.get(f"{definition}/runs/{old_run}", headers=MODE).json()
+        self.assertEqual(detail["version"], source["revision"])
+        self.assertEqual(detail["task"]["metadata"]["workflow"]["graph"]["nodes"], source["graph"]["nodes"])
+        self.assertEqual(self.client.get(BASE, headers=MODE).json()["items"][1]["revision"], restored["revision"])
+        draft_restore = self.client.post(f"{revisions}/{current['revision']}/restore", headers=MODE,
+                                         json={"base_revision": restored["revision"]}).json()
+        self.assertTrue(draft_restore["draft"])
+        self.assertEqual(draft_restore["draft_edits"], current["draft_edits"])
+
+    def test_revision_listing_pages_without_duplicates(self):
+        self.access()
+        first = self.save("版本 0")
+        definition = f"{BASE}/{first['id']}"
+        revision = first["revision"]
+        for index in range(1, 22):
+            response = self.client.put(definition, headers=MODE, json={
+                "name": f"版本 {index}", "graph": first["graph"], "base_revision": revision,
+            })
+            self.assertEqual(response.status_code, 200, response.text)
+            revision = response.json()["revision"]
+        path = definition + "/revisions"
+        page = self.client.get(path, headers=MODE).json()
+        second = self.client.get(f"{path}?before={page['next_before']}", headers=MODE).json()
+        self.assertEqual(len(page["items"]), 20)
+        self.assertEqual(second["next_before"], None)
+        self.assertEqual([row["name"] for row in page["items"] + second["items"]],
+                         [f"版本 {index}" for index in range(21, -1, -1)])
+        self.assertEqual(self.client.get(f"{path}?before=0", headers=MODE).status_code, 400)
+
     def test_pinned_versions_inputs_owner_scope_and_idempotence(self):
         key = self.access()
         first = self.save("流程甲", inputs={"prediction": True, "constraints": True})

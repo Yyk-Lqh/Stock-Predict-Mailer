@@ -128,7 +128,41 @@ class WorkflowChat:
                 flow.update(runnable=True, reason=None)
         return {"items": flows, "fields": FIELDS, "image_limit": IMAGE_LIMIT, "image_types": sorted(IMAGE_TYPES)}
 
-    def save(self, owner, raw, *, flow_id=None):
+    def revisions(self, owner, flow_id, *, before):
+        with self.store.db() as con:
+            rows = con.execute("""
+                SELECT rowid,revision,graph_version,json_extract(body,'$.name'),
+                    json_extract(body,'$.updated_at'),json_extract(body,'$.draft'),
+                    json_extract(body,'$.restored_from')
+                FROM workflow_definitions WHERE owner=? AND id=? AND rowid<?
+                ORDER BY rowid DESC LIMIT 21
+                """, (owner, flow_id, before)).fetchall()
+            if not rows and not con.execute(
+                "SELECT 1 FROM workflow_definitions WHERE owner=? AND id=? LIMIT 1", (owner, flow_id)
+            ).fetchone():
+                raise ServiceError("NOT_FOUND", "流程没有保存的版本")
+        return {
+            "items": [{"revision": revision, "graph_version": version, "name": name, "updated_at": updated,
+                       "draft": bool(draft), **({"restored_from": source} if source else {})}
+                      for _, revision, version, name, updated, draft, source in rows[:20]],
+            "next_before": rows[19][0] if len(rows) > 20 else None,
+        }
+
+    def restore(self, owner, flow_id, revision, raw):
+        if set(raw) - {"base_revision", "model_id", "tools"} or not isinstance(raw.get("base_revision"), str):
+            raise ServiceError("INVALID_INPUT", "恢复需要当前流程版本")
+        if flow_id == "system":
+            raise ServiceError("FORBIDDEN", "系统模板由当前配置生成")
+        source = self.get(owner, flow_id, revision)
+        if revision == raw["base_revision"]:
+            raise ServiceError("INVALID_INPUT", "该版本已是当前版本")
+        return self.save(owner, {
+            **raw, "name": source["name"], "description": source.get("description", ""),
+            "graph": source["graph"], "inputs": source["inputs"], "image": source.get("image"),
+            "draft": True, "draft_edits": source.get("draft_edits", []),
+        }, flow_id=flow_id, restored_from=revision)
+
+    def save(self, owner, raw, *, flow_id=None, restored_from=None):
         if set(raw) - {"name", "description", "graph", "inputs", "base_revision", "import_key", "model_id", "tools", "image",
                        "draft", "draft_edits"}:
             raise ServiceError("INVALID_INPUT", "流程定义包含未知字段")
@@ -196,10 +230,10 @@ class WorkflowChat:
                      "image": image_value(raw.get("image", current.get("image") if current else None)),
                      "updated_at": utcnow().isoformat(), **({"fields": variables} if typed else {}),
                      **({"draft": True, "issues": problems} if problems else {}),
-                     **({"draft_edits": pending} if pending else {})}
+                     **({"draft_edits": pending} if pending else {}),
+                     **({"restored_from": restored_from} if restored_from else {})}
             value["revision"] = identity(value)
             with self.store.db() as con:
-                # Reverting to an earlier revision also makes it the latest revision.
                 con.execute("INSERT OR REPLACE INTO workflow_definitions VALUES (?,?,?,?,?)",
                             (owner, value["id"], value["revision"], value["graph_version"], json.dumps(value, ensure_ascii=False)))
             return value

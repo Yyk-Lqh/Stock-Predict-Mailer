@@ -214,6 +214,22 @@ def make_server(root, port=8767, master_key=None, market=None):
                             self.output(workflow_chat.save(owner, self.body()), 201)
                         elif len(route) == 1 and method == "PUT":
                             self.output(workflow_chat.save(owner, self.body(), flow_id=route[0]))
+                        elif len(route) >= 2 and route[1] == "revisions":
+                            if len(route) == 2 and method == "GET":
+                                query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                                try:
+                                    before = int(query.get("before", [str(2**63 - 1)])[0])
+                                    if not 1 <= before <= 2**63 - 1 or set(query) - {"before"} or len(query.get("before", [])) > 1:
+                                        raise ValueError()
+                                except ValueError:
+                                    raise ServiceError("INVALID_INPUT", "版本历史游标无效") from None
+                                self.output(workflow_chat.revisions(owner, route[0], before=before))
+                            elif len(route) == 3 and method == "GET":
+                                self.output(workflow_chat.get(owner, route[0], route[2]))
+                            elif len(route) == 4 and route[3] == "restore" and method == "POST":
+                                self.output(workflow_chat.restore(owner, route[0], route[2], self.body()), 201)
+                            else:
+                                raise ServiceError("NOT_FOUND", "流程版本接口不存在")
                         elif len(route) in (2, 3) and route[1] == "runs" and method == "GET":
                             query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
                             node = query.get("node", [None])[0]

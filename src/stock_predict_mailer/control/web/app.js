@@ -394,7 +394,7 @@ function showView(name) {
   if (location.hash.slice(1) !== name) history.replaceState(null, '', '#' + name);
   window.scrollTo({top: 0});
   window.Workbench?.view(name);
-  if (name === 'overview') renderSteps();
+  if (name === 'overview') window.ConsoleGuide?.load();
   if (name === 'records') window.DesktopRecords?.view(previous !== name);
   window.ToolsCenter?.view(name);
 }
@@ -483,10 +483,8 @@ async function refresh() {
   renderModels();
   renderServers();
   renderSettings();
-  renderVitals();
-  renderSteps();
-  loadOverviewTask();
-  if ($('workspace-health')) $('workspace-health').textContent = settings.default_model_id ? '分析模型已配置' : '尚未选择分析模型';
+  window.ConsoleGuide?.render();
+  if ($('workspace-health')) $('workspace-health').textContent = profiles.some(p=>p.id===settings.default_model_id&&p.enabled) ? '分析模型已配置' : '尚无可用默认模型';
   window.DesktopSettings?.refresh();
 }
 globalThis.refreshConsole = refresh;
@@ -857,134 +855,6 @@ window.addEventListener('beforeunload', event => {
 /* ---------- 三步进度 ---------- */
 /* 每一步的完成态都从真实状态派生，不靠用户手动勾：
    模型看 default_model_id，预测看表单当前值，报告看最近一次任务。 */
-let overviewTask = null;
-function draftBrief() {
-  const subject = ($('p-subject').value || '').trim();
-  if (!subject) return {done: false, meta: '还没填标的代码。填上之后这一步会自动打勾。'};
-  const until = isoFromLocal($('p-valid-until').value);
-  if (!until) return {done: false, meta: '有效期是空的，提交会被校验拒绝。'};
-  if (new Date(until) <= new Date()) return {done: false, meta: '有效期已经过了，需要往后调一天。'};
-  const direction = numericPrediction ? `${numericPrediction.value} ${numericPrediction.value_unit}` : {up: '上涨', down: '下跌', flat: '持平'}[currentDirection()];
-  if (!direction) return {done: false, meta: '请按上游预测选择本轮方向。'};
-  const horizon = horizonText({value: Number($('p-horizon-value').value) || 0, unit: $('p-horizon-unit').value});
-  const named = facts.filter(fact => (fact.name || '').trim()).length;
-  return {done: true, meta: `${subject} · ${direction} · ${horizon} · `
-    + (named ? `${named} 条客观事实` : '未附客观事实')};
-}
-function renderSteps() {
-  const host = $('steps');
-  if (!host || !settings) return;
-  const model = profiles.find(profile => profile.id === settings.default_model_id);
-  const draft = draftBrief();
-  const task = overviewTask;
-  const state = task?.status?.state || '';
-  const error = task?.metadata?.error?.code;
-  const steps = [
-    {
-      done: Boolean(model && model.enabled),
-      title: '有一个默认模型',
-      meta: model
-        ? (model.enabled ? `已选用 ${model.name} · ${model.provider}/${model.model}`
-          : `${model.name} 已停用，任务会停在调用模型之前。`)
-        : '还没有默认模型。可以先用 Mock 模型离线跑通，之后再换成真实模型。',
-      action: {label: model && model.enabled ? '更换模型' : '去配置模型', view: 'settings', panel: 'models'}
-    },
-    {
-      done: draft.done,
-      title: '填一份预测',
-      meta: draft.meta,
-      action: {label: draft.done ? '继续编辑' : '去填写', view: 'analysis'}
-    },
-    {
-      done: state === 'completed',
-      title: '拿到一份报告',
-      meta: task
-        ? `${shortTime(task.status.timestamp)} · ${TASK_STATE[state] || state}`
-          + (error ? ` · ${error}` : '') + (task.metadata?.request?.subject ? ` · ${task.metadata.request.subject}` : '')
-        : '还没有跑过任务。跑完一次，这里会显示最近一次的结果。',
-      action: state === 'completed' ? {label: '查看报告', open: task} : {label: '去跑一次', view: 'analysis'}
-    }
-  ];
-  const doneCount = steps.filter(step => step.done).length;
-  const next = steps.findIndex(step => !step.done);
-  $('steps-count').textContent = `${doneCount} / 3 已完成`;
-  host.replaceChildren();
-  steps.forEach((step, index) => {
-    const row = document.createElement('li');
-    if (step.done) row.dataset.done = 'true';
-    if (index === next) row.dataset.current = 'true';
-    const mark = text(row, 'span', step.done ? '✓' : String(index + 1), 'mark');
-    mark.setAttribute('aria-hidden', 'true');
-    const body = document.createElement('span');
-    body.className = 'body';
-    text(body, 'b', step.title);
-    text(body, 'span', step.meta, 'meta');
-    row.append(body);
-    const cell = document.createElement('span');
-    cell.className = 'go';
-    const button = text(cell, 'button', step.action.label, 'btn tiny ' + (index === next ? 'primary' : 'quiet'));
-    button.type = 'button';
-    if (step.action.open) button.onclick = () => openRecord(step.action.open);
-    else {
-      button.dataset.goto = step.action.view;
-      if (step.action.panel) button.dataset.panel = step.action.panel;
-    }
-    row.append(cell);
-    host.append(row);
-  });
-}
-async function loadOverviewTask() {
-  try {
-    // 取几条再挑主任务：最新一条很可能是刚跑完的子 Agent 任务。
-    const page = await api('tasks?order=desc&limit=5');
-    overviewTask = page.items.find(topLevel) || null;
-  } catch (error) {
-    overviewTask = null;
-  }
-  renderSteps();
-}
-
-/* ---------- vitals ---------- */
-function renderVitals() {
-  const host = $('vitals');
-  host.replaceChildren();
-  const defaultModel = profiles.find(p => p.id === settings.default_model_id);
-  const tools = servers.reduce((n, s) => n + s.allowed_tools.length, 0);
-  const transport = {file: '本地文件（模拟，不会真的寄出）', smtp: 'SMTP', mcp: 'MCP 邮件工具'}[settings.mail.transport] || settings.mail.transport;
-  const allow = allowlistSentence(settings.mail.recipient_allowlist, settings.mail.transport);
-  const rows = [
-    ['默认模型', defaultModel ? defaultModel.name : '未配置', defaultModel ? 'ok' : 'warn', defaultModel ? '' : '分析前必须先有模型', defaultModel ? null : 'models'],
-    ['工具中心', servers.length ? `${servers.length} 个 MCP 服务 · ${tools} 个工具已授权` : '未连接', servers.length ? 'ok' : 'off', servers.length ? '' : '可选，不连接也能分析', 'tools'],
-    ['邮件通道', transport, allow.tone ? 'warn' : 'ok', allow.text, allow.tone === 'danger' ? 'settings' : null],
-    ['上游数据', '通过本页填写', 'ok', '控制台不做定时拉取', null]
-  ];
-  for (const [label, value, dot, flag, goto] of rows) {
-    const row = document.createElement('div');
-    row.className = 'vital';
-    text(row, 'span', label, 'label');
-    const val = document.createElement('span');
-    val.className = 'value';
-    const d = document.createElement('i');
-    d.className = 'dot ' + dot;
-    val.append(d, document.createTextNode(value));
-    row.append(val);
-    const right = document.createElement('span');
-    right.className = 'flag';
-    right.textContent = flag;
-    if (goto) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'btn quiet tiny';
-      b.dataset.goto = 'settings';
-      b.dataset.panel = goto;
-      b.textContent = '去设置 →';
-      right.append(b);
-    }
-    row.append(right);
-    host.append(row);
-  }
-}
-
 /* ---------- facts editor ---------- */
 let facts = [];
 function factRow(fact, index) {
@@ -1892,8 +1762,7 @@ async function poll(id) {
     window.PonyOffice?.sync(task, progress.events);
     if (!showTask(task) || progress.events.length === 100) setTimeout(() => { if (same()) poll(id); }, 700);
     else {
-      overviewTask = task;
-      renderSteps();
+      window.ConsoleGuide?.task(task);
       if (memoryKey) refreshMemory().catch(error => { if (same()) notice(error.message, true); });
     }
   } catch (error) {
@@ -2163,39 +2032,6 @@ $('record-query').oninput = () => {
   window.DesktopRecords.filterChanged(220);
 };
 
-/* ---------- overview actions ---------- */
-$('start-analysis').onclick = () => {
-  showView('analysis');
-  if (!profiles.length || !settings.default_model_id) {
-    notice('分析需要先有一个默认模型。点「用示例预测试一遍」会自动创建 Mock 模型。', true);
-  }
-};
-async function ensureMockModel() {
-  let model = profiles.find(item => item.provider === 'mock' && item.enabled);
-  if (!model) {
-    model = await api('models', 'POST', {name: 'Mock 分析模型', provider: 'mock'});
-    await refresh();
-  }
-  return model.id;
-}
-$('try-sample').onclick = async () => {
-  const button = $('try-sample');
-  const scope = AnalysisMode.capture();
-  button.disabled = true;
-  try {
-    const model = await ensureMockModel();
-    if (!AnalysisMode.current(scope)) return;
-    AnalysisMode.write('model', model);
-    applySample();
-    showView('analysis');
-    notice('已为当前模式选择 Mock，并准备好示例预测与事实。点「提交分析」即可。');
-  } catch (error) {
-    if (AnalysisMode.current(scope)) notice(error.message, true);
-  } finally {
-    button.disabled = false;
-  }
-};
-
 /* ---------- boot ---------- */
 (async () => {
   try {
@@ -2206,8 +2042,7 @@ $('try-sample').onclick = async () => {
     }
     const initial = location.hash.replace('#', '');
     await ensureBrowserMemory().catch(() => { /* The memory page shows the status and recovery action. */ });
-    await refresh();
-    renderSteps();
+    await refresh().catch(error => notice(error.message, true));
     await window.Workbench?.init();
     window.WorkflowChat?.init();
     const view = initial === 'mcp' ? 'tools' : ['overview', 'analysis', 'records', 'settings', 'memory', 'knowledge', 'tools'].includes(initial) ? initial : 'analysis';

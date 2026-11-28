@@ -222,6 +222,7 @@ window.Workbench = (() => {
     if (!AnalysisMode.current(scope)) return;
     heading('新建分析');
     $('conversation-message').focus();
+    return item.id;
   }
   function attachConversation(id) {
     selected = id;
@@ -607,6 +608,6 @@ window.Workbench = (() => {
   });
   deleteTask.id = 'task-delete'; deleteTask.hidden = true;
   $('report-expand').before(deleteTask);
-  return {init, view, task, submitted: safe(submitted), attachConversation, record, removedTask, sessions, identityChanged, inspector, switchMode,
+  return {init, view, task, submitted: safe(submitted), newAnalysis, attachConversation, record, removedTask, sessions, identityChanged, inspector, switchMode,
     revision, result: () => displayed, resultMode: () => displayed && taskMode(displayed)};
 })();

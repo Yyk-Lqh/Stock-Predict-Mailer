@@ -29,7 +29,7 @@ window.DesktopPoll=(()=>{
         for(const event of progress.events){if(event.seq<=eventCursor)continue;showEvent(event);eventCursor=event.seq;}
         runvizSample();PonyOffice.sync(task,progress.events);const terminal=showTask(task);
         feedback.hidden=true;window.DesktopWorkbench?.connectionLost(false);
-        if(terminal&&progress.events.length<100){value.done=true;overviewTask=task;renderSteps();if(memoryKey)refreshMemory().catch(error=>{if(same(value))notice(error.message,true);});}
+        if(terminal&&progress.events.length<100){value.done=true;window.ConsoleGuide?.task(task);if(memoryKey)refreshMemory().catch(error=>{if(same(value))notice(error.message,true);});}
       }catch(error){
         if(!same(value)||!visible()||(control.signal.aborted&&!timeout))return;
         delay=2500;PonyOffice.disconnected();feedback.hidden=false;window.DesktopWorkbench?.connectionLost(true);

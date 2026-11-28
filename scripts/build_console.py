@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 WEB = Path(__file__).resolve().parents[1] / "src" / "stock_predict_mailer" / "control" / "web"
-MODULES = ("memory", "tools-center", "workspace", "knowledge", "pony-door", "pony-model", "pony-screen", "pony-reference", "pony-rig", "pony-children", "pony-progress", "hall-data", "hall-wall", "market-feed", "plugin-board", "pony-office", "analysis-input", "mail-recipients", "composer-controls", "observation-preview", "forecasts", "workflow-node-ui", "workflow-canvas-ui", "desktop-workbench", "desktop-report", "desktop-library", "desktop-settings", "desktop-records", "desktop-poll", "desktop-sessions", "desktop-interactions", "workflow-chat")
+MODULES = ("memory", "tools-center", "workspace", "knowledge", "pony-door", "pony-model", "pony-screen", "pony-reference", "pony-rig", "pony-children", "pony-progress", "hall-data", "hall-wall", "market-feed", "plugin-board", "pony-office", "analysis-input", "mail-recipients", "composer-controls", "observation-preview", "forecasts", "workflow-node-ui", "workflow-canvas-ui", "desktop-workbench", "desktop-report", "desktop-library", "desktop-settings", "desktop-records", "desktop-poll", "desktop-sessions", "desktop-interactions", "workflow-chat", "console-guide")
 # Include the knowledge document catalog, recall workspace and settings.
 BUDGETS = {"memory.js": 2_288_000, "app.js": 105_000, "style.css": 221_000}
 

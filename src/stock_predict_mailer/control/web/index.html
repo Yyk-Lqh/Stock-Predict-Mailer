@@ -34,11 +34,12 @@
   <div id="notice" role="status" aria-live="polite" hidden></div>
 
   <section class="view" data-view-pane="overview">
-    <div class="page-head">
-      <h1>使用引导</h1>
+    <div class="page-head guide-start">
+      <div><h1>使用引导</h1><p id="guide-readiness" class="hint" role="status">正在读取运行配置…</p></div>
       <div class="actions">
         <button type="button" class="btn primary" id="start-analysis">开始一次分析</button>
         <button type="button" class="btn" id="try-sample">用示例预测试一遍</button>
+        <button type="button" class="btn" id="guide-retry" hidden>重新读取</button>
       </div>
     </div>
 

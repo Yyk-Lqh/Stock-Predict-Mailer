@@ -399,8 +399,12 @@ function showView(name) {
   window.ToolsCenter?.view(name);
 }
 function showPanel(id) {
-  document.querySelectorAll('.view:not([hidden]) .panel').forEach(el => { el.hidden = el.id !== id; });
-  document.querySelectorAll('.subnav [data-panel]').forEach(el => el.classList.toggle('active', el.dataset.panel === id));
+  document.querySelectorAll('[data-view-pane="settings"] > .panel').forEach(el => { el.hidden = el.id !== id; });
+  document.querySelectorAll('.subnav [data-panel]').forEach(el => {
+    const selected = el.dataset.panel === id;
+    el.classList.toggle('active', selected);
+    el.setAttribute('aria-pressed', String(selected));
+  });
 }
 function openToolsFallback(kind, cause) {
   const titles = {mcp: '添加 MCP 服务请求', custom: '创建自定义工具', plugin: '添加插件'};
@@ -470,8 +474,12 @@ document.addEventListener('click', event => {
 });
 
 /* ---------- load ---------- */
+let configRead = 0;
 async function refresh() {
-  [profiles, servers, endpoints, settings] = await Promise.all([api('models'), api('mcp'), api('agents'), api('settings')]);
+  const revision = ++configRead;
+  const values = await Promise.all([api('models'), api('mcp'), api('agents'), api('settings')]);
+  if (revision !== configRead) return;
+  [profiles, servers, endpoints, settings] = values;
   renderModels();
   renderServers();
   renderSettings();
@@ -484,6 +492,8 @@ async function refresh() {
 globalThis.refreshConsole = refresh;
 
 /* ---------- models ---------- */
+const modelConfigured = profile => Boolean(profile && (profile.provider === 'mock'
+  || profile.input_usd_per_million != null && profile.output_usd_per_million != null));
 function record(container, title, description) {
   const el = document.createElement('article');
   el.className = 'record';
@@ -501,9 +511,10 @@ function renderModels() {
     const meta = [
       `${p.provider} / ${p.model}`,
       p.enabled ? '已启用' : '已停用',
-      p.has_secret ? '密钥已保存（脱敏）' : '密钥未设置',
+      p.provider === 'mock' ? '离线测试' : p.has_secret ? '密钥已设置' : '密钥未设置',
+      modelConfigured(p) ? '' : '缺少报价',
       p.supported_parameters.includes('temperature') ? `温度 ${p.temperature_min}–${p.temperature_max}` : '不支持温度'
-    ].join(' · ');
+    ].filter(Boolean).join(' · ');
     const isDefault = settings.default_model_id === p.id;
     const title = p.name;
     const a = record($('model-list'), title, meta);
@@ -513,26 +524,32 @@ function renderModels() {
       tag.textContent = '默认';
       $('model-list').lastChild.querySelector('h3').append(tag);
     }
+    const makeDefault = action('设为默认', async () => {
+      await api('settings', 'PUT', {...settings, default_model_id: p.id});
+      await refresh();
+      notice('默认模型已更新。');
+    });
+    makeDefault.disabled = !p.enabled || isDefault;
+    const clear = action('清除密钥', async () => {
+      if (!confirm('清除该模型已保存的密钥？')) return;
+      await api(`models/${p.id}`, 'PUT', {...p, clear_secrets: ['api_key']});
+      await refresh();
+      if ($('model-id').value === p.id) window.DesktopSettings?.modelFields();
+      notice('模型密钥已清除。');
+    });
+    clear.hidden = !p.has_secret;
     a.append(
       action('编辑', () => editModel(p)),
       action(matchMedia('(min-width: 761px)').matches && p.provider !== 'mock' ? '测试连接（可能计费）' : '测试连接', async () => {
-        try { const result = await api(`models/${p.id}/test`, 'POST', {}); window.DesktopSettings?.modelTest(p, result); notice(result.message); }
+        try { const result = await api(`models/${p.id}/test`, 'POST', {config_revision:p.config_revision}); window.DesktopSettings?.modelTest(p, result); notice(result.message); }
         catch (error) { window.DesktopSettings?.modelTest(p, null, error.message); throw error; }
       }),
-      action('设为默认', async () => {
-        await api('settings', 'PUT', {...settings, default_model_id: p.id});
-        await refresh();
-        notice('默认模型已更新。');
-      }),
+      makeDefault,
       action(p.enabled ? '停用' : '启用', async () => {
         await api(`models/${p.id}`, 'PUT', {...p, enabled: !p.enabled});
         await refresh();
       }),
-      action('清除密钥', async () => {
-        await api(`models/${p.id}`, 'PUT', {...p, clear_secrets: ['api_key']});
-        await refresh();
-        notice('模型密钥已清除。');
-      }),
+      clear,
       action('删除', async () => {
         if (!window.confirm(`删除模型「${p.name}」？被角色引用的配置需要先解除引用。`)) return;
         await api(`models/${p.id}`, 'DELETE');
@@ -713,9 +730,10 @@ $('endpoint-save').onclick = async () => {
 function renderAllowlist() {
   const host = $('allowlist-summary');
   if (!host) return;
-  const sentence = allowlistSentence(lines($('mail-allowlist').value), $('mail-transport').value);
+  const addresses = lines($('mail-allowlist').value);
+  const sentence = allowlistSentence(addresses, $('mail-transport').value);
   host.className = 'allow-sum' + (sentence.tone ? ' ' + sentence.tone : '');
-  host.replaceChildren(document.createTextNode(sentence.text));
+  host.replaceChildren(document.createTextNode(`${addresses.length-allowlistBad(addresses).length} 个有效地址 · ${sentence.text}`));
   const synth = document.createElement('span');
   synth.className = 'allow-sub';
   synth.textContent = $('mail-synthetic').checked
@@ -729,13 +747,26 @@ $('mail-transport').addEventListener('change', renderAllowlist);
 
 $('settings-form').onsubmit = async event => {
   event.preventDefault();
+  const submit = event.currentTarget.querySelector('[type="submit"]');
+  if (submit.disabled) return;
+  const issue = (id,message) => window.DesktopSettings?.settingsIssue($(id),message);
+  const draft = new Map(settingsEdits);
+  submit.disabled = true;
   try {
     const allow = lines($('mail-allowlist').value);
     const bad = allowlistBad(allow);
     if (bad.length) {
-      notice(`${bad.slice(0, 2).join('、')}${bad.length > 2 ? ' 等' : ''} 不像邮箱地址，改好再保存。`, true);
-      $('mail-allowlist').focus();
+      issue('mail-allowlist', `${bad.slice(0,2).join('、')} 需要改为有效的邮箱地址。`);
       return;
+    }
+    if (allowlistBad([$('mail-sender').value]).length) return issue('mail-sender','请填写有效的发件人地址。');
+    const transport = $('mail-transport').value;
+    if (transport === 'smtp' && !$('mail-host').value.trim()) return issue('mail-host','请填写 SMTP 主机。');
+    if (transport === 'mcp') {
+      const service=servers.find(item=>item.id===$('mail-mcp-server').value), tool=$('mail-mcp-tool').value.trim();
+      if (!service) return issue('mail-mcp-server','请选择邮件服务。');
+      if (!service.allowed_tools.includes(tool) || service.effects[tool]!=='email') return issue('mail-mcp-tool','请选择已授权为 email 的工具。');
+      if ($('chart-delivery').value==='attachment') return issue('chart-delivery','MCP 邮件工具支持正文内嵌图表。');
     }
     const value = structuredClone(settings);
     value.default_model_id = $('default-model').value || null;
@@ -744,26 +775,39 @@ $('settings-form').onsubmit = async event => {
     value.mail.chart_delivery = $('chart-delivery').value;
     for (const role of Object.keys(roles)) {
       const temp = $(`role-${role}-temperature`);
+      const modelId = $(`role-${role}-model_id`).value || null;
+      const model = profiles.find(item=>item.id===(modelId || value.default_model_id));
+      const override = temp.disabled || temp.value === '' ? null : Number(temp.value);
+      const effective = override ?? model?.parameters?.temperature ?? value.global_temperature;
+      if (model?.supported_parameters.includes('temperature') && (effective<model.temperature_min || effective>model.temperature_max))
+        return issue(override==null?'global-temperature':temp.id,`${roles[role]}的模型温度范围为 ${model.temperature_min}–${model.temperature_max}。`);
       value.agents[role] = {
-        model_id: $(`role-${role}-model_id`).value || null,
+        model_id: modelId,
         endpoint_id: role === 'main' ? null : ($(`role-${role}-endpoint_id`).value || null),
-        temperature: temp.disabled || temp.value === '' ? null : Number(temp.value),
+        temperature: override,
         tools: role === 'main' ? csv($(`role-${role}-tools`).value) : []
       };
     }
     for (const key of Object.keys(value.limits)) value.limits[key] = num('limit-' + key);
     const m = value.mail;
     for (const key of ['transport', 'sender', 'host', 'tls']) m[key] = $('mail-' + key).value;
-    m.port = num('mail-port');
+    const port = num('mail-port');
+    if (Number.isInteger(port) && port >= 1 && port <= 65535) m.port = port;
+    else if (transport === 'smtp') return issue('mail-port','请输入 1 至 65535 之间的 SMTP 端口。');
     m.recipient_allowlist = allow;
     m.allow_synthetic = $('mail-synthetic').checked;
     m.mcp_server_id = $('mail-mcp-server').value || null;
     m.mcp_tool = $('mail-mcp-tool').value || null;
-    await api('settings', 'PUT', value);
-    clearSettingsEdits();
-    await refresh();
+    const saved = await api('settings', 'PUT', value);
+    ++configRead; settings = saved;
+    for(const [id,original]of draft)if(settingsEdits.get(id)===original)settingsEdits.delete(id);
+    if(!settingsEdits.size)clearSettingsEdits();
+    renderSettings();renderModels();window.DesktopSettings?.refresh();window.ConsoleGuide?.render();
+    window.DesktopSettings?.settingsSaved('已保存，页面显示服务端生效配置。');
+    await refresh().catch(error=>window.DesktopSettings?.settingsSaved('设置已保存。重新读取失败 · '+error.message,true));
     notice('设置已保存。');
-  } catch (error) { notice(error.message, true); }
+  } catch (error) { window.DesktopSettings?.settingsSaved('保存失败 · '+error.message,true); }
+  finally { submit.disabled=false; }
 };
 $('reset-temperature').onclick = async () => {
   try {

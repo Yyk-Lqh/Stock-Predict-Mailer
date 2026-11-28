@@ -6,6 +6,7 @@ import json
 from mcp.server.fastmcp import FastMCP
 
 from mcp_server import datamart_core as core
+from mcp_server import relative_core as relative
 
 AUTO_ORDER = ("big", "small")
 
@@ -106,6 +107,24 @@ def build(port: int = 8765) -> FastMCP:
             return json.dumps({"ok": False, "error": {"code": "INVALID_ARGUMENT",
                                "message": "run 必须显式指定 dataset：small 或 big"}}, ensure_ascii=False)
         return core.run_stage(core.DATASETS[dataset], stage, timeout_seconds, args, bars_start, bars_end)
+
+    @server.tool(description="相对市场跌涨（周频相对强弱）：查看周度缓存、预测、名单与模型文件的状态，"
+                             "并提示名单是否落后于预测。只读，不建目录不联网。")
+    def datamart_relative_status() -> str:
+        return relative.status()
+
+    @server.tool(description="相对市场跌涨名单：buy=概率最高，avoid=概率最低，all=全量，both=涨/跌各 top 只（默认 35）。"
+                             "as_of=YYYY-MM-DD 时从预测缓存回看该日或更早的最近一周，否则读最新 名单_*.csv。"
+                             "with_names=True 时用股票池补股票名称。")
+    def datamart_relative_list(side: str = "both", top: int = 35, as_of: str | None = None,
+                               with_names: bool = True, limit: int = 0) -> str:
+        return relative.listing(side, top, as_of, with_names, limit)
+
+    @server.tool(description="相对市场跌涨：按白名单跑脚本（会写盘并训练，较慢）。"
+                             "predict=周频跌涨模型.py 重建周度缓存与预测，list=出名单.py 训练最终模型并写名单。")
+    def datamart_relative_run(stage: str, timeout_seconds: int = 1800,
+                              args: list[str] | None = None) -> str:
+        return relative.run_stage(stage, timeout_seconds, args)
 
     return server
 

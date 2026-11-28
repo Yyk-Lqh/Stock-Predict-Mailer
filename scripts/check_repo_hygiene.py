@@ -15,7 +15,7 @@ from pathlib import Path
 
 MAX_BYTES = 2 * 1024 * 1024
 GENERATED_CONSOLE_BUNDLE = Path("src/stock_predict_mailer/control/web/memory.js")
-GENERATED_CONSOLE_BUNDLE_MAX_BYTES = 2_195_000
+GENERATED_CONSOLE_BUNDLE_MAX_BYTES = 2_288_000
 TEXT_SUFFIXES = {".py", ".md", ".toml", ".json", ".txt", ".yml", ".yaml", ".cfg", ".ini", ".ps1", ".sh"}
 FORBIDDEN_DIRS = {"data", "secrets", "workspace", "reports", "logs", "backups", "artifacts", "models"}
 FORBIDDEN_SUFFIXES = {

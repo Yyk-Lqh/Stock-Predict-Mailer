@@ -15,7 +15,10 @@ window.WorkflowNodeUI = (() => {
   for (const [kind,label,glyph] of [['model','模型','◎'],['trained','模型版本','◷'],['review','风险复核','✓'],['custom','自定义','◇']]) {
     appearance.set(kind,{color:'#687990',label,glyph});
   }
-  const variableTypes = ['classifier','branch','template','aggregate','assign','extract','document','list','llm','output'];
+  const variableTypes = ['classifier','branch','template','aggregate','assign','extract','document','list','llm','output',
+    'human','iteration','loop','code','http'];
+  const sourceTypes = {classifier:'text',branch:'any',assign:'any',extract:'text',knowledge:'text',document:'text',list:'list',
+    output:'any',iteration:'list',loop:'any',code:'any',http:'object'};
   const types = {text:'文本', number:'数值', boolean:'布尔', object:'对象', list:'列表', any:'任意 JSON'};
   const isVariable = graph => graph.nodes.some(node => node.data.type === 'input' && Array.isArray(node.data.config?.fields));
   const branched = kind => kind === 'classifier' || kind === 'branch';
@@ -43,10 +46,10 @@ window.WorkflowNodeUI = (() => {
     const kind=node.data.type, cfg=node.data.config || {};
     if(variables && kind==='output' && Array.isArray(cfg.fields))return cfg.fields.filter(field=>field?.name)
       .map(field=>({id:field.name,label:field.label || field.name,type:field.type,required:field.required}));
-    const type={classifier:'text',extract:'text',knowledge:'text',document:'text',list:'list',assign:cfg.value_type}[kind] || 'any';
-    const names=['classifier','branch','assign','extract','knowledge','document','list','output'];
+    const type=kind==='assign' ? cfg.value_type || 'any' : kind==='branch' && configRows(cfg.cases).some(item=>item.operation==='contains')
+      ? 'text' : sourceTypes[kind];
     return [{id:'value',label:variables?'依赖':'输入',type:'any'},
-      ...(variables && names.includes(kind)?[{id:'source',label:'数据输入',type,required:true}]:[]),
+      ...(variables && type?[{id:'source',label:kind==='http'?'请求参数':'数据输入',type,required:kind!=='http'}]:[]),
       ...(variables && kind==='aggregate'?[{id:'sources',label:'聚合输入',type:'list',required:true}]:[])];
   }
   const configRows = value => Array.isArray(value) ? value.filter(item=>item!=null) : [];
@@ -62,6 +65,12 @@ window.WorkflowNodeUI = (() => {
     if (kind === 'aggregate') return {value:'list'};
     if (kind === 'list') return {value:cfg.operation==='item'?'any':'list'};
     if (kind === 'llm') return {value:cfg.format==='json'?'object':'text'};
+    if (kind === 'human') return {value:'object',...Object.fromEntries(configRows(cfg.fields)
+      .filter(field=>field.name && field.name!=='value').map(field=>[field.name,field.type]))};
+    if (kind === 'iteration') return {value:'list',processed:'number',skipped:'number'};
+    if (kind === 'loop') return {value:'any',rounds:'number'};
+    if (kind === 'code') return {value:cfg.value_type || 'any'};
+    if (kind === 'http') return {value:'any',status:'number'};
     return {value:kind==='output'&&cfg.format==='json'?'any':'text'};
   }
   function upstream(graph, id) {
@@ -86,7 +95,10 @@ window.WorkflowNodeUI = (() => {
       ...(kind==='branch'?{operation:'equals'}:{})}],fallback:true};
     return {template:{template:''},llm:{template:'',format:'text'},aggregate:{sources:[],empty:'omit'},
       assign:{source:'',name:'result',value_type:'text'},knowledge:{source:'',limit:4},
-      list:{source:'',operation:'slice',start:0,end:5},output:{source:'',format:'text'}}[kind] || {};
+      list:{source:'',operation:'slice',start:0,end:5},output:{source:'',format:'text'},
+      human:{prompt:'请确认后继续。',fields:[],wait_seconds:300}, iteration:{source:'',expression:'item',limit:20,on_error:'stop'},
+      loop:{source:'',expression:'state + 1',until:'state >= 10',limit:10}, code:{source:'',expression:'value',value_type:'text'},
+      http:{source:'',target:'',timeout:10}}[kind] || {};
   }
   function summary(node, graph, model) {
     const kind=node.data.type, cfg=node.data.config, variables=isVariable(graph);
@@ -104,6 +116,10 @@ window.WorkflowNodeUI = (() => {
     if(kind==='knowledge') return ['运行所选资料库',cfg.source?'最多 '+cfg.limit+' 段':'待配置 · 查询变量'];
     if(kind==='template') return [cfg.template || '待配置 · 模板'];
     if(kind==='aggregate') return [cfg.sources?.length ? cfg.sources.length+' 个来源 · 列表' : '待配置 · 来源'];
+    if(kind==='human') return [cfg.prompt || '待配置 · 处理说明',`${cfg.wait_seconds ?? 300} 秒内确认`];
+    if(kind==='iteration'||kind==='loop') return [kind==='iteration'?`最多 ${cfg.limit ?? 20} 项`:`最多 ${cfg.limit ?? 10} 轮`,cfg.expression].filter(Boolean);
+    if(kind==='code') return [cfg.expression || '待配置 · 表达式',types[cfg.value_type]].filter(Boolean);
+    if(kind==='http') return [cfg.target || '待配置 · 授权目标'];
     if(kind==='output') return [Array.isArray(cfg.fields)?'返回 '+cfg.fields.length+' 个字段':
       cfg.source ? (cfg.format==='json'?'返回 JSON':'返回文本')+' · '+cfg.source.split('.').at(-1) : '选择返回变量或连接数据输入'];
     return [cfg.source ? cfg.source.split('.').at(-1) : '待配置 · 上游变量'];
@@ -182,7 +198,7 @@ window.WorkflowNodeUI = (() => {
     configRows(initial).forEach(append);
     readConfig.push(draft=>rows.map(item=>item.get(draft)));
   }
-  function settings(host, node, graph, config, models, inputs=host) {
+  function settings(host, node, graph, config, models, inputs=host, options={}) {
     const kind=node.data.type, cfg={...defaults(kind),...config}, refs=upstream(graph,node.id);
     const readers={};
     const named=kind==='output'?checkbox(host,'返回多个字段',Array.isArray(cfg.fields)):null;
@@ -190,7 +206,7 @@ window.WorkflowNodeUI = (() => {
       field.dataset.configKey=name;
       readers[name]=draft=>convert(field.value,draft);
     };
-    if(kind==='input'||kind==='extract'||named) {
+    if(kind==='input'||kind==='extract'||kind==='human'||named) {
       if(kind==='input') text(host,'p','对话需求自动提供 message（文本）。','hint');
       const rows=[];
       const fieldHost=named?element('div'):host;
@@ -213,18 +229,18 @@ window.WorkflowNodeUI = (() => {
       readers.fields=draft=>!named || named.checked?rows[0](draft):undefined;
       if(named)named.addEventListener('input',()=>{fieldHost.hidden=!named.checked;});
     }
-    if(['classifier','branch','assign','extract','document','knowledge','list','output'].includes(kind)) {
-      const expected={classifier:'text',extract:'text',document:'text',knowledge:'text',list:'list'}[kind];
-      const source=refField(inputs,'上游变量',refs,cfg.source,expected);
+    if(Object.hasOwn(sourceTypes,kind)) {
+      const expected=sourceTypes[kind];
+      const source=refField(inputs,kind==='http'?'参数对象（可留空）':'上游变量',refs,cfg.source,expected==='any'?null:expected);
       const linked=graph.edges.some(edge=>edge.target===node.id&&edge.input==='source');
-      if(!linked)markRequired(source);
+      if(!linked && kind!=='http')markRequired(source);
       const update=()=>{
         source.closest('label').hidden=Boolean(named?.checked);
         source.disabled=Boolean(named?.checked);
       };
       named?.addEventListener('input',update);update();
       read('source',source,value=>named?.checked?undefined:value);
-      if(!refs.length)text(inputs,'p','先连接产生变量的上游节点。','hint');
+      if(!refs.length && kind!=='http')text(inputs,'p','先连接产生变量的上游节点。','hint');
     }
     if(branched(kind)) {
       const rows=[];
@@ -289,6 +305,46 @@ window.WorkflowNodeUI = (() => {
       text(host,'p','使用运行时选定且有权限访问的资料库。','hint');
     }
     if(kind==='document') text(host,'p','变量应为已处理的知识库文件 ID。','hint');
+    const integer=(key,label,min,max)=>{
+      const field=control(host,label,'input',cfg[key]);
+      field.type='number';field.min=min;field.max=max;markRequired(field);
+      read(key,field,(value,draft)=>draft?value:Number(value));
+    };
+    const expression=(key,label)=>{
+      const field=control(host,label,'textarea',cfg[key]);
+      field.maxLength=1000;markRequired(field);read(key,field,value=>value.trim());
+    };
+    if(kind==='human') {
+      const prompt=control(host,'处理说明','textarea',cfg.prompt);prompt.maxLength=400;markRequired(prompt);
+      read('prompt',prompt,value=>value.trim());
+      integer('wait_seconds','等待时限（秒）',5,900);
+      text(host,'p','未定义字段时仅要求确认。等待期间可取消运行。','hint');
+    }
+    if(['iteration','loop','code'].includes(kind)) {
+      expression('expression',{iteration:'逐项计算',loop:'更新状态',code:'计算表达式'}[kind]);
+      text(host,'p',{
+        code:'value 为上游值。示例：value["price"] * 2。支持字面量、索引、算术、比较和条件。',
+        iteration:'item 为当前项，index 从 0 开始。空列表返回空列表。示例：item * 2。',
+        loop:'state 为当前状态，round 为已执行轮数。每轮更新前检查停止条件，初始轮数为 0。'
+      }[kind],'hint');
+    }
+    if(kind==='iteration') {
+      integer('limit','最大项数',1,50);
+      read('on_error',control(host,'单项失败时','select',cfg.on_error,{stop:'停止执行',skip:'跳过该项'}));
+    }
+    if(kind==='loop') {
+      expression('until','停止条件（布尔值）');
+      integer('limit','最大轮数',1,50);
+    }
+    if(kind==='code') read('value_type',control(host,'输出类型','select',cfg.value_type,Object.fromEntries(Object.entries(types).slice(0,5))));
+    if(kind==='http') {
+      const targets=Object.fromEntries(Object.entries(options).map(([id,target])=>[id,`${target.method} · ${id}`]));
+      if(cfg.target && !Object.hasOwn(targets,cfg.target))targets[cfg.target]='目标授权已失效 · '+cfg.target;
+      const target=control(host,'授权目标','select',cfg.target,{'':'选择 HTTP 目标',...targets});
+      markRequired(target);read('target',target);
+      if(!Object.keys(options).length)text(host,'p','还没有授权目标。请在控制台服务端配置 SPM_WORKFLOW_HTTP_TARGETS。','hint');
+      integer('timeout','请求超时（秒）',1,30);
+    }
     if(kind==='list') {
       const operation=control(host,'操作','select',cfg.operation,{filter:'等值筛选',sort:'升序',slice:'切片',item:'取值'});
       read('operation',operation);
@@ -313,6 +369,44 @@ window.WorkflowNodeUI = (() => {
   function references(config) {
     return [config?.source,...configRows(config?.sources),...Array.from(String(config?.template || '').matchAll(/\{\{\s*([\w-]+\.[\w-]+)\s*\}\}/g),match=>match[1])].filter(Boolean);
   }
-  return {groups, icon, label, appearance, isVariable, needsLibrary, variableTypes, branched, ports, inputPorts, outputs,
-    defaults, summary, settings, types, references};
+  function humanAction(host, task, events, submit) {
+    if(task?.status.state!=='working')return;
+    const request=events.findLast(event=>event.kind==='step' && event.status==='needs_input');
+    if(!request || events.some(event=>event.seq>request.seq && event.kind==='step' && event.step===request.step))return;
+    const form=element('form','workflow-human-action');
+    text(form,'strong',request.label+' · 等待用户处理');
+    text(form,'p',request.prompt);
+    const fields=request.fields.map(spec=>{
+      const json=['object','list'].includes(spec.type);
+      const field=control(form,spec.label || spec.name,json?'textarea':spec.type==='boolean'?'select':'input','',
+        spec.type==='boolean'?{'':'请选择',true:'是',false:'否'}:null);
+      if(spec.type==='number'){field.type='number';field.step='any';}
+      if(spec.default!==undefined && field.tagName!=='SELECT')field.placeholder=json?JSON.stringify(spec.default):String(spec.default);
+      if(spec.type==='boolean' && spec.default!==undefined)field.value=String(spec.default);
+      if(spec.required && spec.default===undefined)markRequired(field);
+      if(json)text(field.parentElement,'small',spec.type==='list'?'JSON 列表':'JSON 对象','hint');
+      return {spec,field,json};
+    });
+    const action=text(form,'button',fields.length?'提交并继续':'确认并继续','btn tiny');
+    action.type='submit';
+    const feedback=text(form,'p','','warn');feedback.setAttribute('role','status');
+    form.onsubmit=async event=>{
+      event.preventDefault();
+      if(action.disabled)return;
+      feedback.textContent='';
+      const values={};
+      for(const {spec,field,json} of fields) {
+        if(field.value==='')continue;
+        try {values[spec.name]=json?JSON.parse(field.value):spec.type==='number'?field.valueAsNumber:
+          spec.type==='boolean'?field.value==='true':field.value;}
+        catch (_) {feedback.textContent=`${spec.label || spec.name} 的 JSON 格式无效`;field.focus();return;}
+      }
+      action.disabled=true;
+      try {await submit({node:request.step,request_id:request.request_id,values});feedback.textContent='已提交，等待流程继续。';}
+      catch (error) {feedback.textContent=error.message;action.disabled=false;}
+    };
+    host.append(form);
+  }
+  return {groups, icon, label, appearance, isVariable, needsLibrary, variableTypes, sourceTypes, branched, ports, inputPorts, outputs,
+    defaults, summary, settings, types, references, upstream, humanAction};
 })();

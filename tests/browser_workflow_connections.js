@@ -55,6 +55,30 @@
     if(!$('desktop-workflow-inspector').hidden)$('desktop-node-close').click();
     if(!library().hidden)$('workflow-library-toggle').click();
     fit();
+    window.checkWorkflowInspectorOverlay=({keepOpen=false}={})=>{
+      const panel=$('desktop-workflow-inspector'), surface=$('desktop-workflow-surface');
+      if(!panel.hidden)$('desktop-node-close').click();
+      const before=canvas().getBoundingClientRect();
+      const transform=getComputedStyle(surface).transform;
+      card('route').click();
+      const after=canvas().getBoundingClientRect(), overlay=panel.getBoundingClientRect();
+      assert(!panel.hidden && overlay.width>0,'Node inspector did not open');
+      assert(after.x===before.x && after.y===before.y && after.width===before.width && after.height===before.height,
+        'Opening the inspector resized the canvas');
+      assert(overlay.left>=after.left && overlay.right<=after.right && overlay.top>=after.top && overlay.bottom<=after.bottom,
+        'The inspector is outside the canvas');
+      const controls=$('desktop-workflow-zoom').parentElement.getBoundingClientRect();
+      assert(controls.right<=overlay.left || controls.left>=overlay.right || controls.top>=overlay.bottom || controls.bottom<=overlay.top,
+        'The canvas zoom controls overlap the inspector');
+      const hit=center(panel);
+      assert(panel.contains(document.elementFromPoint(hit.x,hit.y)),'Inspector controls are beneath the canvas');
+      $('desktop-node-close').click();
+      assert(canvas().contains(document.elementFromPoint(hit.x,hit.y)),'Closing the inspector did not expose the canvas');
+      assert(getComputedStyle(surface).transform===transform,'Opening or closing the inspector moved or zoomed the canvas');
+      if(keepOpen)card('route').click();
+      return {width:innerWidth,canvasWidth:after.width,overlay:true};
+    };
+    window.checkWorkflowInspectorOverlay();
     const enhance=document.querySelector('[data-edge-insert="market-brief"]');
     enhance.focus();
     await stage('midpoint');
@@ -95,6 +119,29 @@
     begin(port('notes','in'));move(upstream);stop(upstream);
     assert(graph().edges.some(item=>item.output==='default' && item.target==='notes'),'Dragging from input did not connect');
     $('desktop-workflow-undo').click();
+    const beforeSelfLink=JSON.stringify(graph().edges);
+    const selfInput=center(port('route','in')), selfOutput=center(port('route','out','default'));
+    for(const [origin,destination] of [[port('route','out','default'),selfInput],[port('route','in'),selfOutput]]) {
+      begin(origin);move(destination);
+      assert(!preview.classList.contains('snapped') && $('desktop-workflow-message').textContent.includes('不能连接自身'),
+        'Self-link was offered as a valid connection');
+      stop(destination);
+      assert(JSON.stringify(graph().edges)===beforeSelfLink,'Self-link drag changed the graph');
+    }
+    const path=document.querySelector('[data-edge-id="market-brief"]');
+    const changeTarget=path.getPointAtLength(path.getTotalLength()*.77).matrixTransform(path.getScreenCTM());
+    pointer(path,'pointerdown',changeTarget);move(selfInput);stop(selfInput);
+    assert(JSON.stringify(graph().edges)===beforeSelfLink,'Self-link rewire did not keep the original edge');
+    port('route','out','market').click();port('route','in').click();
+    assert(JSON.stringify(graph().edges)===beforeSelfLink && $('desktop-workflow-message').textContent.includes('不能连接自身'),
+      'Port clicks bypassed the self-link guard');
+    card('route').click();
+    const manual=$('desktop-node-config').querySelector('.desktop-flow-connect');
+    const {source,target:manualTarget}=manual.elements;
+    assert(![...manualTarget.options].some(option=>option.value===source.value),'Manual connection includes its source as a target');
+    source.value=manualTarget.value;source.dispatchEvent(new Event('change'));
+    assert(![...manualTarget.options].some(option=>option.value===source.value),'Manual target options failed to update');
+    $('desktop-node-close').click();
     const invalid=center(port('route','in'));
     begin(port('brief','out'));move(invalid);stop(invalid);
     const cycle=graph().edges.find(item=>item.source==='brief'&&item.target==='route');
@@ -116,7 +163,7 @@
       fit();port('route','out','market').click();picker();
       return {width:innerWidth,pickerVisible:true};
     };
-    window.wiringQA={stage:'passed',insert:true,undoRedo:true,dragForward:true,dragReverse:true,blank:true};
+    window.wiringQA={stage:'passed',insert:true,undoRedo:true,dragForward:true,dragReverse:true,selfLinkBlocked:true,blank:true};
   })().catch(error=>{window.wiringQA={stage:'failed',message:error.message,stack:error.stack};});
   return 'Connection acceptance started';
 })()

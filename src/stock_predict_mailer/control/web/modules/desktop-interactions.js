@@ -20,7 +20,7 @@ window.DesktopInteractions=(()=>{
   document.addEventListener('keydown',event=>{
     if(!desktop.matches)return;
     if(['Home','End'].includes(event.key)&&event.target.closest('.analysis-tabs [role="tab"]')){event.preventDefault();event.stopImmediatePropagation();const pane=event.key==='Home'?'input':'report';AnalysisInput.open(pane);$('analysis-tab-'+pane).focus();return;}
-    if(event.key!=='Escape')return;
+    if(event.key!=='Escape' || event.target.closest('#desktop-focus'))return;
     event.stopImmediatePropagation();
     if(document.querySelector('dialog[open]'))return; // Keep native cancel and its saving guard.
     const popup=$('composer-popover');

@@ -120,7 +120,7 @@
     DesktopWorkbench.setMode('hall');set($('conversation-message'),'普通模式独立草稿');
     DesktopWorkbench.setMode('focus');$('workflow-canvas-nav').click();
     await wait(()=>!document.querySelector('.workflow-catalog').hidden,'Workflow directory did not open');
-    click(document.querySelector('.wfcat-header'),'分析模板');
+    click(document.querySelector('.wfcat-create'),'分析模板');
     await wait(()=>card('report'),'Analysis template did not load');
     click($('desktop-focus'),'添加节点');
     await wait(()=>library().querySelector('[data-node-type="classifier"]:not(:disabled)'),'New nodes are disabled in the analysis library');
@@ -129,7 +129,7 @@
       'Picking a variable node did not open a variable canvas with an entry');
     $('desktop-workflow-undo').click();
     WorkflowChat.showDirectory();
-    click(document.querySelector('.wfcat-header'),'分析模板');
+    click(document.querySelector('.wfcat-create'),'分析模板');
     assert(card('report'),'Adding a variable node changed the old canvas');
     WorkflowChat.showDirectory();
     $('wfcat-new').click();
@@ -137,7 +137,9 @@
     $('workflow-canvas-empty').click();
     await wait(()=>library().querySelector('[data-node-type="input"]:not(:disabled)'),'Library not initialized');
     assert([...library().querySelectorAll('h4')].map(row=>row.textContent).join()=== '基础节点,问题理解,逻辑节点,转换节点,工具节点','Groups are wrong');
-    assert(library().querySelector('[data-node-type="code"]').disabled,'Unavailable code node is enabled');
+    for (const kind of ['human','iteration','loop','code','http']) {
+      assert(!library().querySelector(`[data-node-type="${kind}"]`).disabled,kind+' was not added to the executable node library');
+    }
     pick('用户输入',true);
     await stage('library');
     const start=getNode('input');
